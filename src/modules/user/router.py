@@ -51,4 +51,4 @@ def delete_user_endpoint(user_id: UUID, session: Session = Depends(get_session))
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found."
         )
-    return None
+    return {"message": "User deleted. Have a nice one."}
