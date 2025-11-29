@@ -23,7 +23,9 @@ def create_user(session: Session, user_create: UserCreate) -> User:
         raise ValueError("User with this email already exists")
 
     db_user = User(
-        email=user_create.email, password_hash=hash_passwd(user_create.password)
+        email=user_create.email,
+        nickname=user_create.nickname,
+        password_hash=hash_passwd(user_create.password),
     )
 
     session.add(db_user)
