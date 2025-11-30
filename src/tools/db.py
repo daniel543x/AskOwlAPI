@@ -1,7 +1,8 @@
 import os
-from typing import Generator
+from collections.abc import AsyncGenerator
 
-from sqlmodel import Session, SQLModel, create_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
+from sqlmodel import SQLModel
 
 POSTGRES_SERVER = os.getenv("POSTGRES_SERVER", "localhost")
 POSTGRES_USER = os.getenv("POSTGRES_USER")
@@ -10,16 +11,17 @@ POSTGRES_DB = os.getenv("POSTGRES_DB")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
 
 # Setup DataBase
-DATABASE_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_SERVER}:{POSTGRES_PORT}/{POSTGRES_DB}"
-engine = create_engine(DATABASE_URL, echo=True)  # echo=True to see generated SQL
-SQLModel.metadata.create_all(engine)
+DATABASE_URL = f"postgresql+asyncpg://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_SERVER}:{POSTGRES_PORT}/{POSTGRES_DB}"
+engine = create_async_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
 
 
-def init_table() -> None:
-    SQLModel.metadata.create_all(engine)
+# Function for init db tables
+async def init_db(engine: AsyncEngine) -> None:
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
 
 
 # For Dependency
-def get_session() -> Generator[Session, None, None]:
-    with Session(engine) as session:
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSession(engine) as session:
         yield session

@@ -11,6 +11,7 @@ class TokenData(BaseModel):
 class JWTPayload(TypedDict):
     sub: str
     exp: int
+    roles: list[str]
 
 
 class LoginRequest(BaseModel):

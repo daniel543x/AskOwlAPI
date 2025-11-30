@@ -1,10 +1,26 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from .modules.identity.role.service import init_roles
 from .modules.identity.router import router as IdentityRouter
-from .tools.db import init_table
+from .tools.db import engine, init_db
 
-app = FastAPI(title="AskOwlAPI", description="LLM tool to searching anything.")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db(engine)
+
+    from sqlmodel.ext.asyncio.session import AsyncSession
+
+    async with AsyncSession(engine) as session:
+        await init_roles(session=session)
+    yield
+
+
+app = FastAPI(
+    title="AskOwlAPI", description="LLM tool to searching anything.", lifespan=lifespan
+)
 
 app.include_router(IdentityRouter)
 
@@ -17,15 +33,3 @@ def healthy():
 @app.get("/favicon.ico")
 async def favicon():
     return
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    init_table()
-    print("init Roles")
-    from sqlmodel import Session
-
-    from .tools.db import engine
-
-    with Session(engine) as session:
-        init_roles(session=session)

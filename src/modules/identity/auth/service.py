@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from typing import Optional, cast
 
 from jose import JWTError, jwt
-from sqlmodel import Session
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ....tools.settings import settings
 from ..user.model import User
@@ -11,11 +11,13 @@ from .model import JWTPayload
 from .passwd import check_passwd
 
 
-def authenticate_user(session: Session, identifier: str, password: str) -> User | None:
-    user = get_user_by_identifier(session, identifier)
+async def authenticate_user(
+    session: AsyncSession, identifier: str, password: str
+) -> Optional[User]:
+    user = await get_user_by_identifier(session, identifier)
     if not user:
         return None
-    if check_passwd(password, user.password_hash) is False:
+    if await check_passwd(password, user.password_hash) is False:
         return None
     return user
 
