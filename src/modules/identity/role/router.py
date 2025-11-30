@@ -4,7 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
-from ...tools.db import get_session
+from ....tools.db import get_session
 from ..auth.security import get_current_admin_user
 from . import service
 from .model import Role, RoleCreate, RoleRead

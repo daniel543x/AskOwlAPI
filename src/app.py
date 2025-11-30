@@ -1,21 +1,12 @@
 from fastapi import FastAPI
 
-from .modules.auth.router import router as AuthRouter
-from .modules.role.router import router as RoleRouter
-from .modules.role.service import init_roles
-
-# Import modules
-from .modules.user.router import router as UserRouter
-
-# Import Auxiliary Function
+from .modules.identity.role.service import init_roles
+from .modules.identity.router import router as IdentityRouter
 from .tools.db import init_table
 
 app = FastAPI(title="AskOwlAPI", description="LLM tool to searching anything.")
 
-# Include modules
-app.include_router(UserRouter)
-app.include_router(RoleRouter)
-app.include_router(AuthRouter)
+app.include_router(IdentityRouter)
 
 
 @app.get("/healthy")

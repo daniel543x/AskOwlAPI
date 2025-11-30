@@ -2,16 +2,17 @@ from datetime import datetime, timedelta
 from typing import Optional, cast
 
 from jose import JWTError, jwt
-from sqlmodel import Session, select
+from sqlmodel import Session
 
-from ...tools.settings import settings
+from ....tools.settings import settings
 from ..user.model import User
+from ..user.service import get_user_by_identifier
 from .model import JWTPayload
 from .passwd import check_passwd
 
 
-def authenticate_user(session: Session, email: str, password: str) -> User | None:
-    user = session.exec(select(User).where(User.email == email)).first()
+def authenticate_user(session: Session, identifier: str, password: str) -> User | None:
+    user = get_user_by_identifier(session, identifier)
     if not user:
         return None
     if check_passwd(password, user.password_hash) is False:

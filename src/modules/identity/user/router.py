@@ -4,9 +4,15 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
-from ...tools.db import get_session  # Upewnij się, że ścieżka jest poprawna
+from ....tools.db import get_session
 from .model import UserCreate, UserRead, UserUpdate
-from .service import create_user, delete_user, get_user_by_id, update_user
+from .service import (
+    create_user,
+    delete_user,
+    get_user_by_id,
+    get_user_by_identifier,
+    update_user,
+)
 
 router = APIRouter(prefix="/user", tags=["Users"])
 
@@ -25,6 +31,16 @@ def create_user_endpoint(
 @router.get("/{user_id}", response_model=UserRead)
 def read_user(user_id: UUID, session: Session = Depends(get_session)):
     db_user = get_user_by_id(session=session, user_id=user_id)
+    if not db_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found."
+        )
+    return db_user
+
+
+@router.get("/nn/{nickname}", response_model=UserRead)
+def read_user_(user_: str, session: Session = Depends(get_session)):
+    db_user = get_user_by_identifier(session=session, identifier=user_)
     if not db_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found."

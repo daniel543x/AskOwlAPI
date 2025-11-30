@@ -3,8 +3,8 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
-from ...tools.db import get_session
-from ...tools.settings import settings
+from ....tools.db import get_session
+from ....tools.settings import settings
 from ..user.model import User, UserRead
 from .model import LoginRequest, TokenData
 from .security import get_current_user
@@ -18,7 +18,7 @@ def login_for_access_token(
     form_data: LoginRequest,
     session: Session = Depends(get_session),
 ):
-    user = authenticate_user(session, form_data.email, form_data.password)
+    user = authenticate_user(session, form_data.username_or_email, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -26,7 +26,7 @@ def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    from src.modules.role.service import get_user_roles
+    from ..role.service import get_user_roles
 
     user_roles = get_user_roles(session=session, user_id=user.id)
 
