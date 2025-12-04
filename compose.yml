@@ -23,6 +23,20 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - searxng_settings:/AskOwl/data/searxng/
+    networks:
+      - AskOwl-Net
+
+  searXNG:
+    image: searxng:latest
+    environment:
+      - BASE_URL=http://search:8080
+    ports:
+      - 8080:8080
+    volumes:
+      - searxng_settings:/etc/searxng/:Z
+    networks:
+      - AskOwl-Net
 
 #  valkey:
 #    image: valkey/valkey:7-alpine
@@ -30,7 +44,11 @@ services:
 #      - "6379:6379"
 #    volumes:
 #      - valkey_data:/data
+networks:
+  AskOwl-Net:
+    external: false
 
 volumes:
   postgres_data:
+  searxng_settings:
 #  valkey_data:
