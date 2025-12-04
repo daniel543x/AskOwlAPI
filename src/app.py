@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from .modules.identity.role.service import init_roles
 from .modules.identity.router import router as IdentityRouter
+from .modules.scrapy.router import router as ScraperRouter
 from .modules.search_engine.router import router as SearchRouter
 from .tools.db import engine, init_db
 
@@ -25,6 +26,7 @@ app = FastAPI(
 
 app.include_router(IdentityRouter)
 app.include_router(SearchRouter)
+app.include_router(ScraperRouter)
 
 
 @app.get("/healthy")
