@@ -8,7 +8,7 @@ from .base import ISearchProvider
 class SearXNGProvider(ISearchProvider):
     def __init__(self):
         self.base_url = "http://localhost:8080"  # Insite contener have to be http://searxng:8080 !!!!!
-        self.engines = "bing,brave,duckduckko,google,qwant,startpage"
+        self.engines = "bing,brave,duckduckgo,google,qwant,startpage"
         self.categories = "general"
         self.timeout = 60
 

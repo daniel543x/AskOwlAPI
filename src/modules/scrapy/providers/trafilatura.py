@@ -6,6 +6,10 @@ from .base import IScraper
 
 
 class TrafilturaScraper(IScraper):
+    @property
+    def name(self) -> str:
+        return "trafilatura"
+
     async def scrape(self, url: str) -> Optional[str]:
         try:
             content = trafilatura.fetch_url(url)

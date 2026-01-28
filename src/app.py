@@ -2,10 +2,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from .modules.ask.router import router as AskRouter
 from .modules.identity.role.service import init_roles
 from .modules.identity.router import router as IdentityRouter
-from .modules.scrapy.router import router as ScraperRouter
-from .modules.search_engine.router import router as SearchRouter
+from .modules.llm_provider.init_llm_provider import init_ollama_db
+from .modules.scrapy.init_scrapy import init_scrapy_settings
 from .tools.db import engine, init_db
 
 
@@ -17,6 +18,9 @@ async def lifespan(app: FastAPI):
 
     async with AsyncSession(engine) as session:
         await init_roles(session=session)
+        await init_scrapy_settings(session)
+        await init_ollama_db(session)
+
     yield
 
 
@@ -25,8 +29,7 @@ app = FastAPI(
 )
 
 app.include_router(IdentityRouter)
-app.include_router(SearchRouter)
-app.include_router(ScraperRouter)
+app.include_router(AskRouter)
 
 
 @app.get("/healthy")
