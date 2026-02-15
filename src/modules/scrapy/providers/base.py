@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 
 class IScraper(ABC):
@@ -8,7 +8,9 @@ class IScraper(ABC):
         self.config = config or {}
 
     @abstractmethod
-    async def scrape(self, url: str) -> Optional[str]:
+    async def scrape(
+        self, data_from_search: List[Dict[str, Any]]
+    ) -> Optional[List[Dict[str, Any]]]:
         pass
 
     @property

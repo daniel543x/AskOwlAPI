@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .modules.ask.router import router as AskRouter
+from .core.ask.router import router as AskRouter
 from .modules.identity.role.service import init_roles
 from .modules.identity.router import router as IdentityRouter
 from .modules.llm_provider.init_llm_provider import init_ollama_db

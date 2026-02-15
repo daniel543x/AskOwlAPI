@@ -2,7 +2,7 @@ from typing import List
 
 import httpx
 
-from .base import ISearchProvider
+from .base import ISearchProvider, SearchResult
 
 
 class SearXNGProvider(ISearchProvider):
@@ -12,7 +12,7 @@ class SearXNGProvider(ISearchProvider):
         self.categories = "general"
         self.timeout = 60
 
-    async def search(self, query: str, max_results: int) -> List[str]:
+    async def search(self, query: str) -> List[SearchResult]:
         params = {
             "q": query,
             "format": "json",
@@ -24,7 +24,19 @@ class SearXNGProvider(ISearchProvider):
                 response = await client.get(f"{self.base_url}/search", params=params)
                 response.raise_for_status()
                 results = response.json().get("results", [])
-                return [r["url"] for r in results[:max_results]]
+
+                final_search_result: List[SearchResult] = []
+
+                for item in results:
+                    final_search_result.append(
+                        SearchResult(
+                            title=item.get("title", ""),
+                            snippet=item.get("content", ""),
+                            url=item.get("url", ""),
+                        )
+                    )
+
+                return final_search_result
         except httpx.RequestError as e:
             print(e)
             return []

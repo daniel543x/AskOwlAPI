@@ -8,9 +8,9 @@ from sqlmodel import select
 from src.tools.cryptography import decrypt
 from src.tools.db import get_session
 
-from ..model import LLMConfig, LLMProvider
-from .base import LLMProviderBase
-from .ollama import OllamaProvider
+from .model import LLMConfig, LLMProvider
+from .providers.base import LLMProviderBase
+from .providers.ollama import OllamaProvider
 
 
 class LLMClientFactory:
@@ -98,7 +98,6 @@ class LLMClientFactory:
                 f"Available: {list(self._registry.keys())}"
             )
 
-        # Wszystkie klasy w rejestrze muszą przyjmować te same argumenty bazowe
         return provider_class(
             model_name=config.model_name, extra_params=final_extra_params
         )
