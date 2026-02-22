@@ -1,5 +1,5 @@
 import json
-from typing import List, Optional
+from typing import Optional
 
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.llms import Ollama
@@ -43,9 +43,3 @@ class OllamaProvider(LLMProviderBase):
 
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.llm.invoke, full_prompt)
-
-    async def get_embeddings(self, text: str) -> List[float]:
-        import asyncio
-
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.embeddings.embed_query, text)

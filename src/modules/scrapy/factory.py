@@ -51,7 +51,5 @@ class ScraperFactory:
 
 async def get_scraper(
     session: AsyncSession = Depends(get_session),
-    scraper_type: Optional[str] = None,
-    # scraper_type: Optional[str] = Query(None, alias="scraper_provider"),
 ):
-    return await ScraperFactory.create(session, scraper_type)
+    return await ScraperFactory.create(session)

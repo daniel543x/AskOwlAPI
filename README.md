@@ -28,16 +28,16 @@ Prerequisites:
 
 ### Step 1: Clone the repository
 ```bash
-git clone https://github.com/your-username/askowl.git
-cd askowl
+git clone https://github.com/daniel543x/AskOwlAPI.git;
+cd AskOwlAPI
 ```
 
 ### Step 2: Configure environment variables
 Copy the template file and fill in the required variables.
 ```bash
-mv .env.template .env
+cp .env.template .env
 ```
-Open the `.env` file in a text editor and set the API keys for your chosen cloud providers (e.g., `GROQ_API_KEY`). Required variables are marked with the `# Required` comment.
+Open the `.env` file in a text editor and set the all variables are marked with the `# Required` comment.
 
 ### Step 3: Run with Compose
 ```bash
@@ -47,7 +47,7 @@ podman-compose up -d
 ```
 
 ### Step 4: Use AskOwl
-By default, the API will be available at `http://localhost:8000`. You can test it using a tool like `curl` or Postman by sending requests to the appropriate endpoints.
+By default, the API will be available at `http://localhost:3000/`. You can test it using a tool like `curl` or Postman by sending requests to the appropriate endpoints.
 
 ## Search Modes
 
@@ -86,10 +86,10 @@ To run the project for development purposes:
 1.  Clone the repository.
 2.  Create a Python virtual environment: `python -m venv venv` and activate it.
 3.  Install the `uv` package manager: `pip install uv`.
-4.  Install dependencies: `uv pip install -r requirements.txt`.
-5.  Run the application from the `src` directory: `python src/main.py`.
+4.  Install dependencies: `uv pip install -r pyproject.toml --all-extras`.
+5.  Run the application from the root directory: `uv run main.py`.
 
-### Tests
+### Testsuv pip install -r pyproject.toml
 The project uses `pytest` for testing. To run them, execute:
 ```bash
 pytest
@@ -102,6 +102,7 @@ Guidelines for reporting bugs and suggesting features will be added in the futur
 
 *   **Backend:** Python, FastAPI
 *   **Frontend:** Planned in Vue
+*   **Moblie & Desktop** Planned in Flutter
 *   **Containerization:** Podman/Docker
 
 ## License
@@ -111,4 +112,3 @@ This project is licensed under the Apache 2.0 License. See the [LICENSE](LICENSE
 ## Copyright
 
 Copyright 2025 The AskOwl Contributors
-```

@@ -3,9 +3,10 @@ from typing import Any, Dict, List, Optional
 from flashrank import Ranker, RerankRequest
 
 from ..search_engine.providers.base import SearchResult
+from .base import IRanker
 
 
-class OwlRanker:
+class OwlRanker(IRanker):
     def __init__(
         self, model_name: str = "ms-marco-MiniLM-L-12-v2", cache_dir: str = "/tmp/cache"
     ):

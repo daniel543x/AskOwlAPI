@@ -1,6 +1,5 @@
-# llm_provider/base.py
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Optional
 
 
 class LLMProviderBase(ABC):
@@ -17,8 +16,4 @@ class LLMProviderBase(ABC):
         max_tokens: Optional[int] = None,
         **kwargs,
     ) -> str:
-        pass
-
-    @abstractmethod
-    async def get_embeddings(self, text: str) -> List[float]:
         pass
