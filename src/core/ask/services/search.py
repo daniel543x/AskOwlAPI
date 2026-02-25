@@ -3,6 +3,7 @@ import json
 from pydantic import BaseModel, ValidationError
 
 from ....modules.llm_provider.providers.base import LLMProviderBase
+from ....modules.llm_provider.providers.ollama import OllamaProvider
 from ....modules.owl_reranker.base import IRanker
 from ....modules.scrapy.providers.base import IScraper
 from ....modules.search_engine.providers.base import ISearchProvider
