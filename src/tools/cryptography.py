@@ -10,7 +10,7 @@ except:
 
 try:
     token = Fernet(MASTER_KEY)
-except (ValueError, TypeError):
+except ValueError, TypeError:
     raise ValueError("MASTER_KEY has invalid format. Error: {e}")
 
 token = Fernet(MASTER_KEY.encode())
