@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
+from ...modules.identity.auth.security import get_current_user
+
 # from ...modules.llm_provider.factory import get_llm_client
 # from ...modules.llm_provider.providers.base import LLMProviderBase
 from ...modules.owl_reranker.base import IRanker
@@ -31,8 +33,8 @@ async def ask_search(
 
 
 @router.get("/research")
-async def ask_research():
-    return
+async def ask_research(user: str = Depends(get_current_user)):
+    return {"Hello": f"{user}!"}
 
 
 @router.get("/deep_research")

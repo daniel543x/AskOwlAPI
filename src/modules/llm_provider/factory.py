@@ -45,3 +45,8 @@ class LLMFactory:
                 f"Can't init model: {model_config.model_name} "
                 f"for provider: {provider_type}. Error: {e}"
             )
+
+
+# Deppendency
+def get_llm_factory() -> LLMFactory:
+    return LLMFactory()
