@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from langchain_text_splitters import (
     MarkdownHeaderTextSplitter,
@@ -23,7 +23,7 @@ Returns:
 """
 
 
-def chunk_markdown_data(data: List[Dict[str, str]]) -> List[Dict[str, str]]:
+def chunk_markdown_data(data: List[Dict[str, str]]) -> List[Dict[str, Any]]:
 
     headers_to_split_on = [
         ("#", "Header 1"),

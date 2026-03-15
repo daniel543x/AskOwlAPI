@@ -1,5 +1,6 @@
 [x] Rewrite llm factory to LangChain.
-[] Fix route `/ask/search`.
+[x] Fix route `/ask/search`.
+[] Check quantity of links in `/serach`.
 [] Add stream and nonstream useable for route `/ask/search`.
 [] Prepare a detailed plan broken down by version.
 [] Make a pre-vision for docs.

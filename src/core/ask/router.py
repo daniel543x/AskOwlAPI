@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from langchain_core.language_models import BaseChatModel
 
-from ...modules.identity.auth.security import get_current_user
 from ...modules.llm_provider.dependency import get_llm_client
 from ...modules.owl_reranker.base import IRanker
 from ...modules.owl_reranker.factory import get_ranker
@@ -31,14 +30,22 @@ async def ask_search(
 
 @router.get("/research")
 async def ask_research(
-    user: str = Depends(get_current_user),
+    query: str = Query(..., description="User query."),
+    searching: ISearchProvider = Depends(get_search_provider),
     model: BaseChatModel = Depends(get_llm_client),
+    scraper: IScraper = Depends(get_scraper),
+    ranker: IRanker = Depends(get_ranker),
 ):
-    message = user
     message = model.invoke("Hey!")
     return {"message": message}
 
 
 @router.get("/deep_research")
-async def ask_deep_research():
+async def ask_deep_research(
+    query: str = Query(..., description="User query."),
+    searching: ISearchProvider = Depends(get_search_provider),
+    model: BaseChatModel = Depends(get_llm_client),
+    scraper: IScraper = Depends(get_scraper),
+    ranker: IRanker = Depends(get_ranker),
+):
     return
