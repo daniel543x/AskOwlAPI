@@ -50,3 +50,7 @@ def verify_token(token: str) -> Optional[JWTPayload]:
         return payload
     except JWTError:
         return None
+
+
+async def get_user_by_api_key(session: AsyncSession, key: str):
+    pass

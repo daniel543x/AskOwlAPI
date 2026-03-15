@@ -1,43 +1,66 @@
 import uuid
+from typing import Optional
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import (
+    APIKeyHeader,
+    HTTPAuthorizationCredentials,
+    HTTPBearer,
+    # OAuth2PasswordBearer,
+)
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ....tools.db import get_session
 from ..user.model import User
-from .service import verify_token
+from .service import get_user_by_api_key, verify_token
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+# https://fastapi.tiangolo.com/reference/openapi/models/
+# SecurityScheme = (
+#    APIKey | HTTPBase | OAuth2 | OpenIdConnect | HTTPBearer
+# )
+# oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+# https://fastapi.tiangolo.com/reference/openapi/models/#fastapi.openapi.models.HTTPBase.model_config
+bearer_scheme = HTTPBearer(auto_error=False)
+# https://fastapi.tiangolo.com/reference/openapi/models/#fastapi.openapi.models.APIKey
+api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 async def get_current_user(
-    token: str = Depends(oauth2_scheme), session: AsyncSession = Depends(get_session)
+    # token: str = Depends(oauth2_scheme),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    key: Optional[str] = Depends(api_key_scheme),
+    session: AsyncSession = Depends(get_session),
 ) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
+        detail="Could not validate credentials. Use Bearer token or X-API-Key.",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    # <----- Chcek credentials ----->
+    if credentials:
+        token = credentials.credentials
+        try:
+            payload = verify_token(token)
+            if payload:
+                user_id_str = payload.get("sub")
+                user_id = uuid.UUID(user_id_str)
+                user = await session.get(User, user_id)
+                if user:
+                    return user
+        except Exception:
+            raise credentials_exception
 
-    payload = verify_token(token)
-    if payload is None:
-        raise credentials_exception
+    # <----- Chcek credentials ----->
+    if key:
+        try:
+            user = await get_user_by_api_key(session, key)
+            if user:
+                return user
+        except Exception:
+            raise credentials_exception
 
-    user_id_str: str = payload.get("sub")
-    if user_id_str is None:
-        raise credentials_exception
-
-    try:
-        user_id = uuid.UUID(user_id_str)
-    except ValueError:
-        raise credentials_exception
-
-    user = await session.get(User, user_id)
-    if user is None:
-        raise credentials_exception
-
-    return user
+    raise credentials_exception
 
 
 async def get_current_admin_user(

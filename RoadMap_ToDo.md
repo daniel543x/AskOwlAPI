@@ -6,3 +6,4 @@
 [] Standardization of comments.
 [] Addition of more comments.
 [] Rewrte `cryptography.py` to object.
+[] Complete the authentication logic using the API key.
