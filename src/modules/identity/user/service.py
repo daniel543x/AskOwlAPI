@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from ..auth.passwd import hash_passwd
+from ..role.service import assing_role_in_user_create
 from .model import User, UserCreate, UserUpdate
 
 
@@ -35,6 +36,7 @@ async def get_user_by_identifier(
 
 
 async def create_user(session: AsyncSession, user_create: UserCreate) -> User:
+
     existing_user = await get_user_by_email(session, user_create.email)
     if existing_user:
         raise ValueError("User with this email already exists")
@@ -50,6 +52,9 @@ async def create_user(session: AsyncSession, user_create: UserCreate) -> User:
     )
 
     session.add(db_user)
+    await session.flush()
+    await assing_role_in_user_create(session, db_user.id)
+
     await session.commit()
     await session.refresh(db_user)
     return db_user

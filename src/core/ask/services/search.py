@@ -1,9 +1,8 @@
 import json
 
+from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, ValidationError
 
-from ....modules.llm_provider.providers.base import LLMProviderBase
-from ....modules.llm_provider.providers.ollama import OllamaProvider
 from ....modules.owl_reranker.base import IRanker
 from ....modules.scrapy.providers.base import IScraper
 from ....modules.search_engine.providers.base import ISearchProvider
@@ -87,7 +86,7 @@ class SearchQuerySchema(BaseModel):
 async def sse_search_generator(
     query: str,
     searching: ISearchProvider,
-    model: LLMProviderBase,
+    model: BaseChatModel,
     scraper: IScraper,
     ranker: IRanker,
 ):
@@ -98,7 +97,7 @@ async def sse_search_generator(
         # search_query = json.loads(search_query)
         yield f"event: status\ndata: {json.dumps({'step': 'Building query for search engine...'})}\n\n"
 
-        raw_search_query = await model.generate(make_query_for_search_engine(query))
+        raw_search_query = model.generate(make_query_for_search_engine(query))
         print("\nraw_search_query:", raw_search_query, "\n")
 
         clean_json = raw_search_query.strip().strip("`").removeprefix("json\n")

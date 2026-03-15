@@ -5,7 +5,7 @@ from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 
 
 class LLMProvider(SQLModel, table=True):
-    id: uuid.UUID = Field(default=None, primary_key=True)
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     name: str = Field(unique=True, description="Np. 'OpenRouter Main', 'Local Ollama'")
     provider_type: str = Field(description="Np. 'openai', 'ollama', 'groq'")
     base_url: Optional[str] = Field(default=None)
@@ -15,7 +15,7 @@ class LLMProvider(SQLModel, table=True):
 
 
 class LLMModelCatalog(SQLModel, table=True):
-    id: uuid.UUID = Field(default=None, primary_key=True)
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     provider_id: uuid.UUID = Field(foreign_key="llmprovider.id")
 
     provider: Optional[LLMProvider] = Relationship(back_populates="models")

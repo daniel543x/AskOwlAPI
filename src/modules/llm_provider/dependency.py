@@ -25,9 +25,11 @@ async def get_llm_client(
     ),  # Change to display name?
 ) -> BaseChatModel:
 
+    user_role_names = [role.name for role in user.roles]
+
     model_config, provider_config = await repo.resolve_model_config(
         user_id=user.id,
-        user_role=user.role,
+        user_roles=user_role_names,
         requested_model_id=request_model_id,
     )
 

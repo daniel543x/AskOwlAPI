@@ -47,6 +47,7 @@ async def get_current_user(
                 user_id = uuid.UUID(user_id_str)
                 user = await session.get(User, user_id)
                 if user:
+                    await session.refresh(user, attribute_names=["roles"])
                     return user
         except Exception:
             raise credentials_exception

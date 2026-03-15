@@ -47,6 +47,24 @@ async def assign_role_to_user(
     return True
 
 
+async def assing_role_in_user_create(session: AsyncSession, user_id: UUID) -> None:
+    role = await get_role_by_name(session, "user")
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="[Error]: Role 'user' not found.",
+        )
+
+    statement = select(UserRole).where(
+        UserRole.user_id == user_id,
+        UserRole.role_id == role.id,
+    )
+    existing_link = (await session.execute(statement)).scalar_one_or_none()
+    if not existing_link:
+        user_role_link = UserRole(user_id=user_id, role_id=role.id)
+        session.add(user_role_link)
+
+
 async def remove_role_from_user(
     session: AsyncSession, user_id: UUID, role_name: str
 ) -> None:
