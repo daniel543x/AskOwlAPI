@@ -70,9 +70,6 @@ async def sse_search_generator(
 ):
     try:
         # <----- LLM building query ----->
-        # Step: 1
-        # search_query = await model.generate(make_query_for_search_engine(query))
-        # search_query = json.loads(search_query)
         yield f"event: status\ndata: {json.dumps({'step': 'Building query for search engine...'})}\n\n"
 
         query_chain = query_optimization_prompt | model | query_parser
@@ -92,8 +89,6 @@ async def sse_search_generator(
         yield f"event: query_generated\ndata: {json.dumps({'query': actual_search_query})}\n\n"
 
         # <----- Searching ----->
-        # Step: 2
-        # sources = await searching.search(query=search_query.get("search_query"))
         yield f"event: status\ndata: {json.dumps({'step': 'Searching URLs...'})}\n\n"
         sources = await searching.search(query=actual_search_query)
 
@@ -102,22 +97,14 @@ async def sse_search_generator(
             return
 
         # <----- Ranking searching results ----->
-        # Step: 3
-        # sources = ranker.rank_web_search(query, sources)
         yield f"event: status\ndata: {json.dumps({'step': 'Ranking URLs...'})}\n\n"
         ranked_sources = ranker.rank_web_search(query, sources)
 
         # <----- Scraping ----->
-        # Step: 4
-        # content = await scraper.scrape(sources)
         yield f"event: status\ndata: {json.dumps({'step': 'Downloading data...'})}\n\n"
         content = await scraper.scrape(ranked_sources)
-        # print("\ncontent:", content, "\n")
 
         # <----- Chunking content data ----->
-        # Step: 5
-        # if content:
-        #    content = chunk_markdown_data(content)
         if not content:
             yield f"event: warning\ndata: {json.dumps({'warning': 'Empty source. No response can be give.'})}\n\n"
             return
@@ -126,8 +113,6 @@ async def sse_search_generator(
         chunked_content = chunk_markdown_data(content)
 
         # <----- Ranking chunked data ----->
-        #
-        # content = ranker.rank_chunks(query, content, 20)
         yield f"event: status\ndata: {json.dumps({'step': 'Choose the best data...'})}\n\n"
         best_content = ranker.rank_chunks(query, chunked_content, 20)
 
@@ -141,7 +126,6 @@ async def sse_search_generator(
                 context_str = "\n\n---\n\n".join(str(item) for item in best_content)
 
         # <----- LLM building answer  ----->
-        # Step: 7
         yield f"event: status\ndata: {json.dumps({'step': 'Generating answer...'})}\n\n"
         answer_chain = answer_generation_prompt | model
         async for chunk in answer_chain.astream({"query": query, "data": context_str}):
