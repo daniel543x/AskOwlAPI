@@ -13,7 +13,10 @@ class OwlRanker(IRanker):
         self.ranker = Ranker(model_name=model_name, cache_dir=cache_dir)
 
     def rank_web_search(
-        self, query: str, search_data: List[SearchResult]
+        self,
+        query: str,
+        search_data: List[SearchResult],
+        top_n: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
 
         if not search_data:
@@ -47,6 +50,13 @@ class OwlRanker(IRanker):
                 ranked_list.append({"url": url, "score": score})
             else:
                 print(f"Not found ID: {doc_id} in data_copy. Type: {type(item['id'])}")
+
+        # ranked_list
+        top_n_list = []
+        if top_n is not None and len(ranked_list) >= top_n:
+            for element in range(0, top_n):
+                top_n_list.append(ranked_list[element])
+            ranked_list = top_n_list
 
         return ranked_list
 

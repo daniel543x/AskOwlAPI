@@ -36,7 +36,9 @@ async def ask_research(
     scraper: IScraper = Depends(get_scraper),
     ranker: IRanker = Depends(get_ranker),
 ):
-    message = model.invoke("Hey!")
+    sources = await searching.search(query)
+    message = ranker.rank_web_search(query, sources, 5)
+
     return {"message": message}
 
 

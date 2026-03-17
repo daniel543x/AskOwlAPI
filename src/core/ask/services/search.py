@@ -98,7 +98,7 @@ async def sse_search_generator(
 
         # <----- Ranking searching results ----->
         yield f"event: status\ndata: {json.dumps({'step': 'Ranking URLs...'})}\n\n"
-        ranked_sources = ranker.rank_web_search(query, sources)
+        ranked_sources = ranker.rank_web_search(query, sources, 10)
 
         # <----- Scraping ----->
         yield f"event: status\ndata: {json.dumps({'step': 'Downloading data...'})}\n\n"
