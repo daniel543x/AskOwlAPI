@@ -17,15 +17,21 @@ router = APIRouter(prefix="/ask", tags=["Asks"])
 @router.get("/search")
 async def ask_search(
     query: str = Query(..., description="User query."),
+    stream: bool = Query(
+        True, description="Enable/Disenable streaming response. Default True."
+    ),
     searching: ISearchProvider = Depends(get_search_provider),
     model: BaseChatModel = Depends(get_llm_client),
     scraper: IScraper = Depends(get_scraper),
     ranker: IRanker = Depends(get_ranker),
 ):
-    return StreamingResponse(
-        sse_search_generator(query, searching, model, scraper, ranker),
-        media_type="text/event-stream",
-    )
+    if stream:
+        return StreamingResponse(
+            sse_search_generator(query, searching, model, scraper, ranker),
+            media_type="text/event-stream",
+        )
+    else:
+        return {"answer": "answer"}
 
 
 @router.get("/research")

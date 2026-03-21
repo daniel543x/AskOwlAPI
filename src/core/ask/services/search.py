@@ -137,3 +137,24 @@ async def sse_search_generator(
 
     except Exception as e:
         yield f"event: error\ndata: {json.dumps({'error': f'Critical error: {str(e)}'})}\n\n"
+
+
+# Rozbić sse_search_generator() na 3 funkcje
+
+# <----- Main Logic ----->
+# search_logic()
+#   # <----- LLM building query ----->
+#   # <----- Searching ----->
+#   # <----- Ranking searching results ----->
+#   # <----- Scraping ----->
+#   # <----- Chunking content data ----->
+#   # <----- Ranking chunked data ----->
+#   # <----- LLM building answer  ----->
+
+# <----- SSE Adapter / Wrapper ----->
+# search_logic()
+# return -> sse
+
+# <----- JSON Adapter / Wrapper ----->
+# search_logic()
+# return -> json {query, model, answer, source}

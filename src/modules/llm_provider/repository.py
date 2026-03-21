@@ -42,13 +42,13 @@ class LLMRepository:
             target_model = await self._get_system_default_model(user_roles)
 
         if not target_model:
-            raise ValueError("Brak skonfigurowanego modelu domyślnego w systemie.")
+            raise ValueError("Not found model config.")
 
         provider = await self.session.get(LLMProvider, target_model.provider_id)
 
         if not provider:
             raise ValueError(
-                f"Brak konfiguracji dostawcy dla modelu {target_model.model_name}"
+                f"Not found config for model provider: {target_model.model_name}"
             )
 
         return target_model, provider

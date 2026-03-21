@@ -130,5 +130,5 @@ Comprehensive testing phase to ensure system stability, security compliance, and
 - [ ] Add more inline comments in complex modules.
 - [ ] Breaking down single-line loops.
 - [x] Make a pre-vision for docs.
-- [ ] Refactor `cryptography.py` to an object-oriented design (create a `CryptoService` class).
+- [x] Refactor `cryptography.py` to an object-oriented design (create a `CryptoService` class).
 - [ ] Looking for / check out code review tools.

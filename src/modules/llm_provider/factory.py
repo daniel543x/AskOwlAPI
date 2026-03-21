@@ -1,11 +1,14 @@
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 
-from ...tools.cryptography import decrypt
+from ...tools.cryptography import get_crypto_service
 from .model import LLMModelCatalog, LLMProvider
 
 
 class LLMFactory:
+    def __init__(self) -> None:
+        self.CrytpoService = get_crypto_service()
+
     def create_llm(
         self, model_config: LLMModelCatalog, provider_config: LLMProvider
     ) -> BaseChatModel:
@@ -17,7 +20,7 @@ class LLMFactory:
         api_key = None
         if provider_config.api_key_encrypted:
             try:
-                api_key = decrypt(provider_config.api_key_encrypted)
+                api_key = self.CrytpoService.decrypt(provider_config.api_key_encrypted)
             except Exception as e:
                 print(f"Can't decrypt API KEY: {e}")
                 pass
