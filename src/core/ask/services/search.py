@@ -1,5 +1,6 @@
 import json
 
+from fastapi import HTTPException
 from langchain_core.language_models import BaseChatModel
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -141,20 +142,126 @@ async def sse_search_generator(
 
 # Rozbić sse_search_generator() na 3 funkcje
 
+
 # <----- Main Logic ----->
-# search_logic()
-#   # <----- LLM building query ----->
-#   # <----- Searching ----->
-#   # <----- Ranking searching results ----->
-#   # <----- Scraping ----->
-#   # <----- Chunking content data ----->
-#   # <----- Ranking chunked data ----->
-#   # <----- LLM building answer  ----->
+async def search_logic(
+    query: str,
+    searching: ISearchProvider,
+    model: BaseChatModel,
+    scraper: IScraper,
+    ranker: IRanker,
+):
+    try:
+        # <----- LLM building query ----->
+        yield "status", {"step": "Building query for search engine..."}
+
+        query_chain = query_optimization_prompt | model | query_parser
+        actual_search_query = query
+
+        try:
+            parsed_output = await query_chain.ainvoke(
+                {
+                    "query": query,
+                    "format_instructions": query_parser.get_format_instructions(),
+                }
+            )
+            actual_search_query = parsed_output["search_query"]
+        except ValidationError as e:
+            print(f"Error: {e}")
+            actual_search_query = query  # Fallback
+
+        yield "query_generated", {"query": actual_search_query}
+
+        # <----- Searching ----->
+        yield "status", {"step": "Searching URLs..."}
+        sources = await searching.search(query=actual_search_query)
+
+        if not sources:
+            yield "error", {"error": "No search results found."}
+            return
+
+        # <----- Ranking searching results ----->
+        yield "status", {"step": "Ranking URLs..."}
+        ranked_sources = ranker.rank_web_search(query, sources, 10)
+
+        # <----- Scraping ----->
+        yield "status", {"step": "Downloading data..."}
+        content = await scraper.scrape(ranked_sources)
+
+        if not content:
+            yield "warning", {"warning": "Empty source. No response can be give."}
+            return
+
+        # <----- Chunking content data ----->
+        yield "status", {"step": "Chunking data..."}
+        chunked_content = chunk_markdown_data(content)
+
+        # <----- Ranking chunked data ----->
+        yield "status", {"step": "Choose the best data..."}
+        best_content = ranker.rank_chunks(query, chunked_content, 20)
+
+        context_str = ""
+        if best_content:
+            if isinstance(best_content, list) and isinstance(best_content[0], dict):
+                context_str = "\n\n---\n\n".join(
+                    item.get("content", str(item)) for item in best_content
+                )
+            else:
+                context_str = "\n\n---\n\n".join(str(item) for item in best_content)
+
+        # <----- LLM building answer  ----->i
+        yield (
+            "context_ready",
+            {"context": context_str, "sources": sources, "query": query},
+        )
+
+    except Exception as e:
+        yield "error", {"error": f"Critical error: {str(e)}"}
+
 
 # <----- SSE Adapter / Wrapper ----->
-# search_logic()
+# search_sse()
 # return -> sse
+async def search_sse_adapter(
+    query: str,
+    searching: ISearchProvider,
+    model: BaseChatModel,
+    scraper: IScraper,
+    ranker: IRanker,
+):
+    proxy_status_data = search_logic(query, searching, model, scraper, ranker)
+
+    # if error -> Exception
+    # if status -> event(status)
+    # if llm_steram -> event(llm_stream)
+
+    async for status, data in proxy_status_data:
+        if status == "context_ready":
+            yield f"event: status\nda ta:{json.dumps({'step': 'Generating answer...'})}"
+
+            answer_chain = answer_generation_prompt | model
+
+            async for chunk in answer_chain.astream({"query": query, "data": data}):
+                if chunk.content:
+                    yield f"event: message\ndata: {json.dumps({'text': chunk.content})}\n\n"
+
+            """
+            yield f"event: status\ndata: {json.dumps({'step': 'Generating answer...'})}\n\n"
+            answer_chain = answer_generation_prompt | model
+            async for chunk in answer_chain.astream({"query": query, "data": context_str}):
+                if chunk.content:
+                    yield f"event: message\ndata: {json.dumps({'text': chunk.content})}\n\n"
+            """
+        elif status == "error":
+            raise HTTPException(
+                status_code=500,
+                detail=data.get("error", "Failed to execute search logic."),
+            )
+            return
+        else:
+            yield f"event: {status}\ndata: {json.dumps(data)}\n\n"
+
 
 # <----- JSON Adapter / Wrapper ----->
-# search_logic()
+# search_json()
 # return -> json {query, model, answer, source}

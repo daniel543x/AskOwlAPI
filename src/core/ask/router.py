@@ -9,7 +9,7 @@ from ...modules.scrapy.factory import get_scraper
 from ...modules.scrapy.providers.base import IScraper
 from ...modules.search_engine.factory import get_search_provider
 from ...modules.search_engine.providers.base import ISearchProvider
-from .services.search import sse_search_generator
+from .services.search import search_sse_adapter
 
 router = APIRouter(prefix="/ask", tags=["Asks"])
 
@@ -27,7 +27,7 @@ async def ask_search(
 ):
     if stream:
         return StreamingResponse(
-            sse_search_generator(query, searching, model, scraper, ranker),
+            search_sse_adapter(query, searching, model, scraper, ranker),
             media_type="text/event-stream",
         )
     else:
