@@ -9,7 +9,7 @@ from ...modules.scrapy.factory import get_scraper
 from ...modules.scrapy.providers.base import IScraper
 from ...modules.search_engine.factory import get_search_provider
 from ...modules.search_engine.providers.base import ISearchProvider
-from .services.search import search_sse_adapter
+from .services.search import search_json_adapter, search_sse_adapter
 
 router = APIRouter(prefix="/ask", tags=["Asks"])
 
@@ -31,7 +31,8 @@ async def ask_search(
             media_type="text/event-stream",
         )
     else:
-        return {"answer": "answer"}
+        answer = await search_json_adapter(query, searching, model, scraper, ranker)
+        return {"answer": answer}
 
 
 @router.get("/research")

@@ -1,4 +1,5 @@
 import json
+from typing import Any, Dict
 
 from fastapi import HTTPException
 from langchain_core.language_models import BaseChatModel
@@ -265,3 +266,49 @@ async def search_sse_adapter(
 # <----- JSON Adapter / Wrapper ----->
 # search_json()
 # return -> json {query, model, answer, source}
+
+
+async def search_json_adapter(
+    query: str,
+    searching: ISearchProvider,
+    model: BaseChatModel,
+    scraper: IScraper,
+    ranker: IRanker,
+) -> Dict[str, Any]:
+
+    proxy_status_data = search_logic(query, searching, model, scraper, ranker)
+    print("\n\n\nSetup\n\n\n")
+    search_data = None
+
+    async for status, data in proxy_status_data:
+        if status == "error":
+            raise HTTPException(
+                status_code=500,
+                detail=data.get("error", "Failed to execute search logic."),
+            )
+
+        if status == "context_ready":
+            search_data = data
+            break
+
+    if not search_data:
+        return {"error": "No search data."}
+
+    print("\n\n\nSearch Data\n\n\n")
+
+    answer_chain = answer_generation_prompt | model
+
+    print("\n\n\nAnswer\n\n\n")
+
+    response = await answer_chain.ainvoke(
+        {"query": search_data["query"], "data": search_data["context"]}
+    )
+
+    print(f"\n\n\n{response}\n\n\n")
+
+    return {
+        "query": search_data["query"],
+        "answer": response.content,
+        # "model": search_data["model"],
+        "sources": search_data["sources"],
+    }
