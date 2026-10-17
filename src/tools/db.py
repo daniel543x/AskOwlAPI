@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 from urllib.parse import quote_plus
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlmodel import SQLModel
 
@@ -21,6 +22,8 @@ engine = create_async_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
 # Function for init db tables
 async def init_db(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
+        # The chunk store needs pgvector; the compose db image ships it.
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(SQLModel.metadata.create_all)
 
 

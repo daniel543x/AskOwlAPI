@@ -60,6 +60,15 @@ class Settings(BaseSettings):
     DEFAULT_CHAT_MODEL_NAME: str = "qwen3.5"
     MODEL_PROBE_TIMEOUT: float = 3.0
 
+    # Default embedding model (PLAN decision #1, 2026-10-17: bge-m3).
+    DEFAULT_EMBEDDING_MODEL_NAME: str = "bge-m3"
+    DEFAULT_EMBEDDING_MODEL_DIMS: int = 1024
+
+    # <----- Hybrid retrieval ----->
+    # Vector candidates fetched from the chunk store before cross-encoder
+    # reranking. Chunks are embedded at scrape time when an embedder resolves.
+    VECTOR_CANDIDATES_K: int = 25
+
     @field_validator("MASTER_KEY")
     @classmethod
     def _validate_master_key(cls, value: str) -> str:

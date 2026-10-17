@@ -1,7 +1,10 @@
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from langchain_core.language_models import BaseChatModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...modules.embedding.base import IEmbedder
+from ...modules.embedding.factory import get_optional_embedder
 from ...modules.llm_provider.dependency import get_llm_client
 from ...modules.owl_reranker.base import IRanker
 from ...modules.owl_reranker.factory import get_ranker
@@ -9,6 +12,7 @@ from ...modules.scrapy.factory import get_scraper
 from ...modules.scrapy.providers.base import IScraper
 from ...modules.search_engine.factory import get_search_provider
 from ...modules.search_engine.providers.base import ISearchProvider
+from ...tools.db import get_session
 from .services.search import search_json_adapter, search_sse_adapter
 
 router = APIRouter(prefix="/ask", tags=["Asks"])
@@ -24,14 +28,32 @@ async def ask_search(
     model: BaseChatModel = Depends(get_llm_client),
     scraper: IScraper = Depends(get_scraper),
     ranker: IRanker = Depends(get_ranker),
+    embedder: IEmbedder | None = Depends(get_optional_embedder),
+    session: AsyncSession = Depends(get_session),
 ):
     if stream:
         return StreamingResponse(
-            search_sse_adapter(query, searching, model, scraper, ranker),
+            search_sse_adapter(
+                query,
+                searching,
+                model,
+                scraper,
+                ranker,
+                embedder=embedder,
+                session=session,
+            ),
             media_type="text/event-stream",
         )
     else:
-        answer = await search_json_adapter(query, searching, model, scraper, ranker)
+        answer = await search_json_adapter(
+            query,
+            searching,
+            model,
+            scraper,
+            ranker,
+            embedder=embedder,
+            session=session,
+        )
         return {"answer": answer}
 
 

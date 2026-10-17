@@ -64,7 +64,7 @@ async def get_embedder(
     repo: ModelRepository = Depends(get_repository),
     factory: EmbeddingFactory = Depends(get_embedding_factory),
     user: User = Depends(get_current_user),
-    request_model_id: uuid.UUID | None = Query(default=None),
+    request_model_id: uuid.UUID | None = Query(default=None, alias="embedder_id"),
 ) -> IEmbedder:
     try:
         resolved = await repo.resolve_model(
@@ -81,3 +81,28 @@ async def get_embedder(
             else status.HTTP_503_SERVICE_UNAVAILABLE
         )
         raise HTTPException(status_code=code, detail=e.reason) from e
+
+
+# Dependency: optional embedder for hybrid retrieval. Degrades to None when
+# no embedding model is configured instead of failing the request.
+async def get_optional_embedder(
+    repo: ModelRepository = Depends(get_repository),
+    factory: EmbeddingFactory = Depends(get_embedding_factory),
+    user: User = Depends(get_current_user),
+    request_model_id: uuid.UUID | None = Query(default=None, alias="embedder_id"),
+) -> IEmbedder | None:
+    try:
+        resolved = await repo.resolve_model(
+            kind=ModelKind.EMBEDDING.value,
+            user_id=user.id,
+            user_roles=[role.name for role in user.roles],
+            requested_model_id=request_model_id,
+        )
+        return factory.create_embedder(resolved)
+    except (SelectionError, ValueError) as e:
+        logger.info(
+            "Hybrid retrieval disabled for this request (no usable "
+            "embedder): %s",
+            e,
+        )
+        return None

@@ -15,6 +15,8 @@ from typing import Any
 from fastapi import HTTPException
 from langchain_core.language_models import BaseChatModel
 
+from ....modules.chunk_store.repository import ChunkRepository
+from ....modules.embedding.base import IEmbedder
 from ....modules.owl_reranker.base import IRanker
 from ....modules.scrapy.providers.base import IScraper
 from ....modules.search_engine.providers.base import ISearchProvider
@@ -60,14 +62,21 @@ async def search_logic(
     model: BaseChatModel,
     scraper: IScraper,
     ranker: IRanker,
+    embedder: IEmbedder | None = None,
+    session=None,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the search pipeline, yielding (event, payload) pairs.
+
+    When an embedder and DB session are provided, scraped chunks are
+    embedded into the vector store and context is retrieved via hybrid
+    retrieval (vector candidates -> cross-encoder rerank).
 
     Errors are reported as ``error`` events, never raised, so streaming
     consumers always get a well-formed termination.
     """
     try:
-        toolbox = AskToolbox(searching, scraper, ranker)
+        chunk_repo = ChunkRepository(session) if session is not None else None
+        toolbox = AskToolbox(searching, scraper, ranker, embedder, chunk_repo)
 
         # <----- Query rewriting (native tool call) ----->
         yield "status", {"step": "Building query for search engine..."}
@@ -105,6 +114,7 @@ async def search_logic(
         yield "context", {
             "context": context,
             "chunks": len(toolbox.selected_chunks),
+            "vector_retrieval": toolbox.used_vector_retrieval,
         }
 
         yield (
@@ -144,6 +154,8 @@ async def search_sse_adapter(
     model: BaseChatModel,
     scraper: IScraper,
     ranker: IRanker,
+    embedder: IEmbedder | None = None,
+    session=None,
 ) -> AsyncGenerator[str]:
     """Translate pipeline events into an SSE stream (protocol v2).
 
@@ -157,7 +169,10 @@ async def search_sse_adapter(
         event_id += 1
         return _sse_frame(event_id, event, data)
 
-    async for event, data in search_logic(query, searching, model, scraper, ranker):
+    pipeline = search_logic(
+        query, searching, model, scraper, ranker, embedder=embedder, session=session
+    )
+    async for event, data in pipeline:
         if event == "answer_ready":
             yield frame("status", {"step": "Generating answer..."})
 
@@ -189,18 +204,20 @@ async def search_json_adapter(
     model: BaseChatModel,
     scraper: IScraper,
     ranker: IRanker,
+    embedder: IEmbedder | None = None,
+    session=None,
 ) -> dict[str, Any]:
     """Run the pipeline and return the full result as one JSON-ready dict."""
     answer_data: dict[str, Any] | None = None
-    collected: dict[str, Any] = {}
     error_detail: str | None = None
 
-    async for event, data in search_logic(query, searching, model, scraper, ranker):
+    pipeline = search_logic(
+        query, searching, model, scraper, ranker, embedder=embedder, session=session
+    )
+    async for event, data in pipeline:
         if event == "error":
             error_detail = data.get("error", "Failed to execute search logic.")
             break
-        if event in ("query", "sources", "context"):
-            collected[event] = data
         if event == "answer_ready":
             answer_data = data
             break

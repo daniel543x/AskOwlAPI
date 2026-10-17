@@ -107,7 +107,7 @@ async def init_ranker() -> IRanker:
 # Dependency
 async def get_ranker(
     session: AsyncSession = Depends(get_session),
-    request_model_id: uuid.UUID | None = Query(default=None),
+    request_model_id: uuid.UUID | None = Query(default=None, alias="reranker_id"),
 ) -> IRanker:
     try:
         resolved = await _resolve_ranker_model(session, request_model_id)

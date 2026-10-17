@@ -167,18 +167,23 @@ documented; both SSE and JSON consumers served.
 
 ### Phase 3 — Hybrid retrieval (embeddings + vector store)
 
-- [ ] Decide the default embedding model + dims (open decision §0.4); add pgvector (compose
+- [x] Decide the default embedding model + dims (open decision §0.4); add pgvector (compose
       image `pgvector/pgvector:pg16`, `CREATE EXTENSION vector` in init).
-- [ ] New `chunks` table: content, metadata (url, headers), embedding vector, source page
+      **Decided 2026-10-17: `bge-m3`, 1024 dims (Ollama).**
+- [x] New `chunks` table: content, metadata (url, headers), embedding vector, source page
       reference. Embed at scrape time with the selected embedder.
-- [ ] Retrieval in `get_context`: vector similarity candidates (top-k) → cross-encoder rerank
-      → top-n context. Embedder and reranker selectable per request via the registry.
-- [ ] Eval harness (pytest + golden set of ~20 queries with known good sources): recall@k,
+- [x] Retrieval in `get_context`: vector similarity candidates (top-k) → cross-encoder rerank
+      → top-n context. Embedder and reranker selectable per request via the registry
+      (`embedder_id` / `reranker_id` query params).
+- [x] Eval harness (pytest + golden set of ~20 queries with known good sources): recall@k,
       MRR, end-to-end latency; a small CLI to compare configurations. New scorers must pass
       before becoming defaults.
 
 **DoD:** answers are produced from vector-retrieved + reranked context; eval report exists;
 default configuration beats the Phase 2 baseline on the golden set.
+*Status: implemented; the measured comparison run (`uv run python -m src.core.ask.eval`)
+needs the live stack (Postgres+pgvector, SearXNG, Ollama with `bge-m3` pulled) and is
+pending that run before Phase 3 is closed.*
 
 ### Phase 4 — Decision layer (Jev / Laya pre-scorers)
 
@@ -244,7 +249,7 @@ same query vs. no persona.
 
 | # | Decision | Owner | Needed by |
 |---|----------|-------|-----------|
-| 1 | Default embedding model + dims (proposal: `bge-m3`, 1024) | daniel | Phase 3 |
+| 1 | ~~Default embedding model + dims~~ **Decided 2026-10-17: `bge-m3`, 1024 dims (Ollama)** | daniel | Phase 3 ✅ |
 | 2 | Laya packaging: HTTP sidecar (recommended, matches Jev cloud too) vs in-process SDK | daniel | Phase 4 |
 | 3 | API-key scheme (shape, scopes, rotation) | daniel | Phase 7 |
 | 4 | Keep or drop the `pro` role name once modes are gated | daniel | Phase 5 |

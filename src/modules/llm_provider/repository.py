@@ -154,6 +154,15 @@ class ModelRepository:
                 default_params={"cache_dir": settings.RANKER_CACHE_DIR},
                 source=TIER_BUILTIN,
             )
+        if kind == ModelKind.EMBEDDING.value:
+            return ResolvedModel(
+                kind=kind,
+                model_name=settings.DEFAULT_EMBEDDING_MODEL_NAME,
+                provider_type="ollama",
+                base_url=settings.OLLAMA_BASE_URL,
+                vector_dims=settings.DEFAULT_EMBEDDING_MODEL_DIMS,
+                source=TIER_BUILTIN,
+            )
         return None
 
     # <----- Listing / preferences ----->
@@ -549,7 +558,35 @@ class ModelRepository:
             await self.session.flush()
 
         await self._set_default_if_missing(ModelKind.CHAT.value, entry.id)
+        await self._seed_embedding_entry(provider)
         await self.session.commit()
+
+    async def _seed_embedding_entry(self, provider: ModelProvider) -> None:
+        """Seed the default embedding model (PLAN decision #1: bge-m3)."""
+        entry = (
+            await self.session.exec(
+                select(ModelCatalogEntry).where(
+                    ModelCatalogEntry.provider_id == provider.id,
+                    ModelCatalogEntry.kind == ModelKind.EMBEDDING.value,
+                    ModelCatalogEntry.model_name
+                    == settings.DEFAULT_EMBEDDING_MODEL_NAME,
+                )
+            )
+        ).first()
+        if entry is None:
+            entry = ModelCatalogEntry(
+                provider_id=provider.id,
+                kind=ModelKind.EMBEDDING.value,
+                model_name=settings.DEFAULT_EMBEDDING_MODEL_NAME,
+                display_name=f"{settings.DEFAULT_EMBEDDING_MODEL_NAME} (Local)",
+                is_active=True,
+                required_role="user",
+                vector_dims=settings.DEFAULT_EMBEDDING_MODEL_DIMS,
+            )
+            self.session.add(entry)
+            await self.session.flush()
+
+        await self._set_default_if_missing(ModelKind.EMBEDDING.value, entry.id)
 
     async def _set_default_if_missing(self, kind: str, model_id: uuid.UUID) -> None:
         key = f"{DEFAULT_KEY_PREFIX}{kind}"

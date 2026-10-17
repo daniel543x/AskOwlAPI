@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel
 
 from src.app import app  # noqa: E402
+from src.modules.chunk_store.model import Chunk  # noqa: E402, F401
 from src.modules.identity.role.model import Role, UserRole  # noqa: E402, F401
 
 # Import all models so create_all sees every table.
