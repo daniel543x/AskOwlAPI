@@ -123,22 +123,22 @@ streaming and JSON answer; `uv run pytest` passes offline; no `print()` in `src/
 
 ### Phase 1 — Model registry v2 (admin-curated, local-first, all model kinds)
 
-- [ ] Generalize the `llm_provider` pattern into one registry for model kinds:
+- [x] Generalize the `llm_provider` pattern into one registry for model kinds:
       `chat`, `embedding`, `reranker` (cross-encoder), `decision` (Jev/Laya). Same tables and
       the same resolution order everywhere: request param → user preference (role-checked) →
       global default → built-in local default.
-- [ ] Catalog entries carry: provider (base URL + encrypted API key — supports cloud, host,
+- [x] Catalog entries carry: provider (base URL + encrypted API key — supports cloud, host,
       LAN), model name, default params, `is_active`, `required_role`, `capabilities`
       (e.g. `tools`, `streaming`), and for embeddings the vector dimensions.
-- [ ] Startup bootstrap: probe configured providers (Ollama `/api/tags`, HTTP ping for
+- [x] Startup bootstrap: probe configured providers (Ollama `/api/tags`, HTTP ping for
       others); seed catalog only with what actually responds; record health per provider;
       expose `GET /health/models`.
-- [ ] Fill in the empty `llm_provider/router.py`:
+- [x] Fill in the empty `llm_provider/router.py`:
       `GET /models?kind=…` (role-filtered listing), `PUT /models/{id}/preference`,
       admin CRUD for providers/entries/defaults (admin role).
-- [ ] Embedding provider module: `IEmbedder` interface + Ollama implementation (async,
+- [x] Embedding provider module: `IEmbedder` interface + Ollama implementation (async,
       batched). No consumer yet — Phase 3 wires it in.
-- [ ] Reranker registry: `IRanker` implementations registered by type; flashrank entry stays
+- [x] Reranker registry: `IRanker` implementations registered by type; flashrank entry stays
       the default. Model selection goes through the registry (kills the hardcoded
       `get_ranker`).
 

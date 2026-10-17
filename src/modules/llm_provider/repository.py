@@ -1,84 +1,197 @@
 import logging
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from ...tools.cryptography import CryptoService, get_crypto_service
 from ...tools.db import get_session
 from ...tools.settings import settings
-from .model import DefaultSettings, LLMModelCatalog, LLMProvider, UserLLMPreference
+from .health import probe_provider
+from .model import (
+    DefaultSettings,
+    ModelCatalogEntry,
+    ModelEntryCreate,
+    ModelEntryUpdate,
+    ModelKind,
+    ModelProvider,
+    ProviderCreate,
+    ProviderUpdate,
+    UserModelPreference,
+)
+from .selection import (
+    TIER_BUILTIN,
+    CatalogView,
+    ModelInfo,
+    ResolvedModel,
+    SelectionError,
+    has_role_access,
+    resolve_model_id,
+)
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_KEY_PREFIX = "default_model_id:"
+FLASHRANK_PROVIDER_NAME = "flashrank-local"
+OLLAMA_PROVIDER_NAME = "Local Ollama"
 
-class LLMRepository:
-    def __init__(self, session: AsyncSession):
+
+class ModelRepository:
+    """Database access for the model registry (providers, entries, defaults)."""
+
+    def __init__(self, session: AsyncSession, crypto: CryptoService | None = None):
         self.session = session
+        self.crypto = crypto or get_crypto_service()
 
-    async def resolve_model_config(
+    # <----- Resolution ----->
+
+    async def resolve_model(
         self,
+        kind: str,
         user_id: uuid.UUID,
         user_roles: list[str],
         requested_model_id: uuid.UUID | None = None,
-    ) -> tuple[LLMModelCatalog, LLMProvider]:
+    ) -> ResolvedModel:
+        view = await self._catalog_view(user_id)
 
-        target_model = None
-
-        if requested_model_id:
-            target_model = await self._get_and_validate_model(
-                requested_model_id, user_roles
+        try:
+            model_id, tier = resolve_model_id(
+                kind, requested_model_id, view, user_roles
             )
-            if not target_model:
-                raise PermissionError(
-                    f"Permission Denied model ID={requested_model_id} "
-                    f"or model not exist."
+        except SelectionError:
+            builtin = self._builtin_model(kind)
+            if builtin is None:
+                raise
+            return builtin
+
+        return await self._resolved_from_entry(model_id, tier)
+
+    async def _catalog_view(self, user_id: uuid.UUID) -> CatalogView:
+        entries = (await self.session.exec(select(ModelCatalogEntry))).all()
+        preferences = (
+            await self.session.exec(
+                select(UserModelPreference).where(
+                    UserModelPreference.user_id == user_id
+                )
+            )
+        ).all()
+        defaults_rows = (
+            await self.session.exec(
+                select(DefaultSettings).where(
+                    DefaultSettings.key.startswith(DEFAULT_KEY_PREFIX)  # type: ignore[attr-defined]
+                )
+            )
+        ).all()
+
+        view = CatalogView(
+            models={
+                entry.id: ModelInfo(
+                    id=entry.id,
+                    kind=entry.kind,
+                    required_role=entry.required_role,
+                    is_active=entry.is_active,
+                )
+                for entry in entries
+            },
+            user_preferences={
+                pref.kind: pref.selected_model_id for pref in preferences
+            },
+            defaults={
+                row.key.removeprefix(DEFAULT_KEY_PREFIX): uuid.UUID(row.value)
+                for row in defaults_rows
+            },
+        )
+        return view
+
+    async def _resolved_from_entry(
+        self, model_id: uuid.UUID, tier: str
+    ) -> ResolvedModel:
+        entry = await self.session.get(ModelCatalogEntry, model_id)
+        if entry is None:
+            raise SelectionError(f"Model {model_id} disappeared from the catalog.")
+        provider = await self.session.get(ModelProvider, entry.provider_id)
+
+        api_key = None
+        if provider and provider.api_key_encrypted:
+            try:
+                api_key = self.crypto.decrypt(provider.api_key_encrypted)
+            except Exception:
+                logger.exception(
+                    "Failed to decrypt API key of provider '%s'.", provider.name
                 )
 
-        if not target_model:
-            preference = await self.session.get(UserLLMPreference, user_id)
-            if preference and preference.selected_model_id:
-                target_model = await self._get_and_validate_model(
-                    preference.selected_model_id, user_roles
-                )
+        return ResolvedModel(
+            kind=entry.kind,
+            model_name=entry.model_name,
+            provider_type=provider.provider_type if provider else "unknown",
+            base_url=provider.base_url if provider else None,
+            api_key=api_key,
+            default_params=dict(entry.default_params or {}),
+            capabilities=list(entry.capabilities or []),
+            vector_dims=entry.vector_dims,
+            entry_id=entry.id,
+            source=tier,
+        )
 
-        if not target_model:
-            target_model = await self._get_system_default_model(user_roles)
-
-        if not target_model:
-            raise ValueError("Not found model config.")
-
-        provider = await self.session.get(LLMProvider, target_model.provider_id)
-
-        if not provider:
-            raise ValueError(
-                f"Not found config for model provider: {target_model.model_name}"
+    def _builtin_model(self, kind: str) -> ResolvedModel | None:
+        """Built-in local defaults, used when the catalog has nothing."""
+        if kind == ModelKind.CHAT.value:
+            return ResolvedModel(
+                kind=kind,
+                model_name=settings.DEFAULT_CHAT_MODEL_NAME,
+                provider_type="ollama",
+                base_url=settings.OLLAMA_BASE_URL,
+                source=TIER_BUILTIN,
             )
+        if kind == ModelKind.RERANKER.value:
+            return ResolvedModel(
+                kind=kind,
+                model_name=settings.RANKER_MODEL_NAME,
+                provider_type="flashrank",
+                default_params={"cache_dir": settings.RANKER_CACHE_DIR},
+                source=TIER_BUILTIN,
+            )
+        return None
 
-        return target_model, provider
+    # <----- Listing / preferences ----->
 
     async def get_available_models(
-        self, user_roles: list[str]
-    ) -> list[LLMModelCatalog]:
-        statement = select(LLMModelCatalog).where(LLMModelCatalog.is_active)
+        self, user_roles: list[str], kind: str | None = None
+    ) -> list[tuple[ModelCatalogEntry, ModelProvider]]:
+        statement = select(ModelCatalogEntry, ModelProvider).where(
+            ModelCatalogEntry.provider_id == ModelProvider.id,
+            ModelCatalogEntry.is_active,  # type: ignore[arg-type]
+            ModelProvider.is_active,  # type: ignore[arg-type]
+        )
+        if kind:
+            statement = statement.where(ModelCatalogEntry.kind == kind)
 
-        result = await self.session.execute(statement)
-        models = result.scalars().all()
-
+        rows = (await self.session.exec(statement)).all()  # type: ignore[call-overload]
         return [
-            m for m in models if self._check_role_access(user_roles, m.required_role)
+            (entry, provider)
+            for entry, provider in rows
+            if has_role_access(user_roles, entry.required_role)
         ]
 
     async def set_user_preference(
-        self, user_id: uuid.UUID, model_id: uuid.UUID, user_role: list[str]
-    ) -> UserLLMPreference:
-        model = await self._get_and_validate_model(model_id, user_role)
-        if not model:
-            raise PermissionError("Permission Denied.")
+        self, user_id: uuid.UUID, model_id: uuid.UUID, user_roles: list[str]
+    ) -> UserModelPreference:
+        entry = await self.session.get(ModelCatalogEntry, model_id)
+        if entry is None or not entry.is_active:
+            raise SelectionError(f"Model {model_id} not found or not active.")
+        if not has_role_access(user_roles, entry.required_role):
+            raise SelectionError(
+                f"Model {model_id} requires role '{entry.required_role}'.",
+                tier="permission",
+            )
 
-        preference = await self.session.get(UserLLMPreference, user_id)
-        if not preference:
-            preference = UserLLMPreference(user_id=user_id, selected_model_id=model_id)
+        preference = await self.session.get(UserModelPreference, (user_id, entry.kind))
+        if preference is None:
+            preference = UserModelPreference(
+                user_id=user_id, kind=entry.kind, selected_model_id=model_id
+            )
         else:
             preference.selected_model_id = model_id
 
@@ -87,91 +200,365 @@ class LLMRepository:
         await self.session.refresh(preference)
         return preference
 
-    async def _get_and_validate_model(
-        self, model_id: uuid.UUID, user_roles: list[str]
-    ) -> LLMModelCatalog | None:
-        model = await self.session.get(LLMModelCatalog, model_id)
+    async def get_user_preferences(
+        self, user_id: uuid.UUID
+    ) -> list[UserModelPreference]:
+        return list(
+            (
+                await self.session.exec(
+                    select(UserModelPreference).where(
+                        UserModelPreference.user_id == user_id
+                    )
+                )
+            ).all()
+        )
 
-        if model and model.is_active:
-            if self._check_role_access(user_roles, model.required_role):
-                return model
-        return None
+    # <----- Admin: providers ----->
 
-    async def _get_system_default_model(
-        self, user_roles: list[str]
-    ) -> LLMModelCatalog | None:
-        setting = await self.session.get(DefaultSettings, "default_model_id")
-        if setting and setting.value:
-            try:
-                model_uuid = uuid.UUID(setting.value)
-                return await self._get_and_validate_model(model_uuid, user_roles)
-            except ValueError:
-                return None
-        return None
+    async def create_provider(self, data: ProviderCreate) -> ModelProvider:
+        existing = await self._provider_by_name(data.name)
+        if existing is not None:
+            raise ValueError(f"Provider '{data.name}' already exists.")
 
-    def _check_role_access(self, user_roles: list[str], required_role: str) -> bool:
-        role_hierarchy = {"user": 0, "pro": 1, "admin": 2}
-        max_user_level = 0
-        for role in user_roles:
-            level = role_hierarchy.get(role, 0)
-            if level > max_user_level:
-                max_user_level = level
-        required_level = role_hierarchy.get(required_role, 0)
-        return max_user_level >= required_level
+        provider = ModelProvider(
+            name=data.name,
+            provider_type=data.provider_type,
+            base_url=data.base_url,
+            api_key_encrypted=(
+                self.crypto.encrypt(data.api_key) if data.api_key else None
+            ),
+            is_active=data.is_active,
+        )
+        self.session.add(provider)
+        await self.session.commit()
+        await self.session.refresh(provider)
+        logger.info("Created model provider '%s' (%s).", data.name, data.provider_type)
+        return provider
 
-    # --------------------------------------------------------- #
+    async def list_providers(self) -> list[ModelProvider]:
+        return list((await self.session.exec(select(ModelProvider))).all())
 
-    async def init_default_llm_config(self) -> None:
-        statement = select(LLMProvider).where(LLMProvider.name == "Local Ollama")
-        result = await self.session.execute(statement)
-        provider = result.scalar_one_or_none()
+    async def update_provider(
+        self, provider_id: uuid.UUID, data: ProviderUpdate
+    ) -> ModelProvider:
+        provider = await self._get_provider(provider_id)
+        changes = data.model_dump(exclude_unset=True)
 
-        if not provider:
-            logger.info("Seeding provider 'Local Ollama'...")
-            provider = LLMProvider(
-                name="Local Ollama",
-                provider_type="ollama",
-                base_url=settings.OLLAMA_BASE_URL,
+        if "name" in changes:
+            clash = await self._provider_by_name(changes["name"])
+            if clash is not None and clash.id != provider_id:
+                raise ValueError(f"Provider '{changes['name']}' already exists.")
+            provider.name = changes["name"]
+        if "base_url" in changes:
+            provider.base_url = changes["base_url"]
+        if "api_key" in changes:
+            provider.api_key_encrypted = (
+                self.crypto.encrypt(changes["api_key"]) if changes["api_key"] else None
+            )
+        if "is_active" in changes:
+            provider.is_active = changes["is_active"]
+
+        self.session.add(provider)
+        await self.session.commit()
+        await self.session.refresh(provider)
+        return provider
+
+    async def delete_provider(self, provider_id: uuid.UUID) -> None:
+        provider = await self._get_provider(provider_id)
+        entries = (
+            await self.session.exec(
+                select(ModelCatalogEntry).where(
+                    ModelCatalogEntry.provider_id == provider_id
+                )
+            )
+        ).all()
+        if entries:
+            raise ValueError(
+                f"Provider '{provider.name}' still has {len(entries)} catalog "
+                "entries; delete or move them first."
+            )
+        await self.session.delete(provider)
+        await self.session.commit()
+        logger.info("Deleted model provider '%s'.", provider.name)
+
+    async def _get_provider(self, provider_id: uuid.UUID) -> ModelProvider:
+        provider = await self.session.get(ModelProvider, provider_id)
+        if provider is None:
+            raise ValueError(f"Provider {provider_id} not found.")
+        return provider
+
+    async def _provider_by_name(self, name: str) -> ModelProvider | None:
+        result = await self.session.exec(
+            select(ModelProvider).where(ModelProvider.name == name)
+        )
+        return result.first()
+
+    # <----- Admin: catalog entries ----->
+
+    async def create_model(self, data: ModelEntryCreate) -> ModelCatalogEntry:
+        await self._get_provider(data.provider_id)
+
+        if data.kind == ModelKind.EMBEDDING and not data.vector_dims:
+            raise ValueError("Embedding entries must declare vector_dims.")
+
+        entry = ModelCatalogEntry(
+            provider_id=data.provider_id,
+            kind=data.kind.value if isinstance(data.kind, ModelKind) else data.kind,
+            model_name=data.model_name,
+            display_name=data.display_name or data.model_name,
+            default_params=dict(data.default_params or {}),
+            is_active=data.is_active,
+            required_role=data.required_role,
+            capabilities=list(data.capabilities or []),
+            vector_dims=data.vector_dims,
+        )
+        self.session.add(entry)
+        await self.session.commit()
+        await self.session.refresh(entry)
+        logger.info(
+            "Created catalog entry '%s' (kind=%s).", entry.model_name, entry.kind
+        )
+        return entry
+
+    async def list_models(self, kind: str | None = None) -> list[ModelCatalogEntry]:
+        statement = select(ModelCatalogEntry)
+        if kind:
+            statement = statement.where(ModelCatalogEntry.kind == kind)
+        return list((await self.session.exec(statement)).all())
+
+    async def update_model(
+        self, model_id: uuid.UUID, data: ModelEntryUpdate
+    ) -> ModelCatalogEntry:
+        entry = await self._get_model(model_id)
+        changes = data.model_dump(exclude_unset=True)
+
+        for field_name in (
+            "model_name",
+            "display_name",
+            "is_active",
+            "required_role",
+            "vector_dims",
+        ):
+            if field_name in changes:
+                setattr(entry, field_name, changes[field_name])
+        if "default_params" in changes and changes["default_params"] is not None:
+            entry.default_params = dict(changes["default_params"])
+        if "capabilities" in changes and changes["capabilities"] is not None:
+            entry.capabilities = list(changes["capabilities"])
+
+        if entry.kind == ModelKind.EMBEDDING.value and not entry.vector_dims:
+            raise ValueError("Embedding entries must declare vector_dims.")
+
+        self.session.add(entry)
+        await self.session.commit()
+        await self.session.refresh(entry)
+        return entry
+
+    async def delete_model(self, model_id: uuid.UUID) -> None:
+        entry = await self._get_model(model_id)
+
+        preferences = (
+            await self.session.exec(
+                select(UserModelPreference).where(
+                    UserModelPreference.selected_model_id == model_id
+                )
+            )
+        ).all()
+        for preference in preferences:
+            await self.session.delete(preference)
+
+        defaults = (
+            await self.session.exec(
+                select(DefaultSettings).where(DefaultSettings.value == str(model_id))
+            )
+        ).all()
+        for default_row in defaults:
+            await self.session.delete(default_row)
+
+        await self.session.delete(entry)
+        await self.session.commit()
+        logger.info("Deleted catalog entry '%s'.", entry.model_name)
+
+    async def get_model(self, model_id: uuid.UUID) -> ModelCatalogEntry:
+        """Fetch one catalog entry or raise ValueError (used by routes)."""
+        return await self._get_model(model_id)
+
+    async def _get_model(self, model_id: uuid.UUID) -> ModelCatalogEntry:
+        entry = await self.session.get(ModelCatalogEntry, model_id)
+        if entry is None:
+            raise ValueError(f"Model {model_id} not found.")
+        return entry
+
+    # <----- Admin: global defaults ----->
+
+    async def set_default(self, kind: str, model_id: uuid.UUID) -> DefaultSettings:
+        entry = await self._get_model(model_id)
+        if entry.kind != kind:
+            raise ValueError(
+                f"Model {model_id} is of kind '{entry.kind}', not '{kind}'."
+            )
+        if not entry.is_active:
+            raise ValueError("Default model must be active.")
+
+        key = f"{DEFAULT_KEY_PREFIX}{kind}"
+        default_row = await self.session.get(DefaultSettings, key)
+        if default_row is None:
+            default_row = DefaultSettings(key=key, value=str(model_id))
+        else:
+            default_row.value = str(model_id)
+
+        self.session.add(default_row)
+        await self.session.commit()
+        await self.session.refresh(default_row)
+        return default_row
+
+    async def get_defaults(self) -> dict[str, uuid.UUID]:
+        rows = (
+            await self.session.exec(
+                select(DefaultSettings).where(
+                    DefaultSettings.key.startswith(DEFAULT_KEY_PREFIX)  # type: ignore[attr-defined]
+                )
+            )
+        ).all()
+        return {
+            row.key.removeprefix(DEFAULT_KEY_PREFIX): uuid.UUID(row.value)
+            for row in rows
+        }
+
+    # <----- Health ----->
+
+    async def probe_providers(self) -> list[ModelProvider]:
+        """Probe every provider with an endpoint and persist the results."""
+        providers = await self.list_providers()
+        now = datetime.now(UTC)
+
+        for provider in providers:
+            if not provider.is_active:
+                continue
+            status = await probe_provider(
+                provider.provider_type,
+                provider.base_url,
+                settings.MODEL_PROBE_TIMEOUT,
+            )
+            provider.health_status = status
+            provider.last_probe_at = now
+            self.session.add(provider)
+            logger.info(
+                "Provider '%s' probe result: %s", provider.name, status
+            )
+
+        await self.session.commit()
+        return providers
+
+    # <----- Bootstrap ----->
+
+    async def bootstrap(self) -> None:
+        """Seed built-in providers/entries/defaults; probe everything."""
+        await self._ensure_flashrank()
+        await self._maybe_seed_ollama()
+        await self.probe_providers()
+
+    async def _ensure_flashrank(self) -> None:
+        provider = await self._provider_by_name(FLASHRANK_PROVIDER_NAME)
+        if provider is None:
+            provider = ModelProvider(
+                name=FLASHRANK_PROVIDER_NAME,
+                provider_type="flashrank",
+                base_url=None,
                 api_key_encrypted=None,
+                is_active=True,
+                health_status="local",
             )
             self.session.add(provider)
             await self.session.flush()
-        else:
-            logger.debug("Provider 'Local Ollama' already exists.")
+            logger.info("Seeded in-process provider '%s'.", FLASHRANK_PROVIDER_NAME)
 
-        statement = select(LLMModelCatalog).where(
-            LLMModelCatalog.model_name == settings.DEFAULT_CHAT_MODEL_NAME,
-            LLMModelCatalog.provider_id == provider.id,
-        )
-        result = await self.session.execute(statement)
-        model = result.scalar_one_or_none()
-
-        if not model:
-            logger.info("Seeding model '%s'...", settings.DEFAULT_CHAT_MODEL_NAME)
-            model = LLMModelCatalog(
+        entry = (
+            await self.session.exec(
+                select(ModelCatalogEntry).where(
+                    ModelCatalogEntry.provider_id == provider.id,
+                    ModelCatalogEntry.kind == ModelKind.RERANKER.value,
+                    ModelCatalogEntry.model_name == settings.RANKER_MODEL_NAME,
+                )
+            )
+        ).first()
+        if entry is None:
+            entry = ModelCatalogEntry(
                 provider_id=provider.id,
+                kind=ModelKind.RERANKER.value,
+                model_name=settings.RANKER_MODEL_NAME,
+                display_name=f"flashrank {settings.RANKER_MODEL_NAME}",
+                default_params={"cache_dir": settings.RANKER_CACHE_DIR},
+                is_active=True,
+                required_role="user",
+            )
+            self.session.add(entry)
+            await self.session.flush()
+
+        await self._set_default_if_missing(ModelKind.RERANKER.value, entry.id)
+
+    async def _maybe_seed_ollama(self) -> None:
+        """Seed the built-in local Ollama provider only if it responds."""
+        status = await probe_provider(
+            "ollama", settings.OLLAMA_BASE_URL, settings.MODEL_PROBE_TIMEOUT
+        )
+        if status != "up":
+            logger.warning(
+                "Local Ollama at %s did not respond (%s); skipping seed of the "
+                "default chat model.",
+                settings.OLLAMA_BASE_URL,
+                status,
+            )
+            return
+
+        provider = await self._provider_by_name(OLLAMA_PROVIDER_NAME)
+        if provider is None:
+            provider = ModelProvider(
+                name=OLLAMA_PROVIDER_NAME,
+                provider_type="ollama",
+                base_url=settings.OLLAMA_BASE_URL,
+                api_key_encrypted=None,
+                is_active=True,
+            )
+            self.session.add(provider)
+            await self.session.flush()
+            logger.info("Seeded provider '%s' (probed up).", OLLAMA_PROVIDER_NAME)
+
+        entry = (
+            await self.session.exec(
+                select(ModelCatalogEntry).where(
+                    ModelCatalogEntry.provider_id == provider.id,
+                    ModelCatalogEntry.kind == ModelKind.CHAT.value,
+                    ModelCatalogEntry.model_name == settings.DEFAULT_CHAT_MODEL_NAME,
+                )
+            )
+        ).first()
+        if entry is None:
+            entry = ModelCatalogEntry(
+                provider_id=provider.id,
+                kind=ModelKind.CHAT.value,
                 model_name=settings.DEFAULT_CHAT_MODEL_NAME,
                 display_name=f"{settings.DEFAULT_CHAT_MODEL_NAME} (Local)",
                 default_params={"temperature": 0.7},
                 is_active=True,
                 required_role="user",
             )
-            self.session.add(model)
+            self.session.add(entry)
             await self.session.flush()
-        else:
-            logger.debug("Model '%s' already exists.", settings.DEFAULT_CHAT_MODEL_NAME)
 
-        setting = await self.session.get(DefaultSettings, "default_model_id")
-
-        if not setting:
-            logger.info("Setting default model in system settings...")
-            setting = DefaultSettings(key="default_model_id", value=str(model.id))
-            self.session.add(setting)
-
+        await self._set_default_if_missing(ModelKind.CHAT.value, entry.id)
         await self.session.commit()
-        logger.info("LLM bootstrap finished; default model is ready to use.")
+
+    async def _set_default_if_missing(self, kind: str, model_id: uuid.UUID) -> None:
+        key = f"{DEFAULT_KEY_PREFIX}{kind}"
+        existing = await self.session.get(DefaultSettings, key)
+        if existing is None:
+            self.session.add(DefaultSettings(key=key, value=str(model_id)))
+            await self.session.commit()
 
 
-# Deppendency
-def get_repository(session: AsyncSession = Depends(get_session)) -> LLMRepository:
-    return LLMRepository(session)
+# Dependency
+def get_repository(
+    session: AsyncSession = Depends(get_session),
+) -> ModelRepository:
+    return ModelRepository(session)

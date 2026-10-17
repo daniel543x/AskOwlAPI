@@ -20,9 +20,9 @@ from src.modules.identity.role.model import Role, UserRole  # noqa: E402, F401
 from src.modules.identity.user.model import User  # noqa: E402, F401
 from src.modules.llm_provider.model import (  # noqa: E402, F401
     DefaultSettings,
-    LLMModelCatalog,
-    LLMProvider,
-    UserLLMPreference,
+    ModelCatalogEntry,
+    ModelProvider,
+    UserModelPreference,
 )
 from src.modules.scrapy.model import ScrapySettings  # noqa: E402, F401
 from src.modules.search_engine.model import SearchProviderConfig  # noqa: E402, F401

@@ -25,8 +25,11 @@ done). `ROADMAP.md` is historical. Read the current phase in `PLAN.md` before st
 
 - `src/app.py` — FastAPI app + lifespan init. `src/init.py` — bootstrap (db, roles, defaults).
 - `src/core/ask/` — ask routes + pipeline (`services/search.py`, `services/chunking.py`).
-- `src/modules/llm_provider/` — model catalog, factories, selection (being generalized in
-  PLAN Phase 1 to chat / embedding / reranker / decision kinds).
+- `src/modules/llm_provider/` — model registry for all model kinds (chat / embedding /
+  reranker / decision): catalog tables, resolution (request → preference → default →
+  built-in), provider health probing, admin + user routes.
+- `src/modules/embedding/` — `IEmbedder` interface + Ollama implementation (Phase 3 wires
+  it into retrieval).
 - `src/modules/search_engine/`, `src/modules/scrapy/`, `src/modules/owl_reranker/` —
   pluggable search, scraping, ranking.
 - `src/modules/identity/` — JWT auth, users, roles (user/pro/admin).

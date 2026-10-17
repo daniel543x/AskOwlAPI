@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     # <----- LLM bootstrap defaults ----->
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     DEFAULT_CHAT_MODEL_NAME: str = "qwen3.5"
+    MODEL_PROBE_TIMEOUT: float = 3.0
 
     @field_validator("MASTER_KEY")
     @classmethod
