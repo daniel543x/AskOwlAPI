@@ -147,19 +147,19 @@ it per request; with only local Ollama running, defaults resolve without manual 
 
 ### Phase 2 — Tool-calling pipeline (`search` mode core)
 
-- [ ] Promote pipeline internals to first-class tools over the existing modules:
+- [x] Promote pipeline internals to first-class tools over the existing modules:
       `web_search(query)`, `fetch_pages(urls)`, `get_context(query, …)` (rerank/select).
-- [ ] Query rewriting: replace the prompt + `JsonOutputParser` step with a native tool call
+- [x] Query rewriting: replace the prompt + `JsonOutputParser` step with a native tool call
       (`bind_tools`); fallback to the raw query stays only as a *tool-protocol* error path,
       never free-form generation.
-- [ ] Answer synthesis: cited-answer contract enforced via tool call / structured output;
+- [x] Answer synthesis: cited-answer contract enforced via tool call / structured output;
       the answer step receives only tool-derived context ("no context → say so" rule).
-- [ ] Capability gating: steps requiring tools reject catalog models without the `tools`
+- [x] Capability gating: steps requiring tools reject catalog models without the `tools`
       capability with a clear 4xx + explanation.
-- [ ] SSE protocol v2, documented in `docs/api/`: events `status`, `query`, `sources`,
+- [x] SSE protocol v2, documented in `docs/api/`: events `status`, `query`, `sources`,
       `context`, `message`, `done`, `error` (+ `debug` events when debug mode is on), with
       event ids and a changelog; JSON mode returns the same data in one document.
-- [ ] Integration tests for the tool-calling flow using a scripted fake chat model
+- [x] Integration tests for the tool-calling flow using a scripted fake chat model
       (asserts tools were actually called — enforces the "no LLM without tool call" rule).
 
 **DoD:** `/ask/search` answers exclusively through tool calls (asserted by tests); protocol

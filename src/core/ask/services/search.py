@@ -1,4 +1,10 @@
-import asyncio
+"""Ask pipeline (protocol v2): every LLM step goes through a tool call.
+
+`search_logic` runs the linear pipeline (rewrite -> web_search ->
+fetch_pages -> get_context) and yields (event, payload) pairs. Adapters
+translate the events into SSE (with event ids) or one JSON document.
+"""
+
 import json
 import logging
 import time
@@ -7,71 +13,28 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import HTTPException
-from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models import BaseChatModel
-from langchain_core.output_parsers import JsonOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, ValidationError
 
 from ....modules.owl_reranker.base import IRanker
 from ....modules.scrapy.providers.base import IScraper
 from ....modules.search_engine.providers.base import ISearchProvider
 from ....tools.settings import settings
-from .chunking import chunk_markdown_data
+from .llm_steps import (
+    ToolProtocolError,
+    generate_cited_answer,
+    rewrite_query,
+    stream_cited_answer,
+)
+from .tools import AskToolbox
 
 logger = logging.getLogger(__name__)
 
 # (event name, payload) pairs yielded by the pipeline and consumed by adapters.
 PipelineEvent = tuple[str, dict[str, Any]]
 
-
-# <----- Pydantic Schemas ----->
-class SearchQuerySchema(BaseModel):
-    search_query: str
-
-
-query_parser = JsonOutputParser(pydantic_object=SearchQuerySchema)
-
-
-# <----- Prompts ----->
-query_optimization_prompt = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            """You are a Web Search Query Optimizer API.
-Your task is to convert the user's question into optimized search keywords.
-
-Guidelines:
-1. Noise Removal: Remove conversational filler.
-2. Keyword Optimization: Focus on entities and nouns.
-3. Language Preservation: Maintain original language.
-
-{format_instructions}
-""",
-        ),
-        ("human", "User Query: {query}"),
-    ]
-)
-
-answer_generation_prompt = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            """You are an expert AI assistant for a search engine.
-Answer the user's question based strictly on the provided context chunks.
-
-Guidelines:
-1. Analyze the user's question and the provided context.
-2. Formulate a precise answer based ONLY on the context.
-3. You MUST cite sources using Markdown link format: [Source](URL) immediately
-   after the claim.
-4. If context doesn't contain the answer, state that clearly.
-
-Context Chunks:
-{data}""",
-        ),
-        ("human", "User Query: {query}"),
-    ]
+NO_CONTEXT_ANSWER = (
+    "No relevant content could be extracted from the search results, "
+    "so no answer can be given."
 )
 
 
@@ -90,16 +53,6 @@ async def _stage(name: str):
             )
 
 
-def _context_to_str(best_content: Any) -> str:
-    if not best_content:
-        return ""
-    if isinstance(best_content, list) and isinstance(best_content[0], dict):
-        return "\n\n---\n\n".join(
-            item.get("content", str(item)) for item in best_content
-        )
-    return "\n\n---\n\n".join(str(item) for item in best_content)
-
-
 # <----- Main Logic ----->
 async def search_logic(
     query: str,
@@ -110,84 +63,57 @@ async def search_logic(
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the search pipeline, yielding (event, payload) pairs.
 
-    Adapters (SSE / JSON) translate these events into transport-specific
-    responses. Errors are reported as ``error`` events, never raised, so
-    streaming consumers always get a well-formed termination.
+    Errors are reported as ``error`` events, never raised, so streaming
+    consumers always get a well-formed termination.
     """
     try:
-        # <----- LLM building query ----->
+        toolbox = AskToolbox(searching, scraper, ranker)
+
+        # <----- Query rewriting (native tool call) ----->
         yield "status", {"step": "Building query for search engine..."}
-
-        actual_search_query = query
         async with _stage("query_optimization"):
-            query_chain = query_optimization_prompt | model | query_parser
-            try:
-                parsed_output = await query_chain.ainvoke(
-                    {
-                        "query": query,
-                        "format_instructions": query_parser.get_format_instructions(),
-                    }
-                )
-                actual_search_query = parsed_output["search_query"]
-            except (ValidationError, OutputParserException) as e:
-                logger.warning(
-                    "Query optimization failed, falling back to raw query: %s", e
-                )
-                actual_search_query = query
+            optimized_query, used_tool_call = await rewrite_query(model, query)
 
-        yield "query_generated", {"query": actual_search_query}
+        yield "query", {"query": optimized_query, "tool_call": used_tool_call}
+        if settings.DEBUG:
+            yield "debug", {
+                "stage": "query_optimization",
+                "used_tool_call": used_tool_call,
+            }
 
-        # <----- Searching ----->
+        # <----- Web search + ranking ----->
         yield "status", {"step": "Searching URLs..."}
         async with _stage("web_search"):
-            sources = await searching.search(query=actual_search_query)
+            await toolbox.web_search(optimized_query)
 
-        if not sources:
+        if not toolbox.ranked_sources:
             yield "error", {"error": "No search results found."}
             return
 
-        # <----- Ranking searching results ----->
-        yield "status", {"step": "Ranking URLs..."}
-        async with _stage("rank_sources"):
-            ranked_sources = await asyncio.to_thread(
-                ranker.rank_web_search, query, sources, settings.TOP_N_URLS
-            )
+        yield "sources", {"sources": toolbox.ranked_sources}
 
-        # <----- Scraping ----->
+        # <----- Scraping + chunking ----->
         yield "status", {"step": "Downloading data..."}
-        async with _stage("scrape_pages"):
-            content = await scraper.scrape(ranked_sources)
+        async with _stage("fetch_pages"):
+            await toolbox.fetch_pages()
 
-        if not content:
-            yield (
-                "warning",
-                {
-                    "warning": (
-                        "No page content could be extracted. No answer can be given."
-                    )
-                },
-            )
-            return
+        # <----- Context selection ----->
+        yield "status", {"step": "Selecting context..."}
+        async with _stage("get_context"):
+            context = await toolbox.get_context(query)
 
-        # <----- Chunking content data ----->
-        yield "status", {"step": "Chunking data..."}
-        async with _stage("chunk_pages"):
-            chunked_content = await asyncio.to_thread(chunk_markdown_data, content)
+        yield "context", {
+            "context": context,
+            "chunks": len(toolbox.selected_chunks),
+        }
 
-        # <----- Ranking chunked data ----->
-        yield "status", {"step": "Choose the best data..."}
-        async with _stage("rank_chunks"):
-            best_content = await asyncio.to_thread(
-                ranker.rank_chunks, query, chunked_content, settings.TOP_N_CHUNKS
-            )
-
-        # <----- Context ready for answer generation ----->
         yield (
-            "context_ready",
+            "answer_ready",
             {
-                "context": _context_to_str(best_content),
-                "sources": sources,
+                "context": context,
+                "sources": toolbox.ranked_sources,
                 "query": query,
+                "optimized_query": optimized_query,
             },
         )
 
@@ -196,18 +122,19 @@ async def search_logic(
         yield "error", {"error": f"Critical error: {str(e)}"}
 
 
-def _sse_frame(event: str, data: dict[str, Any]) -> str:
-    """Format one Server-Sent Event frame with correct framing and terminator."""
-    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+def _sse_frame(event_id: int, event: str, data: dict[str, Any]) -> str:
+    """One Server-Sent Events frame with id, event, and terminator."""
+    return f"event: {event}\nid: {event_id}\ndata: {json.dumps(data)}\n\n"
 
 
-async def _astream_answer(
-    query: str, context: str, model: BaseChatModel
-) -> AsyncGenerator[str]:
-    answer_chain = answer_generation_prompt | model
-    async for chunk in answer_chain.astream({"query": query, "data": context}):
-        if chunk.content:
-            yield chunk.content
+async def _stream_answer_frames(query: str, context: str, model: BaseChatModel):
+    """Yield answer text deltas; deterministic text when context is empty."""
+    if not context.strip():
+        yield NO_CONTEXT_ANSWER
+        return
+
+    async for delta in stream_cited_answer(model, query, context):
+        yield delta
 
 
 # <----- SSE Adapter ----->
@@ -218,28 +145,41 @@ async def search_sse_adapter(
     scraper: IScraper,
     ranker: IRanker,
 ) -> AsyncGenerator[str]:
-    """Translate pipeline events into a Server-Sent Events stream.
+    """Translate pipeline events into an SSE stream (protocol v2).
 
     Once streaming has started, errors MUST be emitted as ``error`` events;
     raising HTTPException here would kill the stream mid-flight.
     """
+    event_id = 0
+
+    def frame(event: str, data: dict[str, Any]) -> str:
+        nonlocal event_id
+        event_id += 1
+        return _sse_frame(event_id, event, data)
+
     async for event, data in search_logic(query, searching, model, scraper, ranker):
-        if event == "context_ready":
-            yield _sse_frame("status", {"step": "Generating answer..."})
+        if event == "answer_ready":
+            yield frame("status", {"step": "Generating answer..."})
 
             try:
-                async for text in _astream_answer(query, data["context"], model):
-                    yield _sse_frame("message", {"text": text})
+                async for delta in _stream_answer_frames(
+                    data["query"], data["context"], model
+                ):
+                    yield frame("message", {"text": delta})
+
+                if not data["context"].strip():
+                    yield frame("done", {"status": "no_context"})
+                else:
+                    yield frame("done", {"status": "completed"})
+            except ToolProtocolError as e:
+                logger.exception("Answer streaming failed for query: %s", query)
+                yield frame("error", {"error": str(e)})
             except Exception as e:
                 logger.exception("Answer streaming failed for query: %s", query)
-                yield _sse_frame(
-                    "error", {"error": f"Answer generation failed: {str(e)}"}
-                )
-                return
-
-            yield _sse_frame("done", {"status": "Completed"})
+                yield frame("error", {"error": f"Answer generation failed: {str(e)}"})
+            return
         else:
-            yield _sse_frame(event, data)
+            yield frame(event, data)
 
 
 # <----- JSON Adapter ----->
@@ -251,39 +191,52 @@ async def search_json_adapter(
     ranker: IRanker,
 ) -> dict[str, Any]:
     """Run the pipeline and return the full result as one JSON-ready dict."""
-    search_data: dict[str, Any] | None = None
+    answer_data: dict[str, Any] | None = None
+    collected: dict[str, Any] = {}
     error_detail: str | None = None
 
     async for event, data in search_logic(query, searching, model, scraper, ranker):
         if event == "error":
             error_detail = data.get("error", "Failed to execute search logic.")
             break
-        if event == "context_ready":
-            search_data = data
+        if event in ("query", "sources", "context"):
+            collected[event] = data
+        if event == "answer_ready":
+            answer_data = data
             break
 
     if error_detail:
         raise HTTPException(status_code=500, detail=error_detail)
 
-    if not search_data:
+    if answer_data is None:
         raise HTTPException(
             status_code=500,
             detail="No search data produced (no page content could be extracted).",
         )
 
-    try:
-        answer_chain = answer_generation_prompt | model
-        response = await answer_chain.ainvoke(
-            {"query": search_data["query"], "data": search_data["context"]}
-        )
-    except Exception as e:
-        logger.exception("Answer generation failed for query: %s", query)
-        raise HTTPException(
-            status_code=500, detail=f"Answer generation failed: {str(e)}"
-        ) from e
+    context = answer_data["context"]
+    if not context.strip():
+        answer = NO_CONTEXT_ANSWER
+    else:
+        try:
+            answer = await generate_cited_answer(
+                model, answer_data["query"], context
+            )
+        except ToolProtocolError as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"{e} The model must support tool calling.",
+            ) from e
+        except Exception as e:
+            logger.exception("Answer generation failed for query: %s", query)
+            raise HTTPException(
+                status_code=500, detail=f"Answer generation failed: {str(e)}"
+            ) from e
 
     return {
-        "query": search_data["query"],
-        "answer": response.content,
-        "sources": search_data["sources"],
+        "query": answer_data["query"],
+        "optimized_query": answer_data["optimized_query"],
+        "sources": answer_data["sources"],
+        "context": context,
+        "answer": answer,
     }

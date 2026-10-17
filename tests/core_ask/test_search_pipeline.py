@@ -1,123 +1,36 @@
 import json
 import re
-from typing import Any
 
 import pytest
 from fastapi import HTTPException
-from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
-from pydantic import Field
 
-from src.core.ask.services.search import search_json_adapter, search_sse_adapter
-from src.modules.owl_reranker.base import IRanker
-from src.modules.scrapy.providers.base import IScraper
-from src.modules.search_engine.providers.base import ISearchProvider, SearchResult
+from src.core.ask.services.contracts import CitedAnswer, SubmitSearchQuery
+from src.core.ask.services.search import (
+    NO_CONTEXT_ANSWER,
+    search_json_adapter,
+    search_sse_adapter,
+)
+from tests.core_ask.fakes import (
+    FakeRanker,
+    FakeScraper,
+    FakeSearchProvider,
+    ScriptedToolModel,
+    make_model,
+    make_scraper,
+    tool_call,
+)
 
-VALID_MASTER_KEY = "s2w6bWtjpHynwD8xBHyDzICIRvJ1ioxmhP39k6iBKDI="
+SSE_FRAME_RE = re.compile(
+    r"^event: (?P<event>[a-z_]+)\nid: (?P<id>\d+)\ndata: (?P<data>\{.*\})\n\n$"
+)
 
-SSE_FRAME_RE = re.compile(r"^event: (?P<event>[a-z_]+)\ndata: (?P<data>\{.*\})\n\n$")
-
-SAMPLE_HTML = """<html><head><title>Test Page</title></head><body>
-<h1>Unique Header One</h1>
-<p>This is the first paragraph with plenty of meaningful text for the extractor.</p>
-<h2>Unique Header Two</h2>
-<p>This is the second paragraph discussing the subsection in enough detail here.</p>
-</body></html>"""
-
-
-# <----- Fakes (no network, no DB, no real models) ----->
-
-
-class FakeSearchProvider(ISearchProvider):
-    def __init__(self, results: list[SearchResult] | None = None):
-        self.results = results if results is not None else [
-            SearchResult(
-                title="Result A",
-                snippet="Snippet about rust language",
-                url="http://example.com/a",
-            ),
-            SearchResult(
-                title="Result B",
-                snippet="Another snippet",
-                url="http://example.com/b",
-            ),
-        ]
-
-    async def search(self, query: str) -> list[SearchResult]:
-        return self.results
+ANSWER_TEXT = (
+    "Rust is a systems programming language. [Source](http://example.com/a)"
+)
 
 
-class FakeScraper(IScraper):
-    def __init__(self, pages: dict | None = None, return_empty: bool = False):
-        self.pages = pages or {}
-        self.return_empty = return_empty
-        self.requested: list[str] = []
-
-    @property
-    def name(self) -> str:
-        return "fake"
-
-    async def scrape(self, data_from_search) -> list[dict] | None:
-        if self.return_empty:
-            return []
-        content = []
-        for item in data_from_search:
-            self.requested.append(item["url"])
-            page = {"content": self.pages.get(item["url"], ""), "url": item["url"]}
-            content.append(page)
-        return content
-
-
-class FakeRanker(IRanker):
-    def rank_web_search(self, query, search_data, top_n=None):
-        ranked = [{"url": r.url, "score": 1.0} for r in search_data]
-        return ranked[:top_n] if top_n else ranked
-
-    def rank_chunks(self, query, chunks=None, top_n=None):
-        assert chunks is not None
-        return chunks[:top_n] if top_n else chunks
-
-
-class ScriptedChatModel(BaseChatModel):
-    """Chat model returning scripted responses and recording every prompt."""
-
-    responses: list[str] = Field(default_factory=list)
-    calls: list[Any] = Field(default_factory=list)
-
-    @property
-    def _llm_type(self) -> str:
-        return "scripted-test"
-
-    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        self.calls.append([m.content for m in messages])
-        content = self.responses.pop(0) if self.responses else "default-test-response"
-        generation = ChatGeneration(message=AIMessage(content=content))
-        return ChatResult(generations=[generation])
-
-
-def make_model() -> ScriptedChatModel:
-    return ScriptedChatModel(
-        responses=[
-            '{"search_query": "rust programming language"}',
-            "Rust is a systems programming language. [Source](http://example.com/a)",
-        ]
-    )
-
-
-def make_scraper() -> FakeScraper:
-    body = (
-        "# Unique Header One\n"
-        "This is the first paragraph with enough meaningful text for extraction.\n\n"
-        "## Unique Header Two\n"
-        "This is the second paragraph discussing the subsection in detail."
-    )
-    return FakeScraper(
-        pages={"http://example.com/a": body, "http://example.com/b": body}
-    )
-
-
-def parse_frames(frames: list[str]):
+def parse_frames(frames: list[str]) -> list[tuple[str, dict]]:
     parsed = []
     for frame in frames:
         match = SSE_FRAME_RE.match(frame)
@@ -126,155 +39,229 @@ def parse_frames(frames: list[str]):
     return parsed
 
 
-# <----- SSE adapter ----->
-
-
-async def test_sse_happy_path_event_sequence_and_framing():
-    events = parse_frames(
-        [
-            frame
-            async for frame in search_sse_adapter(
-                "what is rust?",
-                FakeSearchProvider(),
-                make_model(),
-                make_scraper(),
-                FakeRanker(),
-            )
-        ]
-    )
-
-    names = [name for name, _ in events]
-    assert names[0] == "status"
-    assert names[-1] == "done"
-    assert names.count("message") == 1
-
-    by_name = dict(events)
-    assert by_name["query_generated"]["query"] == "rust programming language"
-    assert by_name["message"]["text"].startswith("Rust is a systems")
-    assert by_name["done"] == {"status": "Completed"}
-
-
-async def test_sse_frames_have_correct_framing_and_terminator():
-    frames = [
+async def collect_sse(**kwargs) -> list[str]:
+    return [
         frame
         async for frame in search_sse_adapter(
-            "q", FakeSearchProvider(), make_model(), make_scraper(), FakeRanker()
+            kwargs.get("query", "what is rust?"),
+            kwargs.get("searching", FakeSearchProvider()),
+            kwargs.get("model", make_model(answer=ANSWER_TEXT)),
+            kwargs.get("scraper", make_scraper()),
+            kwargs.get("ranker", FakeRanker()),
         )
     ]
-    assert frames, "expected at least one frame"
+
+
+# <----- Protocol v2: framing and event sequence ----->
+
+
+async def test_sse_happy_path_event_sequence():
+    events = parse_frames(await collect_sse())
+    names = [name for name, _ in events]
+
+    assert names[:8] == [
+        "status",  # building query
+        "query",
+        "status",  # searching
+        "sources",
+        "status",  # downloading
+        "status",  # selecting context
+        "context",
+        "status",  # generating answer
+    ]
+    # One message event per streamed answer delta, then the terminator.
+    assert set(names[8:-1]) == {"message"}
+    assert len(names[8:-1]) >= 1
+    assert names[-1] == "done"
+
+
+async def test_sse_frames_have_ids_framing_and_terminator():
+    frames = await collect_sse()
+    assert frames
+
+    ids = []
     for frame in frames:
         assert frame.endswith("\n\n")
-        assert "da ta" not in frame
         assert "\ndata: " in frame
+        assert "da ta" not in frame
+        match = SSE_FRAME_RE.match(frame)
+        ids.append(int(match.group("id")))
+
+    assert ids == list(range(1, len(frames) + 1))
 
 
-async def test_sse_error_event_when_no_search_results():
-    events = parse_frames(
-        [
-            frame
-            async for frame in search_sse_adapter(
-                "q",
-                FakeSearchProvider(results=[]),
-                make_model(),
-                make_scraper(),
-                FakeRanker(),
-            )
+async def test_sse_query_event_carries_optimized_query():
+    events = parse_frames(await collect_sse())
+
+    by_name = dict(events)
+    assert by_name["query"]["query"] == "rust programming language"
+    assert by_name["query"]["tool_call"] is True
+
+
+async def test_sse_sources_event_lists_ranked_results():
+    events = parse_frames(await collect_sse())
+
+    by_name = dict(events)
+    sources = by_name["sources"]["sources"]
+    assert [s["url"] for s in sources] == [
+        "http://example.com/a",
+        "http://example.com/b",
+    ]
+    assert sources[0]["title"] == "Result A"
+    assert "score" in sources[0]
+
+
+async def test_sse_context_and_message_events():
+    events = parse_frames(await collect_sse())
+
+    by_name = dict(events)
+    assert by_name["context"]["chunks"] >= 1
+    assert "first paragraph" in by_name["context"]["context"]
+
+    message_texts = [data["text"] for name, data in events if name == "message"]
+    assert "".join(message_texts) == ANSWER_TEXT
+    assert by_name["done"]["status"] == "completed"
+
+
+# <----- The core rule: LLM only through tool calls ----->
+
+
+async def test_every_llm_call_has_tools_bound():
+    model = make_model(answer=ANSWER_TEXT)
+    await collect_sse(model=model)
+
+    # Rewrite step and answer step each bound a tool contract first.
+    assert len(model.calls) == 2
+    assert len(model.bindings) == 2
+    assert model.bindings[0] == [SubmitSearchQuery]
+    assert model.bindings[1] == [CitedAnswer]
+
+
+async def test_answer_step_receives_only_tool_derived_context():
+    model = make_model(answer=ANSWER_TEXT)
+    await collect_sse(model=model)
+
+    answer_system_prompt = model.calls[1][0]
+    assert "Context Chunks:" in answer_system_prompt
+    assert "first paragraph" in answer_system_prompt
+    # Only the selected context chunks, never the raw pipeline payload dict.
+    assert "'context'" not in answer_system_prompt
+    assert "'sources'" not in answer_system_prompt
+
+
+# <----- Error and fallback paths ----->
+
+
+async def test_query_falls_back_to_raw_query_on_tool_protocol_error():
+    model = ScriptedToolModel(
+        responses=[
+            AIMessage(content="no tool call here"),
+            tool_call("CitedAnswer", {"answer": ANSWER_TEXT}),
         ]
     )
 
-    assert events[-1][0] == "error"
-    assert events[-1][1]["error"] == "No search results found."
+    events = parse_frames(await collect_sse(model=model))
+    by_name = dict(events)
+
+    assert by_name["query"]["query"] == "what is rust?"
+    assert by_name["query"]["tool_call"] is False
+    assert by_name["done"]["status"] == "completed"
 
 
-async def test_sse_warning_event_when_nothing_scraped():
-    events = parse_frames(
-        [
-            frame
-            async for frame in search_sse_adapter(
-                "q",
-                FakeSearchProvider(),
-                make_model(),
-                FakeScraper(return_empty=True),
-                FakeRanker(),
-            )
+async def test_answer_without_tool_call_is_error_event():
+    model = ScriptedToolModel(
+        responses=[
+            tool_call("SubmitSearchQuery", {"query": "rust"}),
+            AIMessage(content="free-form answer, contract violation"),
         ]
     )
 
-    assert events[-1][0] == "warning"
-    assert "No page content" in events[-1][1]["warning"]
+    events = parse_frames(await collect_sse(model=model))
+    names = [name for name, _ in events]
+
+    assert names[-1] == "error"
+    assert "done" not in names
+    assert "CitedAnswer" in events[-1][1]["error"]
 
 
-async def test_sse_critical_pipeline_error_is_error_event_not_exception():
+async def test_no_search_results_is_error_event():
+    events = parse_frames(
+        await collect_sse(searching=FakeSearchProvider(results=[]))
+    )
+
+    assert events[-1] == ("error", {"error": "No search results found."})
+
+
+async def test_empty_context_answer_is_deterministic_no_extra_llm_call():
+    model = make_model(answer=ANSWER_TEXT)
+    events = parse_frames(
+        await collect_sse(model=model, scraper=FakeScraper(return_empty=True))
+    )
+
+    by_name = dict(events)
+    assert by_name["context"]["chunks"] == 0
+    # No-context path emits exactly one deterministic message.
+    messages = [data for name, data in events if name == "message"]
+    assert messages == [{"text": NO_CONTEXT_ANSWER}]
+    assert by_name["done"]["status"] == "no_context"
+
+    # Only the rewrite LLM call happened; no answer LLM call without context.
+    assert len(model.calls) == 1
+
+
+async def test_pipeline_exception_becomes_error_event():
     class ExplodingScraper(FakeScraper):
         async def scrape(self, data_from_search):
             raise RuntimeError("boom")
 
-    events = parse_frames(
-        [
-            frame
-            async for frame in search_sse_adapter(
-                "q",
-                FakeSearchProvider(),
-                make_model(),
-                ExplodingScraper(),
-                FakeRanker(),
-            )
-        ]
-    )
+    events = parse_frames(await collect_sse(scraper=ExplodingScraper()))
 
     assert events[-1][0] == "error"
     assert "boom" in events[-1][1]["error"]
 
 
-async def test_sse_answer_generation_failure_is_error_event():
-    class ExplodingAfterContextModel(ScriptedChatModel):
-        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-            self.calls.append([m.content for m in messages])
-            if self.responses:
-                content = self.responses.pop(0)
-                return ChatResult(
-                    generations=[ChatGeneration(message=AIMessage(content=content))]
-                )
-            raise RuntimeError("llm exploded during streaming")
+# <----- Debug events ----->
 
-    events = parse_frames(
-        [
-            frame
-            async for frame in search_sse_adapter(
-                "q",
-                FakeSearchProvider(),
-                ExplodingAfterContextModel(
-                    responses=['{"search_query": "rust programming language"}']
-                ),
-                make_scraper(),
-                FakeRanker(),
-            )
-        ]
-    )
 
-    assert events[-1][0] == "error"
-    assert "Answer generation failed" in events[-1][1]["error"]
-    assert "done" not in [name for name, _ in events]
+async def test_debug_events_emitted_when_debug_enabled(monkeypatch):
+    from src.core.ask.services import search as search_module
+
+    monkeypatch.setattr(search_module.settings, "DEBUG", True)
+    try:
+        events = parse_frames(await collect_sse())
+        names = [name for name, _ in events]
+        assert "debug" in names
+        debug_payload = dict(events)["debug"]
+        assert debug_payload["stage"] == "query_optimization"
+    finally:
+        monkeypatch.setattr(search_module.settings, "DEBUG", False)
 
 
 # <----- JSON adapter ----->
 
 
-async def test_json_happy_path_returns_query_answer_sources():
+async def test_json_happy_path_returns_full_document():
+    model = make_model(answer=ANSWER_TEXT)
     result = await search_json_adapter(
         "what is rust?",
         FakeSearchProvider(),
-        make_model(),
+        model,
         make_scraper(),
         FakeRanker(),
     )
 
     assert result["query"] == "what is rust?"
-    assert result["answer"].startswith("Rust is a systems")
-    assert result["sources"] == FakeSearchProvider().results
+    assert result["optimized_query"] == "rust programming language"
+    assert result["answer"] == ANSWER_TEXT
+    assert [s["url"] for s in result["sources"]] == [
+        "http://example.com/a",
+        "http://example.com/b",
+    ]
+    assert "first paragraph" in result["context"]
+    assert len(model.bindings) == 2
 
 
-async def test_json_adapter_raises_http_exception_on_error():
+async def test_json_error_raises_http_exception():
     with pytest.raises(HTTPException) as exc_info:
         await search_json_adapter(
             "q",
@@ -284,54 +271,34 @@ async def test_json_adapter_raises_http_exception_on_error():
             FakeRanker(),
         )
     assert exc_info.value.status_code == 500
-    assert exc_info.value.detail == "No search results found."
 
 
-# <----- Context wiring ----->
-
-
-async def test_answer_step_receives_context_string_not_payload_dict():
-    model = make_model()
-    await search_json_adapter(
-        "what is rust?", FakeSearchProvider(), model, make_scraper(), FakeRanker()
-    )
-
-    assert len(model.calls) == 2
-    answer_system_prompt = model.calls[1][0]
-    # The context chunks (not the whole {context, sources, query} payload dict).
-    assert "Context Chunks:" in answer_system_prompt
-    assert "enough meaningful text" in answer_system_prompt
-    assert "'context'" not in answer_system_prompt
-    assert "'sources'" not in answer_system_prompt
-    assert "User Query: what is rust?" in model.calls[1][1]
-
-
-async def test_query_falls_back_to_raw_query_on_unparseable_llm_output():
-    model = ScriptedChatModel(responses=["this is not json at all"])
-
-    events = parse_frames(
-        [
-            frame
-            async for frame in search_sse_adapter(
-                "original question",
-                FakeSearchProvider(),
-                model,
-                make_scraper(),
-                FakeRanker(),
-            )
+async def test_json_contract_violation_is_502():
+    model = ScriptedToolModel(
+        responses=[
+            tool_call("SubmitSearchQuery", {"query": "rust"}),
+            AIMessage(content="free-form"),
         ]
     )
 
-    by_name = dict(events)
-    assert by_name["query_generated"]["query"] == "original question"
+    with pytest.raises(HTTPException) as exc_info:
+        await search_json_adapter(
+            "q", FakeSearchProvider(), model, make_scraper(), FakeRanker()
+        )
+    assert exc_info.value.status_code == 502
+    assert "tool" in exc_info.value.detail
 
 
-async def test_top_n_limits_flow_from_settings():
-    scraper = make_scraper()
-    await search_json_adapter(
-        "q", FakeSearchProvider(), make_model(), scraper, FakeRanker()
+async def test_json_no_context_returns_deterministic_answer():
+    model = make_model()
+    result = await search_json_adapter(
+        "q",
+        FakeSearchProvider(),
+        model,
+        FakeScraper(return_empty=True),
+        FakeRanker(),
     )
 
-    from src.tools.settings import settings
-
-    assert len(scraper.requested) <= settings.TOP_N_URLS
+    assert result["answer"] == NO_CONTEXT_ANSWER
+    assert result["context"] == ""
+    assert len(model.calls) == 1

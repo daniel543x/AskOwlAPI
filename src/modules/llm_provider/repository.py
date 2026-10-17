@@ -143,6 +143,7 @@ class ModelRepository:
                 model_name=settings.DEFAULT_CHAT_MODEL_NAME,
                 provider_type="ollama",
                 base_url=settings.OLLAMA_BASE_URL,
+                capabilities=["tools", "streaming"],
                 source=TIER_BUILTIN,
             )
         if kind == ModelKind.RERANKER.value:
@@ -542,6 +543,7 @@ class ModelRepository:
                 default_params={"temperature": 0.7},
                 is_active=True,
                 required_role="user",
+                capabilities=["tools", "streaming"],
             )
             self.session.add(entry)
             await self.session.flush()
