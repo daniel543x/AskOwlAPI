@@ -1,9 +1,12 @@
-from typing import Any, Dict, List, Optional
+import logging
+from typing import Any
 
 from flashrank import Ranker, RerankRequest
 
 from ..search_engine.providers.base import SearchResult
 from .base import IRanker
+
+logger = logging.getLogger(__name__)
 
 
 class OwlRanker(IRanker):
@@ -15,9 +18,9 @@ class OwlRanker(IRanker):
     def rank_web_search(
         self,
         query: str,
-        search_data: List[SearchResult],
-        top_n: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
+        search_data: list[SearchResult],
+        top_n: int | None = None,
+    ) -> list[dict[str, Any]]:
 
         if not search_data:
             return []
@@ -35,11 +38,11 @@ class OwlRanker(IRanker):
         try:
             request = RerankRequest(query=query, passages=data)
             reranked_results = self.ranker.rerank(request)
-        except Exception as e:
-            print(f"Error in ranking: {e}")
+        except Exception:
+            logger.exception("Error in ranking web search results")
             return []
 
-        ranked_list: List[Dict[str, Any]] = []
+        ranked_list: list[dict[str, Any]] = []
 
         for item in reranked_results:
             doc_id = str(item["id"])
@@ -49,23 +52,21 @@ class OwlRanker(IRanker):
                 url = data_copy[doc_id].url
                 ranked_list.append({"url": url, "score": score})
             else:
-                print(f"Not found ID: {doc_id} in data_copy. Type: {type(item['id'])}")
+                logger.warning(
+                    "Ranked result id '%s' not found in source data.", doc_id
+                )
 
-        # ranked_list
-        top_n_list = []
-        if top_n is not None and len(ranked_list) >= top_n:
-            for element in range(0, top_n):
-                top_n_list.append(ranked_list[element])
-            ranked_list = top_n_list
+        if top_n is not None:
+            ranked_list = ranked_list[:top_n]
 
         return ranked_list
 
     def rank_chunks(
         self,
         query: str,
-        chunks: Optional[List[Dict[str, Any]]] = None,
-        top_n: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
+        chunks: list[dict[str, Any]] | None = None,
+        top_n: int | None = None,
+    ) -> list[dict[str, Any]]:
 
         if not chunks:
             return []
@@ -78,11 +79,11 @@ class OwlRanker(IRanker):
         try:
             request = RerankRequest(query=query, passages=passages)
             reranked_results = self.ranker.rerank(request)
-        except Exception as e:
-            print(f"Error in ranking chunks: {e}")
+        except Exception:
+            logger.exception("Error in ranking chunks")
             return chunks[:top_n] if top_n else chunks
 
-        sorted_chunks: List[Dict[str, Any]] = []
+        sorted_chunks: list[dict[str, Any]] = []
 
         for item in reranked_results:
             if top_n is not None and len(sorted_chunks) >= top_n:

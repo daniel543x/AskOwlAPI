@@ -1,18 +1,33 @@
-from typing import List
+import logging
 
 import httpx
 
+from ....tools.settings import settings
 from .base import ISearchProvider, SearchResult
+
+logger = logging.getLogger(__name__)
 
 
 class SearXNGProvider(ISearchProvider):
-    def __init__(self):
-        self.base_url = "http://localhost:8080"  # Insite contener have to be http://searxng:8080 !!!!!
-        self.engines = "bing,brave,duckduckgo,google,qwant,startpage"
-        self.categories = "general"
-        self.timeout = 60
+    """SearXNG metasearch client using its JSON API.
 
-    async def search(self, query: str) -> List[SearchResult]:
+    All connection parameters are constructor arguments so they can be wired
+    from database settings or environment variables, never hardcoded.
+    """
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        engines: str | None = None,
+        categories: str | None = None,
+        timeout: float | None = None,
+    ):
+        self.base_url = base_url or settings.SEARXNG_BASE_URL
+        self.engines = engines or settings.SEARXNG_ENGINES
+        self.categories = categories or settings.SEARXNG_CATEGORIES
+        self.timeout = timeout if timeout is not None else settings.SEARXNG_TIMEOUT
+
+    async def search(self, query: str) -> list[SearchResult]:
         params = {
             "q": query,
             "format": "json",
@@ -25,18 +40,14 @@ class SearXNGProvider(ISearchProvider):
                 response.raise_for_status()
                 results = response.json().get("results", [])
 
-                final_search_result: List[SearchResult] = []
-
-                for item in results:
-                    final_search_result.append(
-                        SearchResult(
-                            title=item.get("title", ""),
-                            snippet=item.get("content", ""),
-                            url=item.get("url", ""),
-                        )
+                return [
+                    SearchResult(
+                        title=item.get("title", ""),
+                        snippet=item.get("content", ""),
+                        url=item.get("url", ""),
                     )
-
-                return final_search_result
-        except httpx.RequestError as e:
-            print(e)
+                    for item in results
+                ]
+        except httpx.RequestError:
+            logger.exception("SearXNG request failed (base_url=%s)", self.base_url)
             return []

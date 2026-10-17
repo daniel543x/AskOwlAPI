@@ -1,4 +1,3 @@
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -28,7 +27,7 @@ async def create_role(
     return await service.create_role(session=session, role=role_in)
 
 
-@router.get("/", response_model=List[RoleRead])
+@router.get("/", response_model=list[RoleRead])
 async def list_roles(session: AsyncSession = Depends(get_session)):
     statement = select(Role)
     result = await session.execute(statement)

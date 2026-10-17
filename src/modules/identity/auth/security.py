@@ -1,5 +1,4 @@
 import uuid
-from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import (
@@ -28,8 +27,8 @@ api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 async def get_current_user(
     # token: str = Depends(oauth2_scheme),
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
-    key: Optional[str] = Depends(api_key_scheme),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    key: str | None = Depends(api_key_scheme),
     session: AsyncSession = Depends(get_session),
 ) -> User:
     credentials_exception = HTTPException(
@@ -49,8 +48,8 @@ async def get_current_user(
                 if user:
                     await session.refresh(user, attribute_names=["roles"])
                     return user
-        except Exception:
-            raise credentials_exception
+        except Exception as exc:
+            raise credentials_exception from exc
 
     # <----- Chcek credentials ----->
     if key:
@@ -58,8 +57,8 @@ async def get_current_user(
             user = await get_user_by_api_key(session, key)
             if user:
                 return user
-        except Exception:
-            raise credentials_exception
+        except Exception as exc:
+            raise credentials_exception from exc
 
     raise credentials_exception
 

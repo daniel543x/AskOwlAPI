@@ -5,11 +5,17 @@ from fastapi import FastAPI
 from .core.ask.router import router as AskRouter
 from .init import init
 from .modules.identity.router import router as IdentityRouter
+from .modules.owl_reranker.factory import init_ranker
+from .tools.logging import configure_logging
+from .tools.settings import settings
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_logging(settings)
     await init()
+    # Heavy models load once at startup, never per request.
+    await init_ranker()
     yield
 
 

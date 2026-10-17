@@ -1,12 +1,15 @@
+import logging
 import uuid
-from typing import List, Optional, Tuple
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from ...tools.db import get_session
+from ...tools.settings import settings
 from .model import DefaultSettings, LLMModelCatalog, LLMProvider, UserLLMPreference
+
+logger = logging.getLogger(__name__)
 
 
 class LLMRepository:
@@ -16,9 +19,9 @@ class LLMRepository:
     async def resolve_model_config(
         self,
         user_id: uuid.UUID,
-        user_roles: List[str],
-        requested_model_id: Optional[uuid.UUID] = None,
-    ) -> Tuple[LLMModelCatalog, LLMProvider]:
+        user_roles: list[str],
+        requested_model_id: uuid.UUID | None = None,
+    ) -> tuple[LLMModelCatalog, LLMProvider]:
 
         target_model = None
 
@@ -28,7 +31,8 @@ class LLMRepository:
             )
             if not target_model:
                 raise PermissionError(
-                    f"Permission Denied model ID={requested_model_id} or model not exist."
+                    f"Permission Denied model ID={requested_model_id} "
+                    f"or model not exist."
                 )
 
         if not target_model:
@@ -54,8 +58,8 @@ class LLMRepository:
         return target_model, provider
 
     async def get_available_models(
-        self, user_roles: List[str]
-    ) -> List[LLMModelCatalog]:
+        self, user_roles: list[str]
+    ) -> list[LLMModelCatalog]:
         statement = select(LLMModelCatalog).where(LLMModelCatalog.is_active)
 
         result = await self.session.execute(statement)
@@ -66,7 +70,7 @@ class LLMRepository:
         ]
 
     async def set_user_preference(
-        self, user_id: uuid.UUID, model_id: uuid.UUID, user_role: List[str]
+        self, user_id: uuid.UUID, model_id: uuid.UUID, user_role: list[str]
     ) -> UserLLMPreference:
         model = await self._get_and_validate_model(model_id, user_role)
         if not model:
@@ -84,8 +88,8 @@ class LLMRepository:
         return preference
 
     async def _get_and_validate_model(
-        self, model_id: uuid.UUID, user_roles: List[str]
-    ) -> Optional[LLMModelCatalog]:
+        self, model_id: uuid.UUID, user_roles: list[str]
+    ) -> LLMModelCatalog | None:
         model = await self.session.get(LLMModelCatalog, model_id)
 
         if model and model.is_active:
@@ -94,8 +98,8 @@ class LLMRepository:
         return None
 
     async def _get_system_default_model(
-        self, user_roles: List[str]
-    ) -> Optional[LLMModelCatalog]:
+        self, user_roles: list[str]
+    ) -> LLMModelCatalog | None:
         setting = await self.session.get(DefaultSettings, "default_model_id")
         if setting and setting.value:
             try:
@@ -105,7 +109,7 @@ class LLMRepository:
                 return None
         return None
 
-    def _check_role_access(self, user_roles: List[str], required_role: str) -> bool:
+    def _check_role_access(self, user_roles: list[str], required_role: str) -> bool:
         role_hierarchy = {"user": 0, "pro": 1, "admin": 2}
         max_user_level = 0
         for role in user_roles:
@@ -123,31 +127,31 @@ class LLMRepository:
         provider = result.scalar_one_or_none()
 
         if not provider:
-            print("Add provider 'Local Ollama'...")
+            logger.info("Seeding provider 'Local Ollama'...")
             provider = LLMProvider(
                 name="Local Ollama",
                 provider_type="ollama",
-                base_url="http://localhost:11434",
+                base_url=settings.OLLAMA_BASE_URL,
                 api_key_encrypted=None,
             )
             self.session.add(provider)
             await self.session.flush()
         else:
-            print("Provider 'Local Ollama' exist.")
+            logger.debug("Provider 'Local Ollama' already exists.")
 
         statement = select(LLMModelCatalog).where(
-            LLMModelCatalog.model_name == "qwen3.5",
+            LLMModelCatalog.model_name == settings.DEFAULT_CHAT_MODEL_NAME,
             LLMModelCatalog.provider_id == provider.id,
         )
         result = await self.session.execute(statement)
         model = result.scalar_one_or_none()
 
         if not model:
-            print("Add model: 'qwen3.5'...")
+            logger.info("Seeding model '%s'...", settings.DEFAULT_CHAT_MODEL_NAME)
             model = LLMModelCatalog(
                 provider_id=provider.id,
-                model_name="qwen3.5",
-                display_name="Qwen 3.5 (Local)",
+                model_name=settings.DEFAULT_CHAT_MODEL_NAME,
+                display_name=f"{settings.DEFAULT_CHAT_MODEL_NAME} (Local)",
                 default_params={"temperature": 0.7},
                 is_active=True,
                 required_role="user",
@@ -155,17 +159,17 @@ class LLMRepository:
             self.session.add(model)
             await self.session.flush()
         else:
-            print("Add Model 'qwen3.5' is exist.")
+            logger.debug("Model '%s' already exists.", settings.DEFAULT_CHAT_MODEL_NAME)
 
         setting = await self.session.get(DefaultSettings, "default_model_id")
 
         if not setting:
-            print("Settings default model in SystemSettings...")
+            logger.info("Setting default model in system settings...")
             setting = DefaultSettings(key="default_model_id", value=str(model.id))
             self.session.add(setting)
 
         await self.session.commit()
-        print("[Succesful]: LLM is ready to use.")
+        logger.info("LLM bootstrap finished; default model is ready to use.")
 
 
 # Deppendency

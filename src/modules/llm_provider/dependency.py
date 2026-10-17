@@ -1,5 +1,4 @@
 import uuid
-from typing import Optional
 
 from fastapi import Depends, Query
 from langchain_core.language_models import BaseChatModel
@@ -20,7 +19,7 @@ async def get_llm_client(
     repo: LLMRepository = Depends(get_repository),
     factory: LLMFactory = Depends(get_llm_factory),
     user=Depends(get_current_user),
-    request_model_id: Optional[uuid.UUID] = Query(
+    request_model_id: uuid.UUID | None = Query(
         default=None
     ),  # Change to display name?
 ) -> BaseChatModel:

@@ -25,6 +25,6 @@ async def init_db(engine: AsyncEngine) -> None:
 
 
 # For Dependency
-async def get_session() -> AsyncGenerator[AsyncSession, None]:
+async def get_session() -> AsyncGenerator[AsyncSession]:
     async with AsyncSession(engine) as session:
         yield session

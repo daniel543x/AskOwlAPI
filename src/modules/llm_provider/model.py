@@ -1,5 +1,5 @@
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 
@@ -8,22 +8,22 @@ class LLMProvider(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     name: str = Field(unique=True, description="Np. 'OpenRouter Main', 'Local Ollama'")
     provider_type: str = Field(description="Np. 'openai', 'ollama', 'groq'")
-    base_url: Optional[str] = Field(default=None)
-    api_key_encrypted: Optional[str] = Field(default=None)
+    base_url: str | None = Field(default=None)
+    api_key_encrypted: str | None = Field(default=None)
 
-    models: List["LLMModelCatalog"] = Relationship(back_populates="provider")
+    models: list[LLMModelCatalog] = Relationship(back_populates="provider")
 
 
 class LLMModelCatalog(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     provider_id: uuid.UUID = Field(foreign_key="llmprovider.id")
 
-    provider: Optional[LLMProvider] = Relationship(back_populates="models")
+    provider: LLMProvider | None = Relationship(back_populates="models")
 
     model_name: str = Field()
     display_name: str = Field()
 
-    default_params: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
+    default_params: dict[str, Any] = Field(default={}, sa_column=Column(JSON))
 
     is_active: bool = Field(default=False)
 
@@ -33,7 +33,7 @@ class LLMModelCatalog(SQLModel, table=True):
 
 class UserLLMPreference(SQLModel, table=True):
     user_id: uuid.UUID = Field(primary_key=True)
-    selected_model_id: Optional[uuid.UUID] = Field(
+    selected_model_id: uuid.UUID | None = Field(
         default=None, foreign_key="llmmodelcatalog.id"
     )
 

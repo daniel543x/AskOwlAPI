@@ -24,7 +24,9 @@ async def create_user_endpoint(
         db_user = await create_user(session=session, user_create=user_create)
         return db_user
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+        ) from e
 
 
 @router.get("/{user_id}", response_model=UserRead)
@@ -63,7 +65,9 @@ async def update_user_endpoint(
             )
         return db_user
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+        ) from e
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

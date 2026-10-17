@@ -1,4 +1,3 @@
-from typing import Optional
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,25 +8,25 @@ from ..role.service import assing_role_in_user_create
 from .model import User, UserCreate, UserUpdate
 
 
-async def get_user_by_email(session: AsyncSession, email: str) -> Optional[User]:
+async def get_user_by_email(session: AsyncSession, email: str) -> User | None:
     statement = select(User).where(User.email == email)
     result = await session.execute(statement)
     return result.scalar_one_or_none()
 
 
-async def get_user_by_nickname(session: AsyncSession, nickname: str) -> Optional[User]:
+async def get_user_by_nickname(session: AsyncSession, nickname: str) -> User | None:
     statement = select(User).where(User.nickname == nickname)
     result = await session.execute(statement)
     return result.scalar_one_or_none()
 
 
-async def get_user_by_id(session: AsyncSession, user_id: UUID) -> Optional[User]:
+async def get_user_by_id(session: AsyncSession, user_id: UUID) -> User | None:
     return await session.get(User, user_id)
 
 
 async def get_user_by_identifier(
     session: AsyncSession, identifier: str
-) -> Optional[User]:
+) -> User | None:
     user = await get_user_by_email(session, identifier)
     if user:
         return user
@@ -62,7 +61,7 @@ async def create_user(session: AsyncSession, user_create: UserCreate) -> User:
 
 async def update_user(
     session: AsyncSession, user_id: UUID, user_update: UserUpdate
-) -> Optional[User]:
+) -> User | None:
     db_user = await session.get(User, user_id)
     if not db_user:
         return None

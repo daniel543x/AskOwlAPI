@@ -1,4 +1,3 @@
-from typing import Dict, Optional, Type
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,13 +13,13 @@ from .providers.trafilatura import TrafilturaScraper
 # prepare the default from the database;
 # if specified, prepare the specified one.
 class ScraperFactory:
-    REGISTRY: Dict[str, Type[IScraper]] = {
+    REGISTRY: dict[str, type[IScraper]] = {
         "trafilatura": TrafilturaScraper,
     }
 
     @classmethod
     async def create(
-        cls, session: AsyncSession, scraper_name: Optional[str] = None
+        cls, session: AsyncSession, scraper_name: str | None = None
     ) -> IScraper:
         if scraper_name:
             query = select(ScrapySettings).where(

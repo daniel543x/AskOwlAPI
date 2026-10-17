@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Optional, cast
+from typing import cast
 
 from jose import JWTError, jwt
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -13,7 +13,7 @@ from .passwd import check_passwd
 
 async def authenticate_user(
     session: AsyncSession, identifier: str, password: str
-) -> Optional[User]:
+) -> User | None:
     user = await get_user_by_identifier(session, identifier)
     if not user:
         return None
@@ -33,16 +33,16 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
 
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(
-        to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM
+        to_encode, settings.MASTER_KEY, algorithm=settings.ALGORITHM
     )
     return encoded_jwt
 
 
-def verify_token(token: str) -> Optional[JWTPayload]:
+def verify_token(token: str) -> JWTPayload | None:
     try:
         payload = cast(
             JWTPayload,
-            jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]),
+            jwt.decode(token, settings.MASTER_KEY, algorithms=[settings.ALGORITHM]),
         )
         email: str = payload.get("sub")
         if email is None:

@@ -1,54 +1,63 @@
-version: "3.8"
-
 services:
-  #  api:
-  #    build: .
-  #    ports:
-  #      - "3000:3000"
-  #    environment:
-  #      - DATABASE_URL=postgresql://user:password@db:5432/dbname
-  #      - REDIS_URL=redis://valkey:6379
-  #    depends_on:
-  #      - db
-  #      - valkey
-  #      - ./app:/app/app
-  #
+  api:
+    build: .
+    profiles: ["api"]
+    ports:
+      - "3000:3000"
+    environment:
+      POSTGRES_SERVER: db
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_PORT: 5432
+      MASTER_KEY: ${MASTER_KEY:?MASTER_KEY must be set in .env}
+      SEARXNG_BASE_URL: http://searXNG:8080
+      OLLAMA_BASE_URL: http://ollama:11434
+    depends_on:
+      - db
+      - searXNG
+    networks:
+      - AskOwl-Net
+
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - searxng_settings:/AskOwl/data/searxng/
     networks:
       - AskOwl-Net
 
   searXNG:
-    image: searxng:latest
+    image: searxng/searxng:latest
     environment:
-      - BASE_URL=http://searxng:8080
+      - SEARXNG_BASE_URL=http://localhost:8080/
+      - SEARXNG_SECRET=${SEARXNG_SECRET:?SEARXNG_SECRET must be set in .env}
     ports:
       - 8080:8080
     volumes:
-      - searxng_settings:/etc/searxng/:Z
+      - ./data/searxng/settings.yml:/etc/searxng/settings.yml:Z,O
     networks:
       - AskOwl-Net
 
-#  valkey:
-#    image: valkey/valkey:7-alpine
-#    ports:
-#      - "6379:6379"
-#    volumes:
-#      - valkey_data:/data
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - AskOwl-Net
+
 networks:
   AskOwl-Net:
     external: false
 
 volumes:
   postgres_data:
-  searxng_settings:
-#  valkey_data:
+  ollama_data:
