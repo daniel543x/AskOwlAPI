@@ -11,7 +11,12 @@ only lists the extensions over protocol v2.
 | Route           | Parameters                                    |
 |-----------------|-----------------------------------------------|
 | `/ask/research` | `query` (required), `stream` (default `true`), `model_id`, `embedder_id`, `reranker_id` |
-| `/ask/agent`    | `goal` (required), `model_id`, `embedder_id`, `reranker_id` |
+| `/ask/agent`    | `goal` (required), `persona_id` (optional), `model_id`, `embedder_id`, `reranker_id` |
+
+`persona_id` selects one of the caller's personas (`POST/GET/PATCH/DELETE /personas`):
+its system context and keywords bias the agent's queries, its domain allowlist filters
+search results (host-suffix match), its engines narrow the search call, and its
+`default_parameters` may lower the budgets (never raise them).
 
 ## Events
 

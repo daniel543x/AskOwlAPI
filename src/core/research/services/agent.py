@@ -54,6 +54,33 @@ BUDGET_NOTICE = (
     "gathered, so no answer can be given."
 )
 
+PERSONA_TEMPLATE = """
+
+--- Active user persona: "{name}" ---
+User context (bias your search queries toward it): {system_context}
+"""
+PERSONA_KEYWORDS = "- Bias queries toward these keywords: {keywords}."
+PERSONA_DOMAINS = (
+    "- Search results are already restricted to these domains: {domains}; "
+    "prefer fetching and citing pages from them."
+)
+
+
+def persona_system_block(persona) -> str:
+    """Render the persona's biasing instructions for the system prompt."""
+    block = PERSONA_TEMPLATE.format(
+        name=persona.name, system_context=persona.system_context or "(none)"
+    )
+    if persona.allowed_keywords:
+        block += "\n" + PERSONA_KEYWORDS.format(
+            keywords=", ".join(persona.allowed_keywords)
+        )
+    if persona.allowed_domains:
+        block += "\n" + PERSONA_DOMAINS.format(
+            domains=", ".join(persona.allowed_domains)
+        )
+    return block
+
 
 async def _run_tool(toolbox: AskToolbox, name: str, args: dict[str, Any]) -> str:
     """Execute one bound tool by name; unknown tools return an error string."""
@@ -75,8 +102,13 @@ async def agent_logic(
     model: BaseChatModel,
     toolbox: AskToolbox,
     budget: Budget,
+    persona=None,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the agent loop, yielding (event, payload) pairs.
+
+    When a persona is passed, its system context biases the agent's query
+    rewriting (system prompt) while its domain/engine constraints scope
+    the toolbox.
 
     Errors are reported as ``error`` events, never raised, so streaming
     consumers always get a well-formed termination.
@@ -84,8 +116,11 @@ async def agent_logic(
     try:
         tools = build_tools(toolbox)
         bound = model.bind_tools([*tools, SubmitOutcome])
+        system = AGENT_SYSTEM
+        if persona is not None:
+            system += persona_system_block(persona)
         messages: list = [
-            SystemMessage(content=AGENT_SYSTEM),
+            SystemMessage(content=system),
             HumanMessage(content=goal),
         ]
 

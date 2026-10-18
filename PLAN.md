@@ -230,15 +230,34 @@ role rename is a one-line change.*
 
 ### Phase 5 — Personas (custom agents)
 
-- [ ] `agents` (personas) table per user: name, system context (topic/tech stack), search
+- [x] `agents` (personas) table per user: name, system context (topic/tech stack), search
       constraints (allowed domains/engines/keywords), default parameters.
-- [ ] Persona-scoped `agents` mode: agent loop constrained by the persona (query rewriting
+- [x] Persona-scoped `agents` mode: agent loop constrained by the persona (query rewriting
       biased by persona context, search constrained to its scope); select persona per
       request/conversation; role-gated.
-- [ ] Persona management endpoints (CRUD, own personas only).
+- [x] Persona management endpoints (CRUD, own personas only).
 
 **DoD:** a "Rust programmer" persona demonstrably changes the sources and answers for the
 same query vs. no persona.
+*Status: **closed 2026-10-18**. New `personas` module (`src/modules/personas/`: model /
+repository / router, table `persona` — schema change, extends `create_all` bootstrap
+until Alembic lands in Phase 6). CRUD is scoped to the owner (`get_for_user` treats
+foreign personas as 404); `/ask/agent?persona_id=` loads one of the caller's personas and
+constrains the Phase 4 agent loop: system-context/keyword bias in the system prompt,
+domain allowlist as a host-suffix filter in `AskToolbox.web_search`, per-call engines via
+the extended `ISearchProvider.search(query, engines=...)` (SearXNG honors it), and budget
+overrides from `default_parameters` clamped to the settings ceiling. The DoD is asserted
+offline (persona changes both the ranked sources and the system prompt for the same
+query); CRUD isolation and the persona-wired agent route verified by 6 integration tests
+against live Postgres.*
+
+Post-personas follow-up:
+
+- [ ] Re-run the Phase 3 golden-set eval from a clean egress (or after search-layer
+      mitigation: proxy egress / API-keyed engines — see backlog) so the "vector beats
+      baseline" gate can be measured strictly, not just "does not lose" (recall was
+      floored at 0.125 by search-egress poisoning on 14/20 queries; details in the Phase 3
+      status note).
 
 ### Phase 6 — Platform hardening
 
@@ -288,7 +307,7 @@ and measured via the Phase 3 eval harness; failures degrade gracefully (skip, ne
 | 1 | ~~Default embedding model + dims~~ **Decided 2026-10-17: `bge-m3`, 1024 dims (Ollama)** | daniel | Phase 3 ✅ |
 | 2 | Laya packaging: HTTP sidecar (recommended, matches Jev cloud too) vs in-process SDK | daniel | Phase 7 |
 | 3 | API-key scheme (shape, scopes, rotation) | daniel | Phase 6 |
-| 4 | Keep or drop the `pro` role name (Phase 4 gates read the central `ELEVATED_ROLES` tuple, currently `pro`/`admin`) | daniel | Phase 5 |
+| 4 | Keep or drop the `pro` role name (gates read the central `ELEVATED_ROLES` tuple, used by Phase 4 modes and Phase 5 personas) | daniel | Phase 6 |
 
 ---
 

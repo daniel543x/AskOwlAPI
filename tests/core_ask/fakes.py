@@ -28,8 +28,12 @@ class FakeSearchProvider(ISearchProvider):
                 ),
             ]
         self.results = results
+        self.last_engines: list[str] | None = None
 
-    async def search(self, query: str) -> list[SearchResult]:
+    async def search(
+        self, query: str, engines: list[str] | None = None
+    ) -> list[SearchResult]:
+        self.last_engines = engines
         return self.results
 
 

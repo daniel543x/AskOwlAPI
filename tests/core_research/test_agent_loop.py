@@ -188,7 +188,7 @@ async def test_agent_every_llm_call_has_tools_bound():
 @pytest.mark.asyncio
 async def test_agent_tool_exception_becomes_error_event():
     class ExplodingSearch(FakeSearchProvider):
-        async def search(self, query: str):
+        async def search(self, query: str, engines: list[str] | None = None):
             raise RuntimeError("search backend down")
 
     toolbox = AskToolbox(ExplodingSearch(), make_scraper(), FakeRanker())
