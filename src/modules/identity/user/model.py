@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from pydantic import EmailStr
@@ -21,9 +21,10 @@ class User(SQLModel, table=True):
     )
     password_hash: str = Field(..., exclude=True)
     is_active: bool = Field(default=True, index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime | None = Field(
-        default_factory=datetime.utcnow, sa_column_kwargs={"onupdate": datetime.utcnow}
+        default_factory=lambda: datetime.now(UTC),
+        sa_column_kwargs={"onupdate": lambda: datetime.now(UTC)},
     )
 
     # Quoted forward ref: Role is only importable under TYPE_CHECKING (cycle).

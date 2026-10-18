@@ -1,7 +1,8 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import InvalidTokenError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ....tools.settings import settings
@@ -28,9 +29,9 @@ async def authenticate_user(
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(UTC) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(
+        expire = datetime.now(UTC) + timedelta(
             minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
         )
 
@@ -47,11 +48,11 @@ def verify_token(token: str) -> JWTPayload | None:
             JWTPayload,
             jwt.decode(token, settings.MASTER_KEY, algorithms=[settings.ALGORITHM]),
         )
-        email: str = payload.get("sub")
-        if email is None:
+        subject: str = payload.get("sub")
+        if subject is None:
             return None
         return payload
-    except JWTError:
+    except InvalidTokenError:
         return None
 
 
