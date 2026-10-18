@@ -37,7 +37,7 @@ Scopes gate **modes**, roles gate **permissions**:
 - `X-API-Key` sessions: the key must carry the mode's scope
   (`search` → `/ask/search`, `research` → `/ask/research`, `agent` →
   `/ask/agent`). Elevated modes still additionally require the elevated
-  role (`pro`/`admin`) for the key's user.
+  role (`research`/`admin`) for the key's user.
 - JWT sessions are not scope-limited (role gates apply as before).
 
 Unknown scopes are rejected at creation (422).

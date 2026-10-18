@@ -57,6 +57,6 @@ steps. Provider health is probed at startup and exposed at
 ## Identity & access (`src/modules/identity/`, `src/modules/api_keys/`)
 
 JWT login + per-user API keys (hashed, scoped, rate-limited). Role gating:
-`user` → search; `pro`/`admin` → research + agent; `admin` → catalog and
+`user` → search; `research`/`admin` → research + agent; `admin` → catalog and
 user management. Blocked users fail every path. See
 [api_keys.md](api_keys.md) and [../api/authentication.md](../api/authentication.md).

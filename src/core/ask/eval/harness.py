@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from ....modules.chunk_store.repository import ChunkRepository
+from ....modules.decision.base import IDecisionMaker
 from ....modules.embedding.base import IEmbedder
 from ....modules.owl_reranker.base import IRanker
 from ....modules.scrapy.providers.base import IScraper
@@ -209,9 +210,13 @@ async def evaluate_query(
     ranker: IRanker,
     embedder: IEmbedder | None = None,
     chunk_repo: ChunkRepository | None = None,
+    decision_maker: IDecisionMaker | None = None,
 ) -> QueryResult:
     """Run retrieval (no LLM) for one golden query and score it."""
-    toolbox = AskToolbox(searching, scraper, ranker, embedder, chunk_repo)
+    toolbox = AskToolbox(
+        searching, scraper, ranker, embedder, chunk_repo,
+        decision_maker=decision_maker,
+    )
 
     start = time.perf_counter()
     await toolbox.web_search(entry.query)
@@ -239,10 +244,13 @@ async def run_eval(
     ranker: IRanker,
     embedder: IEmbedder | None = None,
     chunk_repo: ChunkRepository | None = None,
+    decision_maker: IDecisionMaker | None = None,
 ) -> EvalReport:
     """Evaluate one configuration over the whole golden set."""
     results = [
-        await evaluate_query(entry, searching, scraper, ranker, embedder, chunk_repo)
+        await evaluate_query(
+            entry, searching, scraper, ranker, embedder, chunk_repo, decision_maker
+        )
         for entry in entries
     ]
     count = len(results) or 1

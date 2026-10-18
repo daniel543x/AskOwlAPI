@@ -23,6 +23,7 @@ from ....modules.owl_reranker.base import IRanker
 from ....modules.scrapy.providers.base import IScraper
 from ....modules.search_engine.providers.base import ISearchProvider
 from ....tools.settings import settings
+from ...tools.pre_scores import choose_query, grounding_confidence
 from ...tools.toolbox import AskToolbox
 from .llm_steps import (
     ToolProtocolError,
@@ -66,6 +67,7 @@ async def search_logic(
     ranker: IRanker,
     embedder: IEmbedder | None = None,
     session=None,
+    decision_maker=None,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the search pipeline, yielding (event, payload) pairs.
 
@@ -78,12 +80,22 @@ async def search_logic(
     """
     try:
         chunk_repo = ChunkRepository(session) if session is not None else None
-        toolbox = AskToolbox(searching, scraper, ranker, embedder, chunk_repo)
+        toolbox = AskToolbox(
+            searching, scraper, ranker, embedder, chunk_repo,
+            decision_maker=decision_maker,
+        )
 
         # <----- Query rewriting (native tool call) ----->
         yield "status", {"step": "Building query for search engine..."}
         async with _stage("query_optimization"):
             optimized_query, used_tool_call = await rewrite_query(model, query)
+
+        # <----- Query-choice pre-score (optional decision layer) ----->
+        if settings.PRE_SCORE_QUERY_CHOICE and decision_maker:
+            async with _stage("query_choice"):
+                optimized_query = await choose_query(
+                    decision_maker, query, optimized_query
+                )
 
         yield "query", {"query": optimized_query, "tool_call": used_tool_call}
         if settings.DEBUG:
@@ -201,6 +213,7 @@ async def search_sse_adapter(
     session=None,
     user_id=None,
     conversation_id=None,
+    decision_maker=None,
 ) -> AsyncGenerator[str]:
     """Translate pipeline events into an SSE stream (protocol v2).
 
@@ -232,7 +245,8 @@ async def search_sse_adapter(
         )
 
     pipeline = search_logic(
-        query, searching, model, scraper, ranker, embedder=embedder, session=session
+        query, searching, model, scraper, ranker, embedder=embedder,
+        session=session, decision_maker=decision_maker,
     )
     async for event, data in pipeline:
         if event == "answer_ready":
@@ -246,9 +260,15 @@ async def search_sse_adapter(
                     answer_parts.append(delta)
                     yield frame("message", {"text": delta})
 
-                await _save_turn(
-                    session, conversation, data["query"], "".join(answer_parts)
-                )
+                answer_text = "".join(answer_parts)
+                await _save_turn(session, conversation, data["query"], answer_text)
+
+                if settings.PRE_SCORE_GROUNDING_CHECK and decision_maker:
+                    supported = await grounding_confidence(
+                        decision_maker, data["query"], data["context"], answer_text
+                    )
+                    if supported is not None:
+                        yield frame("grounding", {"supported": round(supported, 4)})
 
                 if not data["context"].strip():
                     yield frame("done", {"status": "no_context"})
@@ -276,6 +296,7 @@ async def search_json_adapter(
     session=None,
     user_id=None,
     conversation_id=None,
+    decision_maker=None,
 ) -> dict[str, Any]:
     """Run the pipeline and return the full result as one JSON-ready dict.
 
@@ -292,7 +313,8 @@ async def search_json_adapter(
         raise HTTPException(status_code=404, detail=str(e)) from e
 
     pipeline = search_logic(
-        query, searching, model, scraper, ranker, embedder=embedder, session=session
+        query, searching, model, scraper, ranker, embedder=embedder,
+        session=session, decision_maker=decision_maker,
     )
     async for event, data in pipeline:
         if event == "error":
@@ -332,6 +354,12 @@ async def search_json_adapter(
 
     await _save_turn(session, conversation, answer_data["query"], answer)
 
+    grounding = None
+    if settings.PRE_SCORE_GROUNDING_CHECK and decision_maker:
+        grounding = await grounding_confidence(
+            decision_maker, answer_data["query"], context, answer
+        )
+
     return {
         "query": answer_data["query"],
         "optimized_query": answer_data["optimized_query"],
@@ -339,4 +367,7 @@ async def search_json_adapter(
         "context": context,
         "answer": answer,
         "conversation_id": str(conversation.id) if conversation else None,
+        "grounding_supported": (
+            round(grounding, 4) if grounding is not None else None
+        ),
     }

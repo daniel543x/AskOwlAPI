@@ -20,12 +20,14 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from ...modules.chunk_store.repository import ChunkRepository
+from ...modules.decision.base import IDecisionMaker
 from ...modules.embedding.base import IEmbedder
 from ...modules.owl_reranker.base import IRanker
 from ...modules.scrapy.providers.base import IScraper
 from ...modules.search_engine.providers.base import ISearchProvider
 from ...tools.settings import settings
 from .chunking import chunk_markdown_data
+from .pre_scores import filter_chunks, filter_search_results
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +63,14 @@ class AskToolbox:
         chunk_repo: ChunkRepository | None = None,
         allowed_domains: list[str] | None = None,
         allowed_engines: list[str] | None = None,
+        decision_maker: IDecisionMaker | None = None,
     ):
         self.searching = searching
         self.scraper = scraper
         self.ranker = ranker
         self.embedder = embedder
         self.chunk_repo = chunk_repo
+        self.decision_maker = decision_maker
         # Persona constraints: None/empty = unconstrained.
         self.allowed_domains = [d.lower() for d in (allowed_domains or [])]
         self.allowed_engines = allowed_engines or None
@@ -86,6 +90,11 @@ class AskToolbox:
 
         if self.allowed_domains:
             self.raw_results = self._filter_domains(self.raw_results)
+
+        if settings.PRE_SCORE_SEARCH_FILTER and self.decision_maker:
+            self.raw_results = await filter_search_results(
+                self.decision_maker, query, self.raw_results
+            )
 
         ranked = await asyncio.to_thread(
             self.ranker.rank_web_search, query, self.raw_results, settings.TOP_N_URLS
@@ -192,6 +201,10 @@ class AskToolbox:
         self.selected_chunks = await asyncio.to_thread(
             self.ranker.rank_chunks, query, pool, settings.TOP_N_CHUNKS
         )
+        if settings.PRE_SCORE_CHUNK_FILTER and self.decision_maker:
+            self.selected_chunks = await filter_chunks(
+                self.decision_maker, query, self.selected_chunks
+            )
         return "\n\n---\n\n".join(
             chunk.get("content", "") for chunk in self.selected_chunks
         )
@@ -204,25 +217,68 @@ class AskToolbox:
         )
 
 
+class PreScoreArgs(BaseModel):
+    question: str = Field(description="Yes/no question about the text.")
+    text: str = Field(description="Text the question refers to.")
+
+
+async def _pre_score(toolbox: AskToolbox, question: str, text: str) -> str:
+    """Typed yes/no decision with a calibrated probability (JSON)."""
+    if toolbox.decision_maker is None:
+        return json.dumps(
+            {"error": "No decision model configured; decide without it."}
+        )
+    try:
+        decision = await toolbox.decision_maker.noul(question, text)
+    except Exception:  # noqa: BLE001 - degrade to no-opinion
+        return json.dumps({"error": "Decision backend failed."})
+    return json.dumps(
+        {"yes": round(decision.yes, 4), "confidence": round(decision.confidence, 4)}
+    )
+
+
 def build_tools(toolbox: AskToolbox) -> list[StructuredTool]:
-    """Bindable tool schemas for agentic use (Phase 5)."""
-    return [
-        StructuredTool.from_function(
-            coroutine=toolbox.web_search,
-            name="web_search",
-            description="Search the web and return ranked results.",
-            args_schema=WebSearchArgs,
-        ),
-        StructuredTool.from_function(
-            coroutine=toolbox.fetch_pages,
-            name="fetch_pages",
-            description="Fetch pages (default: top-ranked results) as markdown.",
-            args_schema=FetchPagesArgs,
-        ),
-        StructuredTool.from_function(
-            coroutine=toolbox.get_context,
-            name="get_context",
-            description="Select the chunks most relevant to the query as context.",
-            args_schema=GetContextArgs,
-        ),
-    ]
+    """Bindable tool schemas for agentic use (Phase 5+).
+
+    `pre_score` appears only when a decision model is configured.
+    """
+    tools: list[StructuredTool] = []
+    if toolbox.decision_maker is not None:
+        tools.append(
+            StructuredTool.from_function(
+                coroutine=lambda **kwargs: _pre_score(
+                    toolbox, kwargs["question"], kwargs["text"]
+                ),
+                name="pre_score",
+                description=(
+                    "Ask a calibrated decision model a yes/no question "
+                    "about a text; returns P(yes) with confidence. Use for "
+                    "cheap relevance/grounding checks before fetching or "
+                    "citing."
+                ),
+                args_schema=PreScoreArgs,
+            )
+        )
+    tools.extend(
+        [
+            StructuredTool.from_function(
+                coroutine=toolbox.web_search,
+                name="web_search",
+                description="Search the web and return ranked results.",
+                args_schema=WebSearchArgs,
+            ),
+            StructuredTool.from_function(
+                coroutine=toolbox.fetch_pages,
+                name="fetch_pages",
+                description="Fetch pages (default: top-ranked results) as markdown.",
+                args_schema=FetchPagesArgs,
+            ),
+            StructuredTool.from_function(
+                coroutine=toolbox.get_context,
+                name="get_context",
+                description="Select the chunks most relevant to the query as context.",
+                args_schema=GetContextArgs,
+            ),
+        ]
+    )
+    return tools

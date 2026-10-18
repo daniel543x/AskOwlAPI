@@ -80,6 +80,16 @@ class Settings(BaseSettings):
     # Per-key fixed-window limit for X-API-Key traffic (requests/minute).
     API_KEY_RATE_LIMIT_PER_MINUTE: int = 60
 
+    # <----- Decision layer (Phase 7 pre-scores; off by default until eval'd) ----->
+    PRE_SCORE_SEARCH_FILTER: bool = False
+    PRE_SCORE_CHUNK_FILTER: bool = False
+    PRE_SCORE_QUERY_CHOICE: bool = False
+    PRE_SCORE_GROUNDING_CHECK: bool = False
+    # noul P(relevant) a search result must reach to be fetched.
+    PRE_SCORE_RELEVANCE_THRESHOLD: float = 0.5
+    # 1-5 chunk relevance floor for the second-opinion filter.
+    PRE_SCORE_CHUNK_MIN_SCORE: float = 3.0
+
     # <----- Outbound proxy ----->
     # Optional HTTP(S) proxy for search + scraping egress. Hosting
     # environments where direct traffic from app hosts is blocked set this

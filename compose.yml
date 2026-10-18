@@ -55,6 +55,26 @@ services:
     networks:
       - AskOwl-Net
 
+  laya:
+    # Optional Jev-compatible decision sidecar (PLAN Phase 7).
+    # No prebuilt image: install laya[serve] on first start (heavy: torch).
+    # Run: podman-compose --profile laya up -d laya
+    image: python:3.12-slim
+    profiles: ["laya"]
+    environment:
+      - LAYA_HOST=0.0.0.0
+      - LAYA_PORT=8000
+      - LAYA_PRELOAD=${LAYA_PRELOAD:-1}
+      - LAYA_API_KEY=${LAYA_API_KEY:-}
+    command: >
+      sh -c "pip install --no-cache-dir 'laya[serve]' && laya-serve"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - laya_hf_cache:/root/.cache/huggingface
+    networks:
+      - AskOwl-Net
+
 networks:
   AskOwl-Net:
     external: false
@@ -62,3 +82,4 @@ networks:
 volumes:
   postgres_data:
   ollama_data:
+  laya_hf_cache:

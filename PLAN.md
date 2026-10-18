@@ -319,11 +319,11 @@ locally (no second machine available — noted, not silently passed).*
 
 ### Phase 7 — Decision layer (Jev / Laya pre-scorers) — deliberately last
 
-- [ ] `decision` provider: Jev-compatible HTTP client (choice / score / noul questions →
+- [x] `decision` provider: Jev-compatible HTTP client (choice / score / noul questions →
       typed answers with calibrated probabilities), configured as a catalog provider
       (Laya sidecar / host service / Jev cloud). Optional in-process Laya SDK variant later.
-- [ ] Apply temperature scaling / calibration wrapper per Laya docs before trusting scores.
-- [ ] Wire into the pipeline as **pre-scores** (each individually toggleable, off by default
+- [x] Apply temperature scaling / calibration wrapper per Laya docs before trusting scores.
+- [x] Wire into the pipeline as **pre-scores** (each individually toggleable, off by default
       until eval'd):
       - search-result filtering: noul "is this result relevant to the query?" before scraping
         (saves fetches);
@@ -332,11 +332,31 @@ locally (no second machine available — noted, not silently passed).*
       - query choice: pick the best rewritten search query among candidates;
       - grounding check: noul "is this claim supported by the context?" as a post-answer
         verification signal (surfaced, not silently blocking).
-- [ ] Expose decisions as a tool (`pre_score`) so the Phase 4 agent mode can use them too.
-- [ ] `compose.yml`: optional `laya-serve` profile (`laya[serve]` image/service).
+- [x] Expose decisions as a tool (`pre_score`) so the Phase 4 agent mode can use them too.
+- [x] `compose.yml`: optional `laya-serve` profile (`laya[serve]` image/service).
 
 **DoD:** with a Laya sidecar or Jev key configured, each pre-score use case can be enabled
 and measured via the Phase 3 eval harness; failures degrade gracefully (skip, never crash).
+*Status: **closed 2026-10-18**. New `decision` module: `IDecisionMaker` interface with
+typed helpers (noul / score / choice, single + batch) and `JevCompatibleClient` speaking
+the documented wire protocol (`/v1/systemone[\/batch]`); one client serves a
+`laya[serve]` sidecar, a host service, or Jev cloud (decision #2: sidecar). Resolution via
+the catalog (`kind=decision`, provider type `jev`, optional per request
+`decision_model_id`); the dependency degrades to None — the whole layer is optional.
+Temperature scaling: every probability passes `softmax(logits/T)` with temperatures from
+the entry's `default_params.calibration` keyed by `"<type>:<option-count>"` (defaults are
+placeholders — fit on own data per Laya docs, mean ECE 0.213→0.081 when fitted; noted in
+`docs/architecture/decision_layer.md`). All four pre-scores wired and toggleable in
+settings, default OFF: search-result filter (batched noul, never empties the set), chunk
+second-opinion (1–5 with min-score floor), query choice (raw vs optimized), grounding
+signal (SSE `grounding` event + JSON `grounding_supported`, never blocking). Agent mode
+gains a `pre_score` tool when a decision model resolves. Eval CLI measures the retrieval
+pre-scores (`--pre-score-search-filter`, `--pre-score-chunk-filter`,
+`--decision-id`). compose: `--profile laya` service (pip-installs `laya[serve]`; no
+prebuilt image exists). 37 new offline tests (wire protocol, calibration math, degradation
+paths, pipeline surfacing, tool gating). Note: this branch also carries the cherry-picked
+decisions commit (`a9d51d3`, pushed to the PR #5 branch after that PR was merged — see PR
+description).*
 
 ---
 
@@ -345,9 +365,9 @@ and measured via the Phase 3 eval harness; failures degrade gracefully (skip, ne
 | # | Decision | Owner | Needed by |
 |---|----------|-------|-----------|
 | 1 | ~~Default embedding model + dims~~ **Decided 2026-10-17: `bge-m3`, 1024 dims (Ollama)** | daniel | Phase 3 ✅ |
-| 2 | Laya packaging: HTTP sidecar (recommended, matches Jev cloud too) vs in-process SDK | daniel | Phase 7 |
-| 3 | ~~API-key scheme (shape, scopes, rotation)~~ **Implemented 2026-10-18** (Phase 6): `ak-`-prefixed server-generated keys, SHA-256 hash-only storage, scopes `{search, research, agent}`, manual rotation (revoke + create), per-key rate limit — design in `docs/architecture/api_keys.md`; final sign-off pending | daniel | sign-off only |
-| 4 | Keep or drop the `pro` role name (gates read the central `ELEVATED_ROLES` tuple, used by Phase 4 modes and Phase 5 personas) | daniel | Phase 6 |
+| 2 | ~~Laya packaging~~ **Decided 2026-10-18: HTTP sidecar** (`laya[serve]` container or Jev cloud; one Jev-compatible client) | daniel | Phase 7 |
+| 3 | ~~API-key scheme (shape, scopes, rotation)~~ **Decided (approved) 2026-10-18**: implemented design in `docs/architecture/api_keys.md` | daniel | closed |
+| 4 | ~~Keep or drop the `pro` role name~~ **Decided 2026-10-18: renamed to `research`** (data migration renames seeded rows; assignments preserved via role id) | daniel | closed |
 
 ---
 

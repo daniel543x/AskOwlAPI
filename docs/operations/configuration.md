@@ -25,6 +25,7 @@ valid `MASTER_KEY` (Fernet key, url-safe base64, 32 bytes).
 | Research/agent | `RESEARCH_MAX_SUBQUESTIONS=5`, `AGENT_MAX_ITERATIONS=8`, `AGENT_TIME_BUDGET_SECONDS=300`, `AGENT_TOKEN_BUDGET=60000` |
 | API keys | `API_KEY_RATE_LIMIT_PER_MINUTE=60` |
 | Egress proxy | `PROXY_URL` (empty = direct) |
+| Decision pre-scores | `PRE_SCORE_SEARCH_FILTER/CHUNK_FILTER/QUERY_CHOICE/GROUNDING_CHECK` (all off), `PRE_SCORE_RELEVANCE_THRESHOLD`, `PRE_SCORE_CHUNK_MIN_SCORE` — see [../architecture/decision_layer.md](../architecture/decision_layer.md) |
 | Auth | `ACCESS_TOKEN_EXPIRE_MINUTES=30` |
 
 Model selection itself is **not** env-driven: it goes through the

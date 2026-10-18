@@ -84,7 +84,7 @@ async def test_personas_require_authentication(auth_client):
 
 @pytest.mark.asyncio
 async def test_persona_crud_roundtrip(auth_client, db_session):
-    token = await make_user(db_session, role_name="pro")
+    token = await make_user(db_session, role_name="research")
     headers = {"Authorization": f"Bearer {token}"}
 
     created = await auth_client.post("/personas", json=PERSONA_PAYLOAD, headers=headers)
@@ -143,7 +143,7 @@ async def test_personas_are_isolated_per_user(auth_client, db_session):
 
 @pytest.mark.asyncio
 async def test_agent_with_persona_applies_it(auth_client, db_session):
-    token = await make_user(db_session, role_name="pro")
+    token = await make_user(db_session, role_name="research")
     headers = {"Authorization": f"Bearer {token}"}
 
     created = await auth_client.post("/personas", json=PERSONA_PAYLOAD, headers=headers)
@@ -173,7 +173,7 @@ async def test_agent_with_persona_applies_it(auth_client, db_session):
 @pytest.mark.asyncio
 async def test_agent_with_foreign_persona_is_404(auth_client, db_session):
     token_owner = await make_user(db_session)
-    token_agent_user = await make_user(db_session, role_name="pro")
+    token_agent_user = await make_user(db_session, role_name="research")
 
     created = await auth_client.post(
         "/personas", json=PERSONA_PAYLOAD,
@@ -191,7 +191,7 @@ async def test_agent_with_foreign_persona_is_404(auth_client, db_session):
 
 @pytest.mark.asyncio
 async def test_agent_with_missing_persona_is_404(auth_client, db_session):
-    token = await make_user(db_session, role_name="pro")
+    token = await make_user(db_session, role_name="research")
 
     response = await auth_client.get(
         "/ask/agent",

@@ -22,6 +22,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ....modules.chunk_store.model import Chunk
 from ....modules.chunk_store.repository import ChunkRepository
+from ....modules.decision.factory import DecisionFactory
 from ....modules.embedding.factory import EmbeddingFactory
 from ....modules.llm_provider.model import ModelKind
 from ....modules.llm_provider.repository import ModelRepository
@@ -66,6 +67,28 @@ async def _resolve_embedder(
         return None
 
 
+async def _resolve_decision(
+    repo: ModelRepository, requested_model_id: uuid.UUID | None = None
+):
+    if requested_model_id is None and not _decision_requested():
+        return None
+    try:
+        resolved = await repo.resolve_model(
+            kind=ModelKind.DECISION.value,
+            user_id=_EVAL_USER_ID,
+            user_roles=["admin"],
+            requested_model_id=requested_model_id,
+        )
+        return DecisionFactory().create_decision_maker(resolved)
+    except (SelectionError, ValueError) as e:
+        print(f"[eval] No usable decision model; pre-scores disabled: {e}")
+        return None
+
+
+def _decision_requested() -> bool:
+    return settings.PRE_SCORE_SEARCH_FILTER or settings.PRE_SCORE_CHUNK_FILTER
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--golden", type=Path, default=None)
@@ -77,7 +100,28 @@ async def main() -> int:
         help="Catalog entry id of the embedding model to evaluate "
         "(defaults to the catalog's embedding default).",
     )
+    parser.add_argument(
+        "--decision-id",
+        type=uuid.UUID,
+        default=None,
+        help="Catalog entry id of the decision model for pre-scores.",
+    )
+    parser.add_argument(
+        "--pre-score-search-filter",
+        action="store_true",
+        help="Enable the search-result pre-score for this run.",
+    )
+    parser.add_argument(
+        "--pre-score-chunk-filter",
+        action="store_true",
+        help="Enable the chunk pre-score for this run.",
+    )
     args = parser.parse_args()
+
+    if args.pre_score_search_filter:
+        settings.PRE_SCORE_SEARCH_FILTER = True
+    if args.pre_score_chunk_filter:
+        settings.PRE_SCORE_CHUNK_FILTER = True
 
     configure_logging(settings)
     entries = load_golden_set(args.golden)
@@ -93,6 +137,7 @@ async def main() -> int:
         ranker = await RankerFactory.from_resolved(ranker_model)
         embedder = await _resolve_embedder(repo, args.embedder_id)
         chunk_repo = ChunkRepository(session)
+        decision_maker = await _resolve_decision(repo, args.decision_id)
 
         # Cache search + scrape results so both configurations run against
         # identical inputs even when upstream engines flap between runs.
@@ -113,7 +158,8 @@ async def main() -> int:
         if embedder is not None:
             print("[eval] running vector (hybrid retrieval)...")
             vector = await run_eval(
-                "vector", entries, searching, scraper, ranker, embedder, chunk_repo
+                "vector", entries, searching, scraper, ranker, embedder, chunk_repo,
+                decision_maker,
             )
             print(format_report(vector))
             reports.append(vector)
