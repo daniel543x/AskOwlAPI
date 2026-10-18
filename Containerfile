@@ -15,8 +15,8 @@ COPY src ./src
 COPY migrations ./migrations
 COPY alembic.ini main.py ./
 
-# Run as an unprivileged user.
-RUN groupadd --system askowl && useradd --system --gid askowl askowl \
+# Run as an unprivileged user (needs a writable home for uv's cache).
+RUN groupadd --system askowl && useradd --system --create-home --gid askowl askowl \
     && chown -R askowl:askowl /app
 USER askowl
 
