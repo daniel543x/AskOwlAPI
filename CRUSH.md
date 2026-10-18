@@ -36,7 +36,7 @@ done). `ROADMAP.md` is historical. Read the current phase in `PLAN.md` before st
 - `src/modules/search_engine/`, `src/modules/scrapy/`, `src/modules/owl_reranker/` —
   pluggable search, scraping, ranking.
 - `src/modules/identity/` — JWT auth, users, roles (user/pro/admin).
-- `src/modules/history/` — placeholder, PLAN Phase 7.
+- `src/modules/history/` — placeholder, PLAN Phase 6.
 - `src/tools/` — settings (pydantic-settings), db, crypto. All config goes through
   `settings.py`; never hardcode URLs, secrets, or model names.
 
@@ -58,7 +58,7 @@ done). `ROADMAP.md` is historical. Read the current phase in `PLAN.md` before st
   prompt-parsed JSON as the LLM interface.
 - One PLAN phase = one branch = one PR. Tick the boxes in `PLAN.md` when a task is done and
   keep the "Open decisions" table current — do not silently decide open items.
-- New DB tables: until Alembic lands (PLAN Phase 7), extend the `create_all` bootstrap in
+- New DB tables: until Alembic lands (PLAN Phase 6), extend the `create_all` bootstrap in
   `src/init.py` and note the schema change in the PR description.
 
 ## Guardrails

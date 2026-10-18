@@ -3,8 +3,9 @@
 Status: draft v1 (2026-10-17). Source of truth for phased work. `CRUSH.md` tells the dev agent
 (crush) how to work in this repo; this file tells it what to build.
 
-Complements `ROADMAP.md` (rough mapping: Phases 0–1 ≈ Stage 1, Phase 5 ≈ Stage 2 agentic,
-Phase 6 personas ≈ Stage 3, Phase 7 ≈ Stages 4–5).
+Complements `ROADMAP.md` (rough mapping: Phases 0–1 ≈ Stage 1, Phase 4 ≈ Stage 2 agentic,
+Phase 5 personas ≈ Stage 3, Phase 6 ≈ Stages 4–5; Phase 7, the Jev/Laya decision layer,
+is deliberately ordered last).
 
 ---
 
@@ -38,7 +39,7 @@ Phase 6 personas ≈ Stage 3, Phase 7 ≈ Stages 4–5).
    store dimensions per catalog entry so multiple embedders can coexist.
 5. **Audience & auth.** AskOwl serves interactive clients (future UI) **and** other backends:
    streaming SSE and non-streaming JSON are both first-class. API-key auth is required but the
-   scheme is not finalized — design lands in Phase 7. Roles gate **modes**:
+   scheme is not finalized — design lands in Phase 6. Roles gate **modes**:
    - `search` — basic search (pipeline). All authenticated users.
    - `research` — advanced multi-step search. Elevated role.
    - `agents` — custom search agents: user-created **personas** specialized in a topic (e.g.
@@ -205,7 +206,44 @@ aborted transaction cascaded `InFailedSQLTransaction` onto later inserts — now
 `CAST(:query_vector AS vector)` plus rollback-on-error, with live-Postgres regression
 tests in `tests/modules/chunk_store/test_repository.py` (integration-marked).*
 
-### Phase 4 — Decision layer (Jev / Laya pre-scorers)
+### Phase 4 — Agent mode (`research` mode + agentic loop)
+
+- [ ] Agent loop over the shared tools (`web_search`, `fetch_pages`, `get_context`) with
+      iteration/token/time budgets; per-step SSE events; models gated on the `tools`
+      capability. `pre_score` joins when the decision layer lands (Phase 7).
+- [ ] `research` mode = planner (sub-questions via tool call) → per-sub-question search
+      pipeline → grounded synthesis report with citations. Replaces the `/ask/research` stub.
+- [ ] Role gating per §0.5 (`search` all users; `research` elevated).
+
+**DoD:** research mode produces a cited report end-to-end with bounded budgets; role gating
+tested.
+
+### Phase 5 — Personas (custom agents)
+
+- [ ] `agents` (personas) table per user: name, system context (topic/tech stack), search
+      constraints (allowed domains/engines/keywords), default parameters.
+- [ ] Persona-scoped `agents` mode: agent loop constrained by the persona (query rewriting
+      biased by persona context, search constrained to its scope); select persona per
+      request/conversation; role-gated.
+- [ ] Persona management endpoints (CRUD, own personas only).
+
+**DoD:** a "Rust programmer" persona demonstrably changes the sources and answers for the
+same query vs. no persona.
+
+### Phase 6 — Platform hardening
+
+- [ ] History module (fill the empty files): PostgreSQL conversations/messages, per user,
+      wired into ask routes; `conversation_id` handling.
+- [ ] API keys for clients/backends: server-generated keys, hash-only storage (reuse
+      `CryptoService`), scopes tied to modes/roles, rate limiting. Design doc first
+      (open decision — scheme not finalized).
+- [ ] Alembic migrations; retire `create_all` (Phase 3's pgvector schema migrates too).
+- [ ] CI (GitHub Actions): ruff, unit tests (no services), integration tests with
+      postgres + searxng services, container build.
+- [ ] Fill `docs/` per `docs/doc_plan.md`; README rewrite (modes, model selection, topology
+      options); release tagging.
+
+### Phase 7 — Decision layer (Jev / Laya pre-scorers) — deliberately last
 
 - [ ] `decision` provider: Jev-compatible HTTP client (choice / score / noul questions →
       typed answers with calibrated probabilities), configured as a catalog provider
@@ -220,48 +258,11 @@ tests in `tests/modules/chunk_store/test_repository.py` (integration-marked).*
       - query choice: pick the best rewritten search query among candidates;
       - grounding check: noul "is this claim supported by the context?" as a post-answer
         verification signal (surfaced, not silently blocking).
-- [ ] Expose decisions as a tool (`pre_score`) so the Phase 5 agent can use them too.
+- [ ] Expose decisions as a tool (`pre_score`) so the Phase 4 agent mode can use them too.
 - [ ] `compose.yml`: optional `laya-serve` profile (`laya[serve]` image/service).
 
 **DoD:** with a Laya sidecar or Jev key configured, each pre-score use case can be enabled
 and measured via the Phase 3 eval harness; failures degrade gracefully (skip, never crash).
-
-### Phase 5 — Agent mode (`research` mode + agentic loop)
-
-- [ ] Agent loop over the shared tools (`web_search`, `fetch_pages`, `get_context`,
-      `pre_score`) with iteration/token/time budgets; per-step SSE events; models gated on
-      the `tools` capability.
-- [ ] `research` mode = planner (sub-questions via tool call) → per-sub-question search
-      pipeline → grounded synthesis report with citations. Replaces the `/ask/research` stub.
-- [ ] Role gating per §0.5 (`search` all users; `research` elevated).
-
-**DoD:** research mode produces a cited report end-to-end with bounded budgets; role gating
-tested.
-
-### Phase 6 — Personas (custom agents)
-
-- [ ] `agents` (personas) table per user: name, system context (topic/tech stack), search
-      constraints (allowed domains/engines/keywords), default parameters.
-- [ ] Persona-scoped `agents` mode: agent loop constrained by the persona (query rewriting
-      biased by persona context, search constrained to its scope); select persona per
-      request/conversation; role-gated.
-- [ ] Persona management endpoints (CRUD, own personas only).
-
-**DoD:** a "Rust programmer" persona demonstrably changes the sources and answers for the
-same query vs. no persona.
-
-### Phase 7 — Platform hardening
-
-- [ ] History module (fill the empty files): PostgreSQL conversations/messages, per user,
-      wired into ask routes; `conversation_id` handling.
-- [ ] API keys for clients/backends: server-generated keys, hash-only storage (reuse
-      `CryptoService`), scopes tied to modes/roles, rate limiting. Design doc first
-      (open decision — scheme not finalized).
-- [ ] Alembic migrations; retire `create_all` (Phase 3's pgvector schema migrates too).
-- [ ] CI (GitHub Actions): ruff, unit tests (no services), integration tests with
-      postgres + searxng services, container build.
-- [ ] Fill `docs/` per `docs/doc_plan.md`; README rewrite (modes, model selection, topology
-      options); release tagging.
 
 ---
 
@@ -270,6 +271,6 @@ same query vs. no persona.
 | # | Decision | Owner | Needed by |
 |---|----------|-------|-----------|
 | 1 | ~~Default embedding model + dims~~ **Decided 2026-10-17: `bge-m3`, 1024 dims (Ollama)** | daniel | Phase 3 ✅ |
-| 2 | Laya packaging: HTTP sidecar (recommended, matches Jev cloud too) vs in-process SDK | daniel | Phase 4 |
-| 3 | API-key scheme (shape, scopes, rotation) | daniel | Phase 7 |
-| 4 | Keep or drop the `pro` role name once modes are gated | daniel | Phase 5 |
+| 2 | Laya packaging: HTTP sidecar (recommended, matches Jev cloud too) vs in-process SDK | daniel | Phase 7 |
+| 3 | API-key scheme (shape, scopes, rotation) | daniel | Phase 6 |
+| 4 | Keep or drop the `pro` role name once modes are gated | daniel | Phase 4 |
