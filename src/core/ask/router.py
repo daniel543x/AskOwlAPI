@@ -15,6 +15,8 @@ from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...modules.decision.base import IDecisionMaker
+from ...modules.decision.factory import get_optional_decision_maker
 from ...modules.embedding.base import IEmbedder
 from ...modules.embedding.factory import get_optional_embedder
 from ...modules.identity.auth.security import require_scope
@@ -54,6 +56,7 @@ async def ask_search(
     scraper: IScraper = Depends(get_scraper),
     ranker: IRanker = Depends(get_ranker),
     embedder: IEmbedder | None = Depends(get_optional_embedder),
+    decision_maker: IDecisionMaker | None = Depends(get_optional_decision_maker),
     user: User = Depends(_search_scope),
     session: AsyncSession = Depends(get_session),
 ):
@@ -69,6 +72,7 @@ async def ask_search(
                 session=session,
                 user_id=user.id,
                 conversation_id=request.conversation_id,
+                decision_maker=decision_maker,
             ),
             media_type="text/event-stream",
         )
@@ -83,5 +87,6 @@ async def ask_search(
         session=session,
         user_id=user.id,
         conversation_id=request.conversation_id,
+        decision_maker=decision_maker,
     )
     return {"answer": answer}

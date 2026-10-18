@@ -29,6 +29,10 @@ you configure a cloud provider.
 *   **Admin-curated model catalog:** admins register providers and models (chat,
     embedding, reranker) with encrypted API keys; users pick from what is available to
     their role, with sensible defaults.
+*   **Optional decision layer:** a Jev/Laya sidecar can pre-score the
+    pipeline (search-result relevance, chunk quality, query choice,
+    grounding signal) — every pre-score is toggleable, degrades
+    gracefully, and is off until measured on the eval harness.
 *   **Hybrid retrieval:** pages are chunked and embedded (`bge-m3`) into a pgvector
     store; vector candidates are reranked by a cross-encoder (`flashrank`) before the
     answer step.
@@ -195,7 +199,15 @@ Lint:
 uv run ruff check src tests
 ```
 
-### Database migrations
+### Decision layer (optional)
+
+Run a Jev-compatible sidecar (`podman-compose --profile laya up -d laya`),
+register it as a `jev` provider with a `decision`-kind entry, and enable
+the pre-scores you want. Calibration temperatures live in the catalog
+entry; see `docs/architecture/decision_layer.md` before trusting any
+probability.
+
+## Database migrations
 
 Schema changes ship as Alembic revisions and are applied at startup. Manual
 operations: `uv run alembic upgrade head` / `downgrade -1`; the full guide is in

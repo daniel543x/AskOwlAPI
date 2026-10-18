@@ -16,6 +16,8 @@ from langchain_core.language_models import BaseChatModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...modules.chunk_store.repository import ChunkRepository
+from ...modules.decision.base import IDecisionMaker
+from ...modules.decision.factory import get_optional_decision_maker
 from ...modules.embedding.base import IEmbedder
 from ...modules.embedding.factory import get_optional_embedder
 from ...modules.identity.auth.security import (
@@ -104,6 +106,7 @@ async def ask_agent(
     scraper: IScraper = Depends(get_scraper),
     ranker: IRanker = Depends(get_ranker),
     embedder: IEmbedder | None = Depends(get_optional_embedder),
+    decision_maker: IDecisionMaker | None = Depends(get_optional_decision_maker),
     user: User = Depends(get_current_elevated_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -122,6 +125,7 @@ async def ask_agent(
         chunk_repo,
         allowed_domains=persona.allowed_domains if persona else None,
         allowed_engines=persona.allowed_engines if persona else None,
+        decision_maker=decision_maker,
     )
 
     return StreamingResponse(
