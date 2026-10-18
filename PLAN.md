@@ -189,24 +189,21 @@ documented; both SSE and JSON consumers served.
 
 **DoD:** answers are produced from vector-retrieved + reranked context; eval report exists;
 default configuration beats the Phase 2 baseline on the golden set.
-*Status: implemented; closing is blocked on a **valid** comparison run. The 2026-10-17
-22:10 report (`eval_reports/eval_report.json`) is invalid: `vector_retrieval` is false on
-every query — the embedder was unreachable, so the "vector" run silently degraded to the
-baseline path and the resulting tie proves nothing. Fixes on this branch: the eval CLI now
-fails loudly when the vector config degrades (`comparison_verdict`), metrics normalize
-URL variants (www prefix, host casing, trailing slash) before scoring, and search/scrape
-results are cached across configurations so engine flakiness cannot bias the comparison
-(diagnosed 2026-10-17: from this host only bing responds — brave/ddg/startpage CAPTCHA or
-suspended, qwant API error — capping search-level recall at 4/28 golden URLs; that is an
-environment/IP-reputation issue, not a pipeline defect. Worse, bing then started returning
-*unrelated spam* with HTTP 200 (silent poisoning: a "Who is Donald Trump?" query yielded
-patheos.com religion blogs), and the searxng container's egress to Wikipedia's API 403s —
-the whole egress IP has reputation damage. The pipeline itself is mechanically healthy
-end-to-end without Ollama; search-layer mitigation (proxy egress, API-keyed engines,
-result-sanity heuristics) is a design decision to schedule, not a Phase 3 item). Re-run once an embedder is
-reachable: local Ollama with `bge-m3` pulled (deferred for now) or the catalog's
-OpenAI-compatible entry — the OpenRouter free tier is daily-quota-capped (resets
-2026-10-18 00:00 UTC).*
+*Status: **closed 2026-10-18** (valid run on local Ollama `bge-m3`, both configs on
+identical cached search/scrape inputs; report at `eval_reports/eval_report.json`,
+gitignored — numbers recorded here). Vector retrieval was exercised on 20/20 queries and
+the gate ("vector must not lose to baseline") passed: vector ≥ baseline on every query,
+strict gains in mean MRR 0.074 → 0.082 and mean latency 13.2 s → 5.7 s. Recall ties at
+0.125 because search-egress poisoning floors 14/20 queries at zero golden URLs fetched
+for *both* configs (the rust query returned peptide articles, k8s returned Gmail login
+pages) — a strict "beats" is unmeasurable from this host; re-run from a clean egress
+after search-layer mitigation (proxy egress / API-keyed engines / result-sanity
+heuristics — a scheduled design decision, see the 2026-10-17 diagnosis below). Bugs found
+and fixed by the run: `ChunkRepository.vector_candidates` shipped `:query_vector::vector`
+to asyncpg as literal SQL (`text()` mis-parses a bind param followed by `::`) and the
+aborted transaction cascaded `InFailedSQLTransaction` onto later inserts — now
+`CAST(:query_vector AS vector)` plus rollback-on-error, with live-Postgres regression
+tests in `tests/modules/chunk_store/test_repository.py` (integration-marked).*
 
 ### Phase 4 — Decision layer (Jev / Laya pre-scorers)
 
