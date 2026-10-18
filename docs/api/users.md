@@ -7,7 +7,7 @@
 - `PATCH /user/{id}` — update own email/nickname/password.
 - `DELETE /user/{id}` — delete.
 
-Registration assigns the default `user` role; elevated roles (`pro`,
+Registration assigns the default `user` role; elevated roles (`research`,
 `admin`) are granted by an admin via `POST /roles/users/{user_id}/assign`.
 
 ## Admin: user management
@@ -37,6 +37,6 @@ Design: [../architecture/api_keys.md](../architecture/api_keys.md).
 - `GET /history/{id}` — conversation with its messages.
 - `DELETE /history/{id}` — delete conversation and messages.
 
-Turns are appended automatically by `GET /ask/search` (pass
+Turns are appended automatically by `POST /ask/search` (pass
 `conversation_id` to continue one; omit to create a new conversation — its
 id is returned in the JSON response and the SSE `conversation` event).

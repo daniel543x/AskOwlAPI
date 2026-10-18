@@ -24,7 +24,7 @@ blocked users also fail JWT validation (403) everywhere.
 - `GET /api-keys` lists keys (hash never returned), `DELETE /api-keys/{id}`
   revokes.
 - Scopes: `{search, research, agent}`; the key must carry a mode's scope
-  to use it. Elevated modes additionally require the `pro`/`admin` role.
+  to use it. Elevated modes additionally require the `research`/`admin` role.
 - Rate limited per key: `API_KEY_RATE_LIMIT_PER_MINUTE` (default 60/min,
   429 + `Retry-After` when exceeded).
 - Keys whose owner is blocked stop working immediately.
@@ -34,7 +34,7 @@ blocked users also fail JWT validation (403) everywhere.
 | Role | Modes | Management |
 |---|---|---|
 | `user` | `search` | own personas / api-keys / history |
-| `pro` | `+ research`, `agent` | — |
+| `research` | `+ research`, `agent` | — |
 | `admin` | everything | models catalog, users, roles |
 
 Admin user management: `GET /admin/users`, `PATCH /admin/users/{id}/status`

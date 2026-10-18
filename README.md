@@ -90,10 +90,19 @@ podman-compose exec ollama ollama pull bge-m3
 ### Step 4: Ask a question
 
 ```bash
-curl -N "http://localhost:3000/ask/search?query=what%20is%20pgvector&stream=true"
+curl -N -X POST http://localhost:3000/ask/search \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "what is pgvector", "stream": true}'
 # or single JSON document:
-curl "http://localhost:3000/ask/search?query=what%20is%20pgvector&stream=false"
+curl -X POST http://localhost:3000/ask/search \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "what is pgvector", "stream": false}'
 ```
+
+The turn is persisted to your conversation history (`conversation_id`
+continues one; omit it to start a new one).
 
 The SSE protocol (events `status`, `query`, `sources`, `context`, `message`, `done`,
 `error`) is documented in
@@ -108,7 +117,7 @@ All modes require authentication (JWT bearer or `X-API-Key`).
 *   **`search`** (all users): direct, enhanced search. Query rewriting, search,
     scraping, hybrid retrieval, and cited answer synthesis — each step a native
     tool call.
-*   **`research`** (elevated role `pro`/`admin`): the planner decomposes the
+*   **`research`** (elevated role `research`/`admin`): the planner decomposes the
     query into sub-questions via a tool call, runs the search pipeline for
     each, and synthesizes a cited Markdown report. SSE or JSON.
 *   **`agent`** (elevated role): an autonomous agent loop over the shared tools
@@ -162,7 +171,7 @@ automatically at startup; pre-migration databases are adopted non-destructively.
     `podman-compose up -d db searXNG`.
 4.  Run the application: `uv run main.py` (API on `http://localhost:3000`).
 
-Roles (`user`/`pro`/`admin`) are seeded at startup; create the first user via
+Roles (`user`/`research`/`admin`) are seeded at startup; create the first user via
 `POST /user/` and log in via `POST /auth/login` (JWT bearer). Role-gated mode access
 lands with the `research`/`agents` modes.
 

@@ -158,8 +158,9 @@ async def test_blocked_users_api_key_is_rejected(auth_client, db_session):
     assert created.status_code == 201
     raw_key = created.json()["raw_key"]
 
-    ok_before = await auth_client.get(
-        "/ask/search", params={"query": "rust", "stream": False},
+    ok_before = await auth_client.post(
+        "/ask/search",
+        json={"query": "rust", "stream": False},
         headers={"X-API-Key": raw_key},
     )
     assert ok_before.status_code == 200
@@ -169,8 +170,9 @@ async def test_blocked_users_api_key_is_rejected(auth_client, db_session):
         json={"is_active": False},
         headers=bearer(admin_token),
     )
-    rejected = await auth_client.get(
-        "/ask/search", params={"query": "rust", "stream": False},
+    rejected = await auth_client.post(
+        "/ask/search",
+        json={"query": "rust", "stream": False},
         headers={"X-API-Key": raw_key},
     )
     assert rejected.status_code == 401
@@ -200,9 +202,9 @@ async def test_api_key_lifecycle(auth_client, db_session):
     assert all("raw_key" not in k and "key_hash" not in k for k in listed.json())
     assert listed.json()[0]["last_used_at"] is None
 
-    used = await auth_client.get(
+    used = await auth_client.post(
         "/ask/search",
-        params={"query": "rust", "stream": False},
+        json={"query": "rust", "stream": False},
         headers={"X-API-Key": body["raw_key"]},
     )
     assert used.status_code == 200
@@ -214,9 +216,9 @@ async def test_api_key_lifecycle(auth_client, db_session):
         f"/api-keys/{body['id']}", headers=bearer(token)
     )
     assert revoked.status_code == 204
-    after_revoke = await auth_client.get(
+    after_revoke = await auth_client.post(
         "/ask/search",
-        params={"query": "rust", "stream": False},
+        json={"query": "rust", "stream": False},
         headers={"X-API-Key": body["raw_key"]},
     )
     assert after_revoke.status_code == 401
@@ -234,7 +236,7 @@ async def test_api_key_unknown_scope_is_rejected(auth_client, db_session):
 
 @pytest.mark.asyncio
 async def test_api_key_scopes_gate_modes(auth_client, db_session):
-    _, token = await make_user(db_session, role_name="pro")
+    _, token = await make_user(db_session, role_name="research")
 
     created = await auth_client.post(
         "/api-keys",
@@ -243,8 +245,9 @@ async def test_api_key_scopes_gate_modes(auth_client, db_session):
     )
     raw_key = created.json()["raw_key"]
 
-    search_ok = await auth_client.get(
-        "/ask/search", params={"query": "rust", "stream": False},
+    search_ok = await auth_client.post(
+        "/ask/search",
+        json={"query": "rust", "stream": False},
         headers={"X-API-Key": raw_key},
     )
     assert search_ok.status_code == 200
@@ -273,11 +276,11 @@ async def test_api_key_rate_limit(auth_client, db_session):
     try:
         statuses = [
             (
-                await auth_client.get(
-                    "/ask/search",
-                    params={"query": "rust", "stream": False},
-                    headers={"X-API-Key": raw_key},
-                )
+                await auth_client.post(
+        "/ask/search",
+        json={"query": "rust", "stream": False},
+        headers={"X-API-Key": raw_key},
+    )
             ).status_code
             for _ in range(3)
         ]
@@ -292,9 +295,9 @@ async def test_api_key_rate_limit(auth_client, db_session):
 async def test_bogus_api_key_is_401(auth_client, db_session):
     await make_user(db_session)  # at least one user exists
 
-    response = await auth_client.get(
+    response = await auth_client.post(
         "/ask/search",
-        params={"query": "rust", "stream": False},
+        json={"query": "rust", "stream": False},
         headers={"X-API-Key": "ak-does-not-exist"},
     )
     assert response.status_code == 401
@@ -307,10 +310,11 @@ async def test_bogus_api_key_is_401(auth_client, db_session):
 async def test_search_persists_and_reuses_conversations(auth_client, db_session):
     user, token = await make_user(db_session)
 
-    first = await auth_client.get(
+    first = await auth_client.post(
         "/ask/search",
-        params={"query": "first question", "stream": False},
-        headers=bearer(token),
+        json={"query": "first question", "stream": False},
+        headers=bearer(token,
+    ),
     )
     assert first.status_code == 200
     conversation_id = first.json()["answer"]["conversation_id"]
@@ -331,11 +335,12 @@ async def test_search_persists_and_reuses_conversations(auth_client, db_session)
     # Second turn in the same conversation: history must reach the LLM.
     model = search_model(answer="Second answer. [Source](http://example.com/a)")
     app.dependency_overrides[get_llm_client] = lambda: model
-    second = await auth_client.get(
+    second = await auth_client.post(
         "/ask/search",
-        params={"query": "second question", "stream": False,
+        json={"query": "second question", "stream": False,
                 "conversation_id": conversation_id},
-        headers=bearer(token),
+        headers=bearer(token,
+    ),
     )
     assert second.status_code == 200
     assert second.json()["answer"]["conversation_id"] == conversation_id
@@ -357,10 +362,11 @@ async def test_history_is_isolated_per_user(auth_client, db_session):
     _, token_a = await make_user(db_session)
     _, token_b = await make_user(db_session)
 
-    first = await auth_client.get(
+    first = await auth_client.post(
         "/ask/search",
-        params={"query": "private", "stream": False},
-        headers=bearer(token_a),
+        json={"query": "private", "stream": False},
+        headers=bearer(token_a,
+    ),
     )
     conversation_id = first.json()["answer"]["conversation_id"]
 
@@ -369,10 +375,11 @@ async def test_history_is_isolated_per_user(auth_client, db_session):
     )
     assert foreign.status_code == 404
 
-    foreign_ask = await auth_client.get(
+    foreign_ask = await auth_client.post(
         "/ask/search",
-        params={"query": "q", "stream": False, "conversation_id": conversation_id},
-        headers=bearer(token_b),
+        json={"query": "q", "stream": False, "conversation_id": conversation_id},
+        headers=bearer(token_b,
+    ),
     )
     assert foreign_ask.status_code == 404
 
@@ -380,10 +387,11 @@ async def test_history_is_isolated_per_user(auth_client, db_session):
 @pytest.mark.asyncio
 async def test_delete_conversation(auth_client, db_session):
     _, token = await make_user(db_session)
-    first = await auth_client.get(
+    first = await auth_client.post(
         "/ask/search",
-        params={"query": "temp", "stream": False},
-        headers=bearer(token),
+        json={"query": "temp", "stream": False},
+        headers=bearer(token,
+    ),
     )
     conversation_id = first.json()["answer"]["conversation_id"]
 

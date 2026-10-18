@@ -345,9 +345,9 @@ and measured via the Phase 3 eval harness; failures degrade gracefully (skip, ne
 | # | Decision | Owner | Needed by |
 |---|----------|-------|-----------|
 | 1 | ~~Default embedding model + dims~~ **Decided 2026-10-17: `bge-m3`, 1024 dims (Ollama)** | daniel | Phase 3 ✅ |
-| 2 | Laya packaging: HTTP sidecar (recommended, matches Jev cloud too) vs in-process SDK | daniel | Phase 7 |
-| 3 | ~~API-key scheme (shape, scopes, rotation)~~ **Implemented 2026-10-18** (Phase 6): `ak-`-prefixed server-generated keys, SHA-256 hash-only storage, scopes `{search, research, agent}`, manual rotation (revoke + create), per-key rate limit — design in `docs/architecture/api_keys.md`; final sign-off pending | daniel | sign-off only |
-| 4 | Keep or drop the `pro` role name (gates read the central `ELEVATED_ROLES` tuple, used by Phase 4 modes and Phase 5 personas) | daniel | Phase 6 |
+| 2 | ~~Laya packaging~~ **Decided 2026-10-18: HTTP sidecar** (`laya[serve]` container or Jev cloud; one Jev-compatible client) | daniel | Phase 7 |
+| 3 | ~~API-key scheme (shape, scopes, rotation)~~ **Decided (approved) 2026-10-18**: implemented design in `docs/architecture/api_keys.md` | daniel | closed |
+| 4 | ~~Keep or drop the `pro` role name~~ **Decided 2026-10-18: renamed to `research`** (data migration renames seeded rows; assignments preserved via role id) | daniel | closed |
 
 ---
 
