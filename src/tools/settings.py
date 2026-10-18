@@ -69,6 +69,13 @@ class Settings(BaseSettings):
     # reranking. Chunks are embedded at scrape time when an embedder resolves.
     VECTOR_CANDIDATES_K: int = 25
 
+    # <----- Research mode / agent loop ----->
+    RESEARCH_MAX_SUBQUESTIONS: int = 5
+    AGENT_MAX_ITERATIONS: int = 8
+    AGENT_TIME_BUDGET_SECONDS: float = 300.0
+    # Estimated tokens (chars/4) across all LLM calls of one research/agent run.
+    AGENT_TOKEN_BUDGET: int = 60_000
+
     @field_validator("MASTER_KEY")
     @classmethod
     def _validate_master_key(cls, value: str) -> str:

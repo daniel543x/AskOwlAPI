@@ -22,7 +22,7 @@ from ....modules.embedding.base import IEmbedder
 from ....modules.owl_reranker.base import IRanker
 from ....modules.scrapy.providers.base import IScraper
 from ....modules.search_engine.providers.base import ISearchProvider
-from ..services.tools import AskToolbox
+from ...tools.toolbox import AskToolbox
 from .metrics import mrr, recall_at_k
 
 logger = logging.getLogger(__name__)

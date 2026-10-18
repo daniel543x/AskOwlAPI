@@ -1,4 +1,4 @@
-from src.core.ask.services.tools import AskToolbox
+from src.core.tools.toolbox import AskToolbox
 from tests.core_ask.fakes import FakeRanker, FakeSearchProvider
 from tests.core_ask.test_eval import FakeChunkRepo, FakeEmbedder
 

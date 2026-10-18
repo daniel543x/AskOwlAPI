@@ -1,6 +1,6 @@
 import json
 
-from src.core.ask.services.tools import AskToolbox, build_tools
+from src.core.tools.toolbox import AskToolbox, build_tools
 from tests.core_ask.fakes import (
     FakeRanker,
     FakeScraper,

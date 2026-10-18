@@ -34,8 +34,10 @@ you configure a cloud provider.
     answer step.
 *   **Two client protocols:** token-by-token SSE streaming and single-document JSON —
     same data, same route.
-*   **Search modes (roadmap):** `search` (implemented), `research` multi-step reports,
-    and `agents` (topic personas) — see `PLAN.md`.
+*   **Search modes:** `search` (direct cited answers), `research` (planner →
+    sub-questions → cited report), and `agent` (autonomous tool loop) — all
+    bounded by configurable iteration/time/token budgets. See `PLAN.md` for
+    the roadmap (personas are next).
 
 ## Quick Start
 
@@ -89,17 +91,27 @@ curl "http://localhost:3000/ask/search?query=what%20is%20pgvector&stream=false"
 ```
 
 The SSE protocol (events `status`, `query`, `sources`, `context`, `message`, `done`,
-`error`) is documented in [`docs/api/ask_search_sse.md`](docs/api/ask_search_sse.md).
+`error`) is documented in
+[`docs/api/ask_search_sse.md`](docs/api/ask_search_sse.md); the research/agent
+extensions (`plan` event, budget-aware `done`) in
+[`docs/api/ask_research_sse.md`](docs/api/ask_research_sse.md).
 
 ## Search Modes
 
-*   **`search`** (implemented): direct, enhanced search. Query rewriting, search,
-    scraping, hybrid retrieval, and cited answer synthesis — each step a native tool
-    call.
-*   **`research`** (planned): planner decomposes the query into sub-questions, runs the
-    search pipeline for each, and synthesizes a cited report.
-*   **`agents`** (planned): user-created personas (topic, allowed domains, defaults)
-    that bias querying and constrain search scope.
+All modes require authentication (JWT bearer or `X-API-Key`).
+
+*   **`search`** (all users): direct, enhanced search. Query rewriting, search,
+    scraping, hybrid retrieval, and cited answer synthesis — each step a native
+    tool call.
+*   **`research`** (elevated role `pro`/`admin`): the planner decomposes the
+    query into sub-questions via a tool call, runs the search pipeline for
+    each, and synthesizes a cited Markdown report. SSE or JSON.
+*   **`agent`** (elevated role): an autonomous agent loop over the shared tools
+    (`web_search`, `fetch_pages`, `get_context`), bounded by
+    iteration/time/token budgets, answering through a `SubmitOutcome` tool
+    call. SSE.
+*   **`agents`/personas** (planned): user-created personas that constrain the
+    agent loop to a topic scope.
 
 ## Models and Providers
 

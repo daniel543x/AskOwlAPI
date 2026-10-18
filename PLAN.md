@@ -205,15 +205,28 @@ tests in `tests/modules/chunk_store/test_repository.py` (integration-marked).*
 
 ### Phase 4 — Agent mode (`research` mode + agentic loop)
 
-- [ ] Agent loop over the shared tools (`web_search`, `fetch_pages`, `get_context`) with
+- [x] Agent loop over the shared tools (`web_search`, `fetch_pages`, `get_context`) with
       iteration/token/time budgets; per-step SSE events; models gated on the `tools`
       capability. `pre_score` joins when the decision layer lands (Phase 7).
-- [ ] `research` mode = planner (sub-questions via tool call) → per-sub-question search
+- [x] `research` mode = planner (sub-questions via tool call) → per-sub-question search
       pipeline → grounded synthesis report with citations. Replaces the `/ask/research` stub.
-- [ ] Role gating per §0.5 (`search` all users; `research` elevated).
+- [x] Role gating per §0.5 (`search` all users; `research` elevated).
 
 **DoD:** research mode produces a cited report end-to-end with bounded budgets; role gating
 tested.
+*Status: **closed 2026-10-18**. Shared tools promoted to `src/core/tools/` (toolbox,
+chunking, ToolArgStream, ToolProtocolError) so neither pipeline imports the other. New
+`src/core/research/`: planner + per-sub-question gathering + cited-report synthesis
+(`/ask/research`, SSE + JSON), generic agent loop over the shared tools with a Budget
+(iterations / wall-clock / estimated tokens) and a forced-synthesis degrade path
+(`/ask/agent`, SSE). Both elevated modes gate on the existing `pro` or `admin` role
+(`get_current_elevated_user` in identity; the `pro` role is now seeded at startup —
+schema unchanged). Gating verified against live Postgres (401 anonymous / 403 plain
+user / 200 pro and admin); planner, agent loop, and adapters covered by 35 offline
+tests using the scripted tool model. Budgets and the extended SSE events (`plan`,
+budget-aware `done`) documented in `docs/api/ask_research_sse.md` and `.env.template`.
+Open decision #4 stays open — the gate reads a central `ELEVATED_ROLES` tuple, so a
+role rename is a one-line change.*
 
 ### Phase 5 — Personas (custom agents)
 
@@ -275,7 +288,7 @@ and measured via the Phase 3 eval harness; failures degrade gracefully (skip, ne
 | 1 | ~~Default embedding model + dims~~ **Decided 2026-10-17: `bge-m3`, 1024 dims (Ollama)** | daniel | Phase 3 ✅ |
 | 2 | Laya packaging: HTTP sidecar (recommended, matches Jev cloud too) vs in-process SDK | daniel | Phase 7 |
 | 3 | API-key scheme (shape, scopes, rotation) | daniel | Phase 6 |
-| 4 | Keep or drop the `pro` role name once modes are gated | daniel | Phase 4 |
+| 4 | Keep or drop the `pro` role name (Phase 4 gates read the central `ELEVATED_ROLES` tuple, currently `pro`/`admin`) | daniel | Phase 5 |
 
 ---
 

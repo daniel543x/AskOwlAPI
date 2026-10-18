@@ -55,28 +55,3 @@ async def ask_search(
             session=session,
         )
         return {"answer": answer}
-
-
-@router.get("/research")
-async def ask_research(
-    query: str = Query(..., description="User query."),
-    searching: ISearchProvider = Depends(get_search_provider),
-    model: BaseChatModel = Depends(get_llm_client),
-    scraper: IScraper = Depends(get_scraper),
-    ranker: IRanker = Depends(get_ranker),
-):
-    sources = await searching.search(query)
-    message = ranker.rank_web_search(query, sources, 5)
-
-    return {"message": message}
-
-
-@router.get("/deep_research")
-async def ask_deep_research(
-    query: str = Query(..., description="User query."),
-    searching: ISearchProvider = Depends(get_search_provider),
-    model: BaseChatModel = Depends(get_llm_client),
-    scraper: IScraper = Depends(get_scraper),
-    ranker: IRanker = Depends(get_ranker),
-):
-    return

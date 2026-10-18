@@ -21,13 +21,13 @@ from ....modules.owl_reranker.base import IRanker
 from ....modules.scrapy.providers.base import IScraper
 from ....modules.search_engine.providers.base import ISearchProvider
 from ....tools.settings import settings
+from ...tools.toolbox import AskToolbox
 from .llm_steps import (
     ToolProtocolError,
     generate_cited_answer,
     rewrite_query,
     stream_cited_answer,
 )
-from .tools import AskToolbox
 
 logger = logging.getLogger(__name__)
 
