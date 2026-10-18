@@ -5,7 +5,10 @@ from fastapi import FastAPI
 from .core.ask.router import router as AskRouter
 from .core.research.router import router as ResearchRouter
 from .init import init
+from .modules.api_keys.router import router as ApiKeysRouter
+from .modules.history.router import router as HistoryRouter
 from .modules.identity.router import router as IdentityRouter
+from .modules.identity.user.router import admin_router as UserAdminRouter
 from .modules.llm_provider.router import admin_router as ModelAdminRouter
 from .modules.llm_provider.router import health_router as ModelHealthRouter
 from .modules.llm_provider.router import router as ModelRouter
@@ -30,6 +33,9 @@ app = FastAPI(
 
 app.include_router(IdentityRouter)
 app.include_router(PersonasRouter)
+app.include_router(HistoryRouter)
+app.include_router(ApiKeysRouter)
+app.include_router(UserAdminRouter)
 app.include_router(ModelRouter)
 app.include_router(ModelAdminRouter)
 app.include_router(ModelHealthRouter)

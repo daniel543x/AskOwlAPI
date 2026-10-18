@@ -1,75 +1,103 @@
 import uuid
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import (
     APIKeyHeader,
     HTTPAuthorizationCredentials,
     HTTPBearer,
-    # OAuth2PasswordBearer,
 )
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ....tools.db import get_session
+from ....tools.settings import settings
+from ...api_keys.rate_limit import RateLimiter
 from ..user.model import User
-from .service import get_user_by_api_key, verify_token
+from .service import verify_token
 
 # https://fastapi.tiangolo.com/reference/openapi/models/
-# SecurityScheme = (
-#    APIKey | HTTPBase | OAuth2 | OpenIdConnect | HTTPBearer
-# )
-# oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
-
-# https://fastapi.tiangolo.com/reference/openapi/models/#fastapi.openapi.models.HTTPBase.model_config
 bearer_scheme = HTTPBearer(auto_error=False)
-# https://fastapi.tiangolo.com/reference/openapi/models/#fastapi.openapi.models.APIKey
 api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+_rate_limiter = RateLimiter(settings.API_KEY_RATE_LIMIT_PER_MINUTE)
+
+credentials_exception = HTTPException(
+    status_code=status.HTTP_401_UNAUTHORIZED,
+    detail="Could not validate credentials. Use Bearer token or X-API-Key.",
+    headers={"WWW-Authenticate": "Bearer"},
+)
 
 
 async def get_current_user(
-    # token: str = Depends(oauth2_scheme),
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     key: str | None = Depends(api_key_scheme),
     session: AsyncSession = Depends(get_session),
 ) -> User:
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials. Use Bearer token or X-API-Key.",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    # <----- Chcek credentials ----->
+    # <----- Bearer token (JWT) ----->
     if credentials:
-        token = credentials.credentials
         try:
-            payload = verify_token(token)
+            payload = verify_token(credentials.credentials)
             if payload:
-                user_id_str = payload.get("sub")
-                user_id = uuid.UUID(user_id_str)
+                user_id = uuid.UUID(payload.get("sub"))
                 user = await session.get(User, user_id)
                 if user:
+                    if not user.is_active:
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail="User account is disabled.",
+                        )
                     await session.refresh(user, attribute_names=["roles"])
+                    # JWT sessions are not scope-limited (role gates apply).
+                    request.state.api_key_scopes = None
                     return user
+        except HTTPException:
+            raise
         except Exception as exc:
             raise credentials_exception from exc
 
-    # <----- Chcek credentials ----->
+    # <----- API key (X-API-Key) ----->
     if key:
-        try:
-            user = await get_user_by_api_key(session, key)
-            if user:
-                return user
-        except Exception as exc:
-            raise credentials_exception from exc
+        from ...api_keys.repository import ApiKeyRepository
+
+        resolved = await ApiKeyRepository(session).resolve(key)
+        if resolved is None:
+            raise credentials_exception
+        api_key, user = resolved
+
+        _rate_limiter.check(api_key.id)
+        request.state.api_key_scopes = list(api_key.scopes)
+        return user
 
     raise credentials_exception
+
+
+def require_scope(scope: str):
+    """Mode gate for API-key sessions: the key must carry `scope`.
+
+    JWT sessions pass through (role gating already applies via the
+    elevated-user dependencies); this only narrows API keys.
+    """
+
+    async def dependency(
+        request: Request,
+        user: User = Depends(get_current_user),
+    ) -> User:
+        scopes = getattr(request.state, "api_key_scopes", None)
+        if scopes is not None and scope not in scopes:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"This mode requires the '{scope}' scope on the API key.",
+            )
+        return user
+
+    return dependency
 
 
 async def get_current_admin_user(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> User:
-    from ..role.service import (
-        get_user_roles,
-    )
+    from ..role.service import get_user_roles
 
     user_roles = await get_user_roles(session=session, user_id=current_user.id)
 

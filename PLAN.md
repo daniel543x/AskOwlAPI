@@ -261,21 +261,48 @@ Post-personas follow-up:
 
 ### Phase 6 — Platform hardening
 
-- [ ] History module (fill the empty files): PostgreSQL conversations/messages, per user,
+- [x] History module (fill the empty files): PostgreSQL conversations/messages, per user,
       wired into ask routes; `conversation_id` handling.
-- [ ] Admin user management: block/unblock users (`is_active`), enforced by auth middleware
+- [x] Admin user management: block/unblock users (`is_active`), enforced by auth middleware
       and all API-key checks; admin listing of users.
-- [ ] API keys for clients/backends: server-generated keys, hash-only storage (reuse
+- [x] API keys for clients/backends: server-generated keys, hash-only storage (reuse
       `CryptoService`), scopes tied to modes/roles, rate limiting; reject valid keys whose
       user is blocked/inactive; track `last_used_at`. Design doc first
       (open decision — scheme not finalized).
-- [ ] Alembic migrations; retire `create_all` (Phase 3's pgvector schema migrates too);
+- [x] Alembic migrations; retire `create_all` (Phase 3's pgvector schema migrates too);
       validate upgrade **and downgrade** paths on a clean database.
-- [ ] CI (GitHub Actions): ruff, unit tests (no services), integration tests with
+- [x] CI (GitHub Actions): ruff, unit tests (no services), integration tests with
       postgres + searxng services, container build; dependency vulnerability scan
       (e.g. `pip-audit`) and a secrets-exposure check on every PR.
-- [ ] Fill `docs/` per `docs/doc_plan.md`; README rewrite (modes, model selection, topology
+- [x] Fill `docs/` per `docs/doc_plan.md`; README rewrite (modes, model selection, topology
       options) verified by a fresh-clone test; release tagging.
+- [x] Release tagging is deferred to the first tagged release (V1-RC); everything else
+      above shipped 2026-10-18.
+
+*Status: **closed 2026-10-18** (release tagging noted above). History: `history` module
+(`conversation`/`message` tables, owner-scoped CRUD, `GET /history[...]`), wired into
+`/ask/search` — `conversation_id` continues a conversation (404 foreign), omitted creates
+one (SSE `conversation` event; JSON `conversation_id` field); prior turns inject into the
+answer step; turn persistence never kills a finished stream. Admin: `user.is_active`
+enforced at login (401), JWT validation (403), and every API-key resolve (401);
+`GET /admin/users`, `PATCH /admin/users/{id}/status` (409 self-block guard). API keys:
+`ak-`-prefixed server-generated keys, SHA-256 **hash-only** storage (deliberate deviation
+from the "reuse CryptoService" note: user keys are never needed in cleartext after
+issuance, so irreversibility beats reversibility; design in
+`docs/architecture/api_keys.md`), scopes `{search, research, agent}` enforced per mode on
+X-API-Key sessions, in-process fixed-window rate limit (`API_KEY_RATE_LIMIT_PER_MINUTE`),
+`last_used_at` tracked. Alembic: initial revision covers all 14 tables (pgvector extension
+created in-migration); startup runs `upgrade head`, pre-Alembic databases are adopted by
+stamping; `create_all` survives only as the pytest harness bootstrap; upgrade/downgrade/
+re-upgrade validated on clean scratch DBs (integration tests + live verification). CI:
+`.github/workflows/ci.yml` (ruff, offline pytest, integration pytest with a pgvector
+service — SearXNG not needed: integration tests stub the search provider, container
+build, `uv export` + `pip-audit`, gitleaks with a `.gitleaks.toml` allowlist for the
+committed deterministic test key). Docs filled per `doc_plan.md` (api/architecture/
+operations + index); Containerfile rewritten (uv-based, migrations baked in — the old one
+referenced a nonexistent requirements.txt and a broken CMD); README extended (history,
+API keys, migrations, CI). Fresh-clone test executed as command-coherence verification
+locally (no second machine available — noted, not silently passed).*
 
 ### Phase 7 — Decision layer (Jev / Laya pre-scorers) — deliberately last
 
@@ -306,7 +333,7 @@ and measured via the Phase 3 eval harness; failures degrade gracefully (skip, ne
 |---|----------|-------|-----------|
 | 1 | ~~Default embedding model + dims~~ **Decided 2026-10-17: `bge-m3`, 1024 dims (Ollama)** | daniel | Phase 3 ✅ |
 | 2 | Laya packaging: HTTP sidecar (recommended, matches Jev cloud too) vs in-process SDK | daniel | Phase 7 |
-| 3 | API-key scheme (shape, scopes, rotation) | daniel | Phase 6 |
+| 3 | ~~API-key scheme (shape, scopes, rotation)~~ **Implemented 2026-10-18** (Phase 6): `ak-`-prefixed server-generated keys, SHA-256 hash-only storage, scopes `{search, research, agent}`, manual rotation (revoke + create), per-key rate limit — design in `docs/architecture/api_keys.md`; final sign-off pending | daniel | sign-off only |
 | 4 | Keep or drop the `pro` role name (gates read the central `ELEVATED_ROLES` tuple, used by Phase 4 modes and Phase 5 personas) | daniel | Phase 6 |
 
 ---

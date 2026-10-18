@@ -34,6 +34,11 @@ you configure a cloud provider.
     answer step.
 *   **Two client protocols:** token-by-token SSE streaming and single-document JSON —
     same data, same route.
+*   **Backend-friendly auth:** JWT for interactive clients; server-generated,
+    hash-stored **API keys** with mode scopes and per-key rate limiting for
+    other backends.
+*   **Conversation history:** every search turn is persisted per user and
+    can be continued with `conversation_id`.
 *   **Search modes:** `search` (direct cited answers), `research` (planner →
     sub-questions → cited report), and `agent` (autonomous tool loop) — all
     bounded by configurable iteration/time/token budgets. See `PLAN.md` for
@@ -135,9 +140,14 @@ Model selection goes through the admin-curated catalog, not environment variable
 All configuration lives in `.env` (via pydantic-settings; see `.env.template`): Postgres
 connection, `MASTER_KEY`, logging (`LOG_LEVEL`, `DEBUG`), SearXNG base URL / engines /
 categories, scraper concurrency and timeouts, reranker and retrieval knobs
-(`TOP_N_URLS`, `TOP_N_CHUNKS`, `VECTOR_CANDIDATES_K`), and bootstrap defaults
+(`TOP_N_URLS`, `TOP_N_CHUNKS`, `VECTOR_CANDIDATES_K`), research/agent budgets
+(`RESEARCH_MAX_SUBQUESTIONS`, `AGENT_*`), the API-key rate limit
+(`API_KEY_RATE_LIMIT_PER_MINUTE`), and bootstrap defaults
 (`OLLAMA_BASE_URL`, `DEFAULT_CHAT_MODEL_NAME`, `DEFAULT_EMBEDDING_MODEL_NAME`).
 The app refuses to start without a valid `MASTER_KEY`.
+
+The database schema is managed by Alembic migrations (`migrations/`), applied
+automatically at startup; pre-migration databases are adopted non-destructively.
 
 ## For Developers
 
@@ -173,6 +183,19 @@ Lint:
 ```bash
 uv run ruff check src tests
 ```
+
+### Database migrations
+
+Schema changes ship as Alembic revisions and are applied at startup. Manual
+operations: `uv run alembic upgrade head` / `downgrade -1`; the full guide is in
+`docs/operations/maintenance.md`.
+
+### CI
+
+Every pull request runs ruff, offline unit tests, integration tests against a
+Postgres (pgvector) service, a container image build, a dependency
+vulnerability audit (`pip-audit`), and a secrets scan (gitleaks) — see
+`.github/workflows/ci.yml`.
 
 ### Contributing
 

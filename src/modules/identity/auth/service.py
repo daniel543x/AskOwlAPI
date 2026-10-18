@@ -17,6 +17,9 @@ async def authenticate_user(
     user = await get_user_by_identifier(session, identifier)
     if not user:
         return None
+    if not user.is_active:
+        # Disabled accounts fail login exactly like unknown credentials.
+        return None
     if await check_passwd(password, user.password_hash) is False:
         return None
     return user
@@ -53,4 +56,9 @@ def verify_token(token: str) -> JWTPayload | None:
 
 
 async def get_user_by_api_key(session: AsyncSession, key: str):
-    pass
+    """Deprecated stub kept for import compatibility; resolution lives in
+    ApiKeyRepository.resolve (hash lookup, activity/expiry checks)."""
+    from ..api_keys.repository import ApiKeyRepository
+
+    resolved = await ApiKeyRepository(session).resolve(key)
+    return resolved[1] if resolved else None

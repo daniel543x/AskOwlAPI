@@ -1,10 +1,12 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from ....tools.db import get_session
-from .model import UserCreate, UserRead, UserUpdate
+from ..auth.security import get_current_admin_user
+from .model import User, UserAdminUpdate, UserCreate, UserRead, UserUpdate
 from .service import (
     create_user,
     delete_user,
@@ -80,3 +82,55 @@ async def delete_user_endpoint(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found."
         )
     return
+
+
+# <----- Admin: user management ----- #
+
+admin_router = APIRouter(
+    prefix="/admin/users",
+    tags=["Admin Users"],
+    dependencies=[Depends(get_current_admin_user)],
+)
+
+
+@admin_router.get("", response_model=list[UserRead])
+async def admin_list_users(
+    session: AsyncSession = Depends(get_session),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    statement = select(User).order_by(User.created_at).offset(offset).limit(limit)
+    result = await session.execute(statement)
+    return list(result.scalars().all())
+
+
+@admin_router.patch("/{user_id}/status", response_model=UserRead)
+async def admin_set_user_status(
+    user_id: UUID,
+    changes: UserAdminUpdate,
+    session: AsyncSession = Depends(get_session),
+    admin: User = Depends(get_current_admin_user),
+):
+    """Block or unblock a user; blocked users fail auth everywhere."""
+    if changes.is_active is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Nothing to update: provide is_active.",
+        )
+    if user_id == admin.id and changes.is_active is False:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Admins cannot block their own account.",
+        )
+
+    user = await get_user_by_id(session=session, user_id=user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found."
+        )
+
+    user.is_active = changes.is_active
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return user

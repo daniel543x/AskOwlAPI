@@ -1,28 +1,25 @@
-# Base on alpine linux image.
-FROM alpine:3.18
+# AskOwl API container: uv-managed deps, migrations baked in.
+FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
 
-# Install python without apk cashe. 
-RUN apk add --no-cache python3 py3-pip && \
-    rm -rf /var/cache/apk/* 
+ENV UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1
 
-# Set work directory.
-WORKDIR /AskOwl
+WORKDIR /app
 
-# Install python requirements for app.
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# Dependencies first (layer cache): lockfile only.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
 
+# Application code, migrations, and the alembic config (startup runs them).
+COPY src ./src
+COPY migrations ./migrations
+COPY alembic.ini main.py ./
 
-# Copy app source.
-COPY src/ ./
+# Run as an unprivileged user.
+RUN groupadd --system askowl && useradd --system --gid askowl askowl \
+    && chown -R askowl:askowl /app
+USER askowl
 
-# Create a user, change the permissions for workdir, and switch to that user.
-RUN addgroup -S AskOwlUser && adduser -S AskOwlUser -G AskOwlUser
-RUN chown -R AskOwlUser:AskOwlUser /AskOwl
-USER AskOwlUser
-
-# Set working port
 EXPOSE 3000
 
-# Use uvicorn on main.py with FastAPI instance 
-CMD ["uvicorn", "src:app", "--host", "0.0.0.0", "--port", "3000"]
+CMD ["uv", "run", "--no-dev", "--frozen", "uvicorn", "src.app:app", "--host", "0.0.0.0", "--port", "3000"]
