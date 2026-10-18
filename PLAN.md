@@ -92,6 +92,12 @@ Defects (fix in Phase 0 unless noted):
   **Fixed 2026-10-17** (phase-3 branch): `probe_providers` now refreshes each provider after
   the commit; regression test in `tests/modules/llm_provider/test_repository.py`
   (integration-marked).
+- Found 2026-10-18 (while writing the API docs auth matrix): the user-management routes
+  `GET /user/{id}`, `GET /user/nn/{nickname}`, `PATCH /user/{id}`, `DELETE /user/{id}`
+  (`src/modules/identity/user/router.py`) have **no authentication dependency wired** — any
+  anonymous caller can read, modify (including password), or delete any user by id. The docs
+  mark these as a known gap; fix before any public deployment (wire `get_current_user` +
+  ownership checks, or fold under `/admin` + self-service `/auth/users/me`).
 
 ---
 

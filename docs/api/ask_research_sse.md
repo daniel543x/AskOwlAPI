@@ -10,8 +10,11 @@ only lists the extensions over protocol v2.
 
 | Route           | Parameters                                    |
 |-----------------|-----------------------------------------------|
-| `/ask/research` | `query` (required), `stream` (default `true`), `model_id`, `embedder_id`, `reranker_id` |
-| `/ask/agent`    | `goal` (required), `persona_id` (optional), `model_id`, `embedder_id`, `reranker_id` |
+| `/ask/research` | `query` (required), `stream` (default `true`), `model_id`, `embedder_id`, `reranker_id`, `search_provider` |
+| `/ask/agent`    | `goal` (required), `persona_id` (optional), `model_id`, `embedder_id`, `reranker_id`, `decision_model_id`, `search_provider` |
+
+Model-selection parameters are optional UUIDs (see
+[models.md](models.md)); `search_provider` selects a search provider by name.
 
 `persona_id` selects one of the caller's personas (`POST/GET/PATCH/DELETE /personas`):
 its system context and keywords bias the agent's queries, its domain allowlist filters

@@ -39,3 +39,28 @@ blocked users also fail JWT validation (403) everywhere.
 
 Admin user management: `GET /admin/users`, `PATCH /admin/users/{id}/status`
 (`{"is_active": false}` blocks; admins cannot block themselves).
+
+## Auth matrix (per route)
+
+"User" = any authenticated principal (JWT or API key); "elevated" = `research`
+or `admin` role; "admin" = `admin` role. API keys additionally need the mode's
+scope (`search` / `research` / `agent`); JWT sessions bypass scope checks.
+
+| Route | Auth | Notes |
+|---|---|---|
+| `GET /healthy` | none | Liveness probe; returns `{"status", "version"}`. |
+| `POST /auth/login` | none | Returns the JWT. |
+| `POST /user` | none | Registration. |
+| `GET /user/{id}`, `GET /user/nn/{nickname}`, `PATCH /user/{id}`, `DELETE /user/{id}` | **none (known gap)** | No auth dependency is wired today; treat as insecure until fixed — tracked in PLAN §1 audit. |
+| `GET /auth/users/me` | user | |
+| `/personas` (all methods) | user | Own personas only. |
+| `/api-keys` (all methods) | user | Own keys only. |
+| `/history` (all methods) | user | Own conversations only. |
+| `GET /models`, `GET /models/preferences`, `PUT /models/{id}/preference` | user | Role-filtered catalog. |
+| `POST /ask/search` | user | + `search` scope on API keys. |
+| `GET /ask/research` | elevated | + `research` scope on API keys. |
+| `GET /ask/agent` | elevated | + `agent` scope on API keys. |
+| `GET /health/models` | admin | |
+| `/admin/models/*` | admin | Providers, entries, defaults. |
+| `GET /admin/users`, `PATCH /admin/users/{id}/status` | admin | |
+| `/roles/*` | admin | |

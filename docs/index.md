@@ -13,11 +13,17 @@ Client-side application developers and backend integrators.
 
 _Key documents:_
 
-- [Authentication](api/authentication.md) — JWT login, API keys, roles
-- [Users & personal data](api/users.md) — users, personas, api keys, history
+- [Authentication](api/authentication.md) — JWT login, API keys, roles, auth matrix
+- [Users & personal data](api/users.md) — users, roles, personas, api keys, history
+- [Model catalog](api/models.md) — providers, entries, preferences, defaults
 - [Ask Search SSE protocol](api/ask_search_sse.md) — `search` mode stream
 - [Ask Research / Agent SSE protocol](api/ask_research_sse.md) — elevated modes
 - [Errors](api/errors.md) — status codes and SSE error events
+
+For SDK/client generation, the machine-readable OpenAPI schema is served by
+the app itself at `GET /openapi.json` (interactive docs at `/docs`); these
+pages document what OpenAPI cannot: SSE protocol, auth flows, and scope
+semantics.
 
 ## 2. Architecture (for project developers)
 

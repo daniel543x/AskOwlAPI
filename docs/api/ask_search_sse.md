@@ -25,80 +25,97 @@ and can be used for reassembly/debugging.
 
 ## Events
 
-| Event     | Payload                                             | Emitted                                                  |
-|-----------|-----------------------------------------------------|----------------------------------------------------------|
-| `status`  | `{"step": "..."}`                                    | Progress updates between stages.                          |
-| `query`   | `{"query": "...", "tool_call": true}`                | After query rewriting. `tool_call: false` means the rewrite step fell back to the raw user query (tool-protocol error path). |
-| `sources` | `{"sources": [{"url", "title", "score"}, ...]}`      | After web search + ranking (top-N URLs).                  |
-| `context` | `{"context": "...", "chunks": N}`                    | After fetch + chunk ranking; the exact context given to the answer step. |
-| `message` | `{"text": "..."}`                                    | One per streamed answer delta; concatenate for the full answer. |
-| `done`    | `{"status": "completed"}` or `{"status": "no_context"}` | Terminal success. `no_context`: nothing could be extracted; a deterministic notice was emitted as the only `message`. |
-| `error`   | `{"error": "..."}`                                   | Terminal failure (no `done` follows).                     |
-| `debug`   | any                                                  | Only when `DEBUG=true`. Stage tracing details; not a stable contract. |
+| Event          | Payload                                             | Emitted                                                  |
+|----------------|-----------------------------------------------------|----------------------------------------------------------|
+| `conversation` | `{"conversation_id": "<uuid>", "created": bool}`    | First event (when history persistence is on): the conversation this turn is stored under. `created: false` when an existing `conversation_id` was continued. |
+| `status`       | `{"step": "..."}`                                    | Progress updates between stages.                          |
+| `query`        | `{"query": "...", "tool_call": true}`                | After query rewriting. `tool_call: false` means the rewrite step fell back to the raw user query (tool-protocol error path). |
+| `sources`      | `{"sources": [{"url": str, "title": str, "score": float (0..1, higher = more relevant)}, ...]}` | After web search + ranking (top-N URLs). |
+| `context`      | `{"context": "...", "chunks": int, "vector_retrieval": bool}` | After fetch + chunk ranking; the exact context given to the answer step. `vector_retrieval: true` when candidates came from the pgvector store (hybrid retrieval) instead of the reranker alone. |
+| `message`      | `{"text": "..."}`                                    | One per streamed answer delta; concatenate for the full answer. |
+| `grounding`    | `{"supported": float (0..1)}`                        | After the last `message`, only when the decision layer (Jev/Laya) is configured and `PRE_SCORE_GROUNDING_CHECK=true`: confidence that the answer is grounded in the context. |
+| `done`         | `{"status": "completed"}` or `{"status": "no_context"}` | Terminal success. `no_context`: nothing could be extracted; a deterministic notice was emitted as the only `message`. |
+| `error`        | `{"error": "..."}`                                   | Terminal failure (no `done` follows).                     |
+| `debug`        | any                                                  | Only when `DEBUG=true`. Stage tracing details; not a stable contract. |
 
 ## Typical stream (v2)
 
 ```
-event: status
+event: conversation
 id: 1
+data: {"conversation_id": "3fa8...", "created": true}
+
+event: status
+id: 2
 data: {"step": "Building query for search engine..."}
 
 event: query
-id: 2
+id: 3
 data: {"query": "rust programming language", "tool_call": true}
 
 event: status
-id: 3
+id: 4
 data: {"step": "Searching URLs..."}
 
 event: sources
-id: 4
+id: 5
 data: {"sources": [{"url": "https://...", "title": "...", "score": 0.93}]}
 
 event: status
-id: 5
+id: 6
 data: {"step": "Downloading data..."}
 
 event: status
-id: 6
+id: 7
 data: {"step": "Selecting context..."}
 
 event: context
-id: 7
-data: {"context": "...", "chunks": 12}
+id: 8
+data: {"context": "...", "chunks": 12, "vector_retrieval": false}
 
 event: status
-id: 8
+id: 9
 data: {"step": "Generating answer..."}
 
 event: message
-id: 9
+id: 10
 data: {"text": "Rust is "}
 
 ...
 
 event: done
-id: 27
+id: 28
 data: {"status": "completed"}
 ```
 
 ## JSON mode
 
-`GET /ask/search?stream=false` returns one document with the same data:
+Same route, `POST /ask/search` with `"stream": false` in the body. The whole
+result arrives as one JSON document wrapped in an `answer` object:
 
 ```json
 {
-  "query": "what is rust?",
-  "optimized_query": "rust programming language",
-  "sources": [{"url": "...", "title": "...", "score": 0.93}],
-  "context": "...",
-  "answer": "Rust is ... [Source](https://...)"
+  "answer": {
+    "query": "what is rust?",
+    "optimized_query": "rust programming language",
+    "sources": [{"url": "...", "title": "...", "score": 0.93}],
+    "context": "...",
+    "answer": "Rust is ... [Source](https://...)",
+    "conversation_id": "3fa8...",
+    "grounding_supported": 0.9871
+  }
 }
 ```
 
-Errors that occur before streaming starts are HTTP errors (500 pipeline
-failure, 502 answer-contract violation). With SSE, the same failures arrive as
-`error` events.
+- `conversation_id` (`string | null`) — the conversation this turn was
+  persisted under (`null` only when persistence is unavailable).
+- `grounding_supported` (`float | null`) — decision-layer grounding
+  confidence, rounded to 4 decimals; `null` when no decision layer is
+  configured.
+
+An unknown `conversation_id` is a 404. Errors that occur before the answer
+step are HTTP errors (500 pipeline failure, 502 answer-contract violation).
+With SSE, the same failures arrive as `error` events.
 
 ## Tool-calling contract
 
@@ -114,6 +131,14 @@ The LLM is never used without a tool call:
   (HTTP 422 with an explanation).
 
 ## Changelog
+
+### v2.2 (2026-10-18, documentation correction — no protocol change)
+
+- Fixed: JSON mode is `POST` with `"stream": false` (was documented as GET);
+  the response is wrapped in an `answer` object and includes
+  `conversation_id` and `grounding_supported`.
+- Documented previously missing events: `conversation` (first event) and
+  `grounding` (decision layer), and the `context.vector_retrieval` field.
 
 ### v2 (2026-10-17, PLAN Phase 2)
 
