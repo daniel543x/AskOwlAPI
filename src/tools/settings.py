@@ -80,6 +80,13 @@ class Settings(BaseSettings):
     # Per-key fixed-window limit for X-API-Key traffic (requests/minute).
     API_KEY_RATE_LIMIT_PER_MINUTE: int = 60
 
+    # <----- Outbound proxy ----->
+    # Optional HTTP(S) proxy for search + scraping egress. Hosting
+    # environments where direct traffic from app hosts is blocked set this
+    # to route egress through the provider's proxy. Empty = direct.
+    # LLM/embedding provider clients stay direct (often localhost).
+    PROXY_URL: str = ""
+
     @field_validator("MASTER_KEY")
     @classmethod
     def _validate_master_key(cls, value: str) -> str:

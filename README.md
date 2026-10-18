@@ -142,7 +142,9 @@ connection, `MASTER_KEY`, logging (`LOG_LEVEL`, `DEBUG`), SearXNG base URL / eng
 categories, scraper concurrency and timeouts, reranker and retrieval knobs
 (`TOP_N_URLS`, `TOP_N_CHUNKS`, `VECTOR_CANDIDATES_K`), research/agent budgets
 (`RESEARCH_MAX_SUBQUESTIONS`, `AGENT_*`), the API-key rate limit
-(`API_KEY_RATE_LIMIT_PER_MINUTE`), and bootstrap defaults
+(`API_KEY_RATE_LIMIT_PER_MINUTE`), the egress proxy for search/scrape
+traffic (`PROXY_URL` — set it on hosting providers that block direct
+traffic), and bootstrap defaults
 (`OLLAMA_BASE_URL`, `DEFAULT_CHAT_MODEL_NAME`, `DEFAULT_EMBEDDING_MODEL_NAME`).
 The app refuses to start without a valid `MASTER_KEY`.
 

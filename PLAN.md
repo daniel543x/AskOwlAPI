@@ -253,11 +253,24 @@ against live Postgres.*
 
 Post-personas follow-up:
 
-- [ ] Re-run the Phase 3 golden-set eval from a clean egress (or after search-layer
+- [x] Re-run the Phase 3 golden-set eval from a clean egress (or after search-layer
       mitigation: proxy egress / API-keyed engines — see backlog) so the "vector beats
       baseline" gate can be measured strictly, not just "does not lose" (recall was
       floored at 0.125 by search-egress poisoning on 14/20 queries; details in the Phase 3
       status note).
+  *Status: **done 2026-10-18** (branch `eval-rerun-phase3`). Mitigation first: the eval
+  gained a result-sanity filter (topical-overlap guard between query and search results;
+  the exact Phase 3 poisoning — peptide articles for Rust queries — is now dropped and
+  reported per query, 8 unit tests). Re-run on local Ollama `bge-m3`, both configs on
+  identical cached inputs, 20/20 queries on genuine vector retrieval (no fallbacks):
+  **vector strictly beats baseline — recall 0.100 vs 0.075, MRR 0.063 vs 0.057, mean
+  latency 5.9 s vs 12.4 s**; vector also produced context on 3 queries where the
+  baseline had none (cross-query chunk accumulation). So the gate is no longer a tie.
+  Egress is still not fully clean, but the damage moved layers: after an engine-suspend
+  reset, search returned topically-relevant URLs, while page *fetching* is rate-limited
+  from this host (403/429 on StackOverflow, Cloudflare, …), capping absolute recall at
+  0.100 (16/20 queries still zero). Lifting that cap needs the backlog items: proxy
+  egress or API-keyed search backends.*
 
 ### Phase 6 — Platform hardening
 
