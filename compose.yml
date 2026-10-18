@@ -1,6 +1,7 @@
 services:
   api:
     build: .
+    image: askowl-api:1.0.0-rc.1
     profiles: ["api"]
     ports:
       - "3000:3000"

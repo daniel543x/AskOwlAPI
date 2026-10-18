@@ -1,4 +1,6 @@
+import tomllib
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 
@@ -18,6 +20,16 @@ from .tools.logging import configure_logging
 from .tools.settings import settings
 
 
+def _package_version() -> str:
+    """Read the app version from pyproject.toml (single source of truth)."""
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    try:
+        with pyproject.open("rb") as manifest:
+            return tomllib.load(manifest)["project"]["version"]
+    except (OSError, KeyError):
+        return "unknown"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging(settings)
@@ -28,7 +40,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="AskOwlAPI", description="LLM tool to searching anything.", lifespan=lifespan
+    title="AskOwlAPI",
+    description="LLM tool to searching anything.",
+    version=_package_version(),
+    lifespan=lifespan,
 )
 
 app.include_router(IdentityRouter)
@@ -45,7 +60,7 @@ app.include_router(ResearchRouter)
 
 @app.get("/healthy")
 def healthy():
-    return {"status": "Healthy"}
+    return {"status": "Healthy", "version": app.version}
 
 
 @app.get("/favicon.ico")
