@@ -38,6 +38,7 @@ from ....tools.settings import settings
 from .harness import (
     CachedScraper,
     CachedSearchProvider,
+    SanityFilteringProvider,
     comparison_verdict,
     format_report,
     load_golden_set,
@@ -95,7 +96,11 @@ async def main() -> int:
 
         # Cache search + scrape results so both configurations run against
         # identical inputs even when upstream engines flap between runs.
-        searching = CachedSearchProvider(SearXNGProvider())
+        # Sanity filtering sits between cache and network: poisoned results
+        # (topically unrelated to the query) are dropped before they can
+        # invalidate the comparison.
+        raw_search = SearXNGProvider()
+        searching = CachedSearchProvider(SanityFilteringProvider(raw_search))
         scraper = CachedScraper(TrafilturaScraper())
 
         print("[eval] running baseline (cross-encoder over request chunks)...")
@@ -115,10 +120,7 @@ async def main() -> int:
         else:
             print("[eval] skipped vector config (no embedder)")
 
-    print(
-        f"[eval] inputs: {searching.query_count} unique searches, "
-        f"{scraper.fetch_count} page fetches (cached across configs)"
-    )
+
 
     args.out.mkdir(parents=True, exist_ok=True)
     out_file = args.out / "eval_report.json"
