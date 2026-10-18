@@ -24,10 +24,21 @@ valid `MASTER_KEY` (Fernet key, url-safe base64, 32 bytes).
 | Model defaults | `OLLAMA_BASE_URL`, `DEFAULT_CHAT_MODEL_NAME=qwen3.5`, `DEFAULT_EMBEDDING_MODEL_NAME=bge-m3`, `DEFAULT_EMBEDDING_MODEL_DIMS=1024` |
 | Research/agent | `RESEARCH_MAX_SUBQUESTIONS=5`, `AGENT_MAX_ITERATIONS=8`, `AGENT_TIME_BUDGET_SECONDS=300`, `AGENT_TOKEN_BUDGET=60000` |
 | API keys | `API_KEY_RATE_LIMIT_PER_MINUTE=60` |
+| Egress proxy | `PROXY_URL` (empty = direct) |
 | Auth | `ACCESS_TOKEN_EXPIRE_MINUTES=30` |
 
 Model selection itself is **not** env-driven: it goes through the
 admin-curated catalog (`/models` routes), per PLAN product decision §0.1.
+
+## Outbound proxy
+
+Hosting providers often block or rate-limit direct traffic from app hosts
+(search engines return CAPTCHAs, pages answer 403/429). Set `PROXY_URL`
+(e.g. `http://proxy.internal:8080`) and **all search-engine and
+page-fetching egress** routes through it — one setting, applied by the
+shared client factory (`src/tools/http.py`). LLM/embedding provider
+clients stay direct because they frequently target localhost or the LAN;
+route those via their provider base URLs if ever needed.
 
 ## Security rules
 

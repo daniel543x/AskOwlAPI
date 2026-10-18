@@ -2,6 +2,7 @@ import logging
 
 import httpx
 
+from ....tools.http import make_client
 from ....tools.settings import settings
 from .base import ISearchProvider, SearchResult
 
@@ -37,7 +38,7 @@ class SearXNGProvider(ISearchProvider):
             "categories": self.categories,
         }
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with make_client(timeout=self.timeout) as client:
                 response = await client.get(f"{self.base_url}/search", params=params)
                 response.raise_for_status()
                 results = response.json().get("results", [])

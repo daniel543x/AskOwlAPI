@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 import trafilatura
 
+from ....tools.http import make_client
 from ....tools.settings import settings
 from .base import IScraper
 
@@ -38,7 +39,8 @@ class TrafilturaScraper(IScraper):
         return "trafilatura"
 
     def _build_client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
+        # Shared factory: applies the optional egress proxy (PROXY_URL).
+        return make_client(
             timeout=self.timeout,
             headers={"User-Agent": self.user_agent},
             follow_redirects=True,
