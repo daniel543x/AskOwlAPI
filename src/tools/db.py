@@ -8,16 +8,21 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from .settings import settings
 
+
+def build_database_url() -> str:
+    """Async Postgres URL from settings (never hardcoded)."""
+    return (
+        f"postgresql+asyncpg://"
+        f"{settings.POSTGRES_USER}:"
+        f"{quote_plus(settings.POSTGRES_PASSWORD)}@"
+        f"{settings.POSTGRES_SERVER}:"
+        f"{settings.POSTGRES_PORT}/"
+        f"{settings.POSTGRES_DB}"
+    )
+
+
 # Setup DataBase
-DATABASE_URL = (
-    f"postgresql+asyncpg://"
-    f"{settings.POSTGRES_USER}:"
-    f"{quote_plus(settings.POSTGRES_PASSWORD)}@"
-    f"{settings.POSTGRES_SERVER}:"
-    f"{settings.POSTGRES_PORT}/"
-    f"{settings.POSTGRES_DB}"
-)
-engine = create_async_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
+engine = create_async_engine(build_database_url(), pool_pre_ping=True, echo=False)
 
 
 # Function for init db tables

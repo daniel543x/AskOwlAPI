@@ -18,7 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...modules.chunk_store.repository import ChunkRepository
 from ...modules.embedding.base import IEmbedder
 from ...modules.embedding.factory import get_optional_embedder
-from ...modules.identity.auth.security import get_current_elevated_user
+from ...modules.identity.auth.security import (
+    get_current_elevated_user,
+    require_scope,
+)
 from ...modules.identity.user.model import User
 from ...modules.llm_provider.dependency import get_llm_client
 from ...modules.owl_reranker.base import IRanker
@@ -40,7 +43,13 @@ from .services.pipeline import (
 router = APIRouter(prefix="/ask", tags=["Research"])
 
 
-@router.get("/research", dependencies=[Depends(get_current_elevated_user)])
+@router.get(
+    "/research",
+    dependencies=[
+        Depends(get_current_elevated_user),
+        Depends(require_scope("research")),
+    ],
+)
 async def ask_research(
     query: str = Query(..., description="User query."),
     stream: bool = Query(
@@ -78,7 +87,13 @@ async def ask_research(
     )
 
 
-@router.get("/agent")
+@router.get(
+    "/agent",
+    dependencies=[
+        Depends(get_current_elevated_user),
+        Depends(require_scope("agent")),
+    ],
+)
 async def ask_agent(
     goal: str = Query(..., description="Goal the agent should accomplish."),
     persona_id: uuid.UUID | None = Query(

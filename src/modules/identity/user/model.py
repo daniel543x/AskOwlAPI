@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from pydantic import EmailStr
@@ -20,9 +20,11 @@ class User(SQLModel, table=True):
         unique=True, index=True, max_length=settings.USERNAME_CHAR_LIMIT
     )
     password_hash: str = Field(..., exclude=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    is_active: bool = Field(default=True, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime | None = Field(
-        default_factory=datetime.utcnow, sa_column_kwargs={"onupdate": datetime.utcnow}
+        default_factory=lambda: datetime.now(UTC),
+        sa_column_kwargs={"onupdate": lambda: datetime.now(UTC)},
     )
 
     # Quoted forward ref: Role is only importable under TYPE_CHECKING (cycle).
@@ -47,6 +49,7 @@ class UserCreate(UserBase):
 
 class UserRead(UserBase):
     id: uuid.UUID
+    is_active: bool
     created_at: datetime
     updated_at: datetime | None = None
 
@@ -55,3 +58,9 @@ class UserUpdate(SQLModel):
     email: EmailStr | None = None
     nickname: str | None = None
     password: str | None = None
+
+
+class UserAdminUpdate(SQLModel):
+    """Admin-only mutable fields (block/unblock)."""
+
+    is_active: bool | None = None

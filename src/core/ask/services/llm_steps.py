@@ -11,7 +11,7 @@ import logging
 from collections.abc import AsyncGenerator
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from ...tools.arg_stream import ToolArgStream
 from ...tools.errors import ToolProtocolError
@@ -82,19 +82,31 @@ async def rewrite_query(model: BaseChatModel, raw_query: str) -> tuple[str, bool
 # <----- Answer synthesis ----->
 
 
-def _answer_messages(query: str, context: str) -> list:
-    return [
-        SystemMessage(content=ANSWER_SYSTEM_TEMPLATE.format(context=context)),
-        HumanMessage(content=query),
+def _answer_messages(
+    query: str, context: str, history: list[tuple[str, str]] | None = None
+) -> list:
+    """System + prior turns + question; the context stays in the system."""
+    messages: list = [
+        SystemMessage(content=ANSWER_SYSTEM_TEMPLATE.format(context=context))
     ]
+    for role, content in history or []:
+        if role == "user":
+            messages.append(HumanMessage(content=content))
+        elif role == "assistant":
+            messages.append(AIMessage(content=content))
+    messages.append(HumanMessage(content=query))
+    return messages
 
 
 async def generate_cited_answer(
-    model: BaseChatModel, query: str, context: str
+    model: BaseChatModel,
+    query: str,
+    context: str,
+    history: list[tuple[str, str]] | None = None,
 ) -> str:
     """Non-streaming cited answer via the CitedAnswer tool call."""
     bound = model.bind_tools([CitedAnswer])
-    response = await bound.ainvoke(_answer_messages(query, context))
+    response = await bound.ainvoke(_answer_messages(query, context, history))
 
     for tool_call in response.tool_calls or []:
         if tool_call.get("name") == "CitedAnswer":
@@ -108,7 +120,10 @@ async def generate_cited_answer(
 
 
 async def stream_cited_answer(
-    model: BaseChatModel, query: str, context: str
+    model: BaseChatModel,
+    query: str,
+    context: str,
+    history: list[tuple[str, str]] | None = None,
 ) -> AsyncGenerator[str]:
     """Stream the `answer` argument of the CitedAnswer tool call.
 
@@ -118,7 +133,7 @@ async def stream_cited_answer(
     bound = model.bind_tools([CitedAnswer])
     extractor = ToolArgStream(key="answer")
 
-    async for chunk in bound.astream(_answer_messages(query, context)):
+    async for chunk in bound.astream(_answer_messages(query, context, history)):
         for tool_chunk in chunk.tool_call_chunks or []:
             name = tool_chunk.get("name") or ""
             if name and name != "CitedAnswer":

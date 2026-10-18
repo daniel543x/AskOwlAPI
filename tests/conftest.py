@@ -15,11 +15,13 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.app import app  # noqa: E402
-from src.modules.chunk_store.model import Chunk  # noqa: E402, F401
-from src.modules.identity.role.model import Role, UserRole  # noqa: E402, F401
-from src.modules.identity.role.service import init_roles  # noqa: E402
 
 # Import all models so create_all sees every table.
+from src.modules.api_keys.model import ApiKey  # noqa: E402, F401
+from src.modules.chunk_store.model import Chunk  # noqa: E402, F401
+from src.modules.history.model import Conversation, Message  # noqa: E402, F401
+from src.modules.identity.role.model import Role, UserRole  # noqa: E402, F401
+from src.modules.identity.role.service import init_roles  # noqa: E402
 from src.modules.identity.user.model import User  # noqa: E402, F401
 from src.modules.llm_provider.model import (  # noqa: E402, F401
     DefaultSettings,

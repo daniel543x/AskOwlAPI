@@ -1,0 +1,10 @@
+# Gitleaks configuration.
+title = "AskOwl gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Deterministic offline test key committed in the pytest harness; not a secret."
+paths = ["tests/conftest.py"]
+regexTarget = "match"

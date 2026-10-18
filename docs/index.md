@@ -1,40 +1,41 @@
 # AskOwl Backend Project Documentation
 
-Welcome to the AI Search system documentation. This project is a high-performance search engine based on the FastAPI framework, which uses artificial intelligence to process and index data.
-This documentation is organized in a modular way to help you quickly find the information you need based on your role in the project.
+Welcome to the AskOwl documentation: a self-hosted, LLM-powered search
+engine ("private Perplexity") built on FastAPI. AskOwl takes a question,
+searches the web (SearXNG), fetches and ranks pages with hybrid retrieval
+(pgvector embeddings + cross-encoder reranking), and synthesizes cited
+answers with LLMs — every LLM interaction goes through native tool calls.
+The documentation is organized by role:
 
-## How to use the documentation?
+## 1. API (for users and integrators)
 
-The documentation is divided into three main sections. Choose the one that best suits your needs:
-
-### 1. API (For Users and Integrators)
-
-If you are a client-side application developer or are building tools that integrate with our engine, this section is for you.
-
-What you’ll find here: 
-- endpoint specifications, 
-- request and response formats, 
-- authorization details (JWT), 
-- error code dictionary,
-
- _Key documents:_
-
-### 2. Architecture (For Project Developers)
-
-This section is intended for developers who want to work on the AskOwl project's source code. It covers the technical “inner workings” of the application.
-
-What you’ll find here: 
-- architectural diagrams 
-- database schema, 
-- description of the services layer, 
-- business logic behind the search process
+Client-side application developers and backend integrators.
 
 _Key documents:_
 
-### 3. Operations (For Administrators and DevOps)
+- [Authentication](api/authentication.md) — JWT login, API keys, roles
+- [Users & personal data](api/users.md) — users, personas, api keys, history
+- [Ask Search SSE protocol](api/ask_search_sse.md) — `search` mode stream
+- [Ask Research / Agent SSE protocol](api/ask_research_sse.md) — elevated modes
+- [Errors](api/errors.md) — status codes and SSE error events
 
-Resources for those responsible for deploying, configuring, and maintaining the production instance.
+## 2. Architecture (for project developers)
 
-What you'll find here: Installation instructions, environment variable configuration, backup procedures, and log management.
+Developers working on the AskOwl source code: the "inner workings".
 
 _Key documents:_
+
+- [Overview](architecture/overview.md) — layout, core rules, pipelines
+- [Services](architecture/services.md) — the logic behind the search process
+- [Database](architecture/database.md) — schema, migrations
+- [API keys design](architecture/api_keys.md) — the open decision #3 design
+
+## 3. Operations (for administrators and DevOps)
+
+Deploying, configuring, and maintaining a production instance.
+
+_Key documents:_
+
+- [Installation](operations/installation.md) — dev and container setup
+- [Configuration](operations/configuration.md) — environment variables
+- [Maintenance](operations/maintenance.md) — migrations, backup, logs, repairs

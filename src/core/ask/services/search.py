@@ -17,6 +17,8 @@ from langchain_core.language_models import BaseChatModel
 
 from ....modules.chunk_store.repository import ChunkRepository
 from ....modules.embedding.base import IEmbedder
+from ....modules.history.model import Conversation
+from ....modules.history.repository import HistoryRepository
 from ....modules.owl_reranker.base import IRanker
 from ....modules.scrapy.providers.base import IScraper
 from ....modules.search_engine.providers.base import ISearchProvider
@@ -137,14 +139,55 @@ def _sse_frame(event_id: int, event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\nid: {event_id}\ndata: {json.dumps(data)}\n\n"
 
 
-async def _stream_answer_frames(query: str, context: str, model: BaseChatModel):
+async def _stream_answer_frames(
+    query: str,
+    context: str,
+    model: BaseChatModel,
+    history: list[tuple[str, str]] | None = None,
+):
     """Yield answer text deltas; deterministic text when context is empty."""
     if not context.strip():
         yield NO_CONTEXT_ANSWER
         return
 
-    async for delta in stream_cited_answer(model, query, context):
+    async for delta in stream_cited_answer(model, query, context, history):
         yield delta
+
+
+async def _resolve_conversation(
+    session, user_id, conversation_id, query: str
+) -> tuple[Conversation | None, list[tuple[str, str]], bool]:
+    """Load (or create) the caller's conversation and its prior turns.
+
+    Returns (conversation, history, created). Best-effort: when persistence
+    is unavailable (no session/user) the pipeline runs stateless.
+    """
+    if session is None or user_id is None:
+        return None, [], False
+
+    repo = HistoryRepository(session)
+    if conversation_id is not None:
+        conversation = await repo.get_conversation_for_user(user_id, conversation_id)
+        if conversation is None:
+            raise KeyError("Conversation not found.")
+        created = False
+    else:
+        conversation = await repo.create_conversation(user_id, title=query)
+        created = True
+
+    messages = await repo.get_messages(conversation.id)
+    history = [(message.role, message.content) for message in messages]
+    return conversation, history, created
+
+
+async def _save_turn(session, conversation, query: str, answer: str) -> None:
+    if conversation is None:
+        return
+    try:
+        await HistoryRepository(session).add_turn(conversation, query, answer)
+    except Exception:
+        # Persistence must never kill a finished answer stream.
+        logger.exception("Failed to persist conversation turn.")
 
 
 # <----- SSE Adapter ----->
@@ -156,11 +199,17 @@ async def search_sse_adapter(
     ranker: IRanker,
     embedder: IEmbedder | None = None,
     session=None,
+    user_id=None,
+    conversation_id=None,
 ) -> AsyncGenerator[str]:
     """Translate pipeline events into an SSE stream (protocol v2).
 
     Once streaming has started, errors MUST be emitted as ``error`` events;
     raising HTTPException here would kill the stream mid-flight.
+
+    With `session` and `user_id`, the turn is persisted to the caller's
+    conversation (`conversation_id`, or a new conversation when omitted);
+    prior turns are injected as chat history into the answer step.
     """
     event_id = 0
 
@@ -169,6 +218,19 @@ async def search_sse_adapter(
         event_id += 1
         return _sse_frame(event_id, event, data)
 
+    try:
+        conversation, history, created = await _resolve_conversation(
+            session, user_id, conversation_id, query
+        )
+    except KeyError:
+        yield frame("error", {"error": "Conversation not found."})
+        return
+    if conversation is not None:
+        yield frame(
+            "conversation",
+            {"conversation_id": str(conversation.id), "created": created},
+        )
+
     pipeline = search_logic(
         query, searching, model, scraper, ranker, embedder=embedder, session=session
     )
@@ -176,11 +238,17 @@ async def search_sse_adapter(
         if event == "answer_ready":
             yield frame("status", {"step": "Generating answer..."})
 
+            answer_parts: list[str] = []
             try:
                 async for delta in _stream_answer_frames(
-                    data["query"], data["context"], model
+                    data["query"], data["context"], model, history
                 ):
+                    answer_parts.append(delta)
                     yield frame("message", {"text": delta})
+
+                await _save_turn(
+                    session, conversation, data["query"], "".join(answer_parts)
+                )
 
                 if not data["context"].strip():
                     yield frame("done", {"status": "no_context"})
@@ -206,10 +274,22 @@ async def search_json_adapter(
     ranker: IRanker,
     embedder: IEmbedder | None = None,
     session=None,
+    user_id=None,
+    conversation_id=None,
 ) -> dict[str, Any]:
-    """Run the pipeline and return the full result as one JSON-ready dict."""
+    """Run the pipeline and return the full result as one JSON-ready dict.
+
+    With `session` and `user_id` the turn is persisted to a conversation
+    (see `search_sse_adapter`); an unknown `conversation_id` is a 404."""
     answer_data: dict[str, Any] | None = None
     error_detail: str | None = None
+
+    try:
+        conversation, history, _created = await _resolve_conversation(
+            session, user_id, conversation_id, query
+        )
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
     pipeline = search_logic(
         query, searching, model, scraper, ranker, embedder=embedder, session=session
@@ -237,7 +317,7 @@ async def search_json_adapter(
     else:
         try:
             answer = await generate_cited_answer(
-                model, answer_data["query"], context
+                model, answer_data["query"], context, history
             )
         except ToolProtocolError as e:
             raise HTTPException(
@@ -250,10 +330,13 @@ async def search_json_adapter(
                 status_code=500, detail=f"Answer generation failed: {str(e)}"
             ) from e
 
+    await _save_turn(session, conversation, answer_data["query"], answer)
+
     return {
         "query": answer_data["query"],
         "optimized_query": answer_data["optimized_query"],
         "sources": answer_data["sources"],
         "context": context,
         "answer": answer,
+        "conversation_id": str(conversation.id) if conversation else None,
     }
