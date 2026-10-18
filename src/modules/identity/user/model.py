@@ -1,10 +1,9 @@
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pydantic import EmailStr
 from sqlmodel import Field, Relationship, SQLModel
-from typing_extensions import List
 
 from ....tools.settings import settings
 from ..shered import UserRole
@@ -22,11 +21,12 @@ class User(SQLModel, table=True):
     )
     password_hash: str = Field(..., exclude=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: Optional[datetime] = Field(
+    updated_at: datetime | None = Field(
         default_factory=datetime.utcnow, sa_column_kwargs={"onupdate": datetime.utcnow}
     )
 
-    roles: List["Role"] = Relationship(
+    # Quoted forward ref: Role is only importable under TYPE_CHECKING (cycle).
+    roles: list["Role"] = Relationship(  # noqa: UP037
         back_populates="users",
         link_model=UserRole,
         sa_relationship_kwargs={"lazy": "selectin"},
@@ -48,10 +48,10 @@ class UserCreate(UserBase):
 class UserRead(UserBase):
     id: uuid.UUID
     created_at: datetime
-    updated_at: Optional[datetime] = None
+    updated_at: datetime | None = None
 
 
 class UserUpdate(SQLModel):
-    email: Optional[EmailStr] = None
-    nickname: Optional[str] = None
-    password: Optional[str] = None
+    email: EmailStr | None = None
+    nickname: str | None = None
+    password: str | None = None

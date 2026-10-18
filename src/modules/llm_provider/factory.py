@@ -1,55 +1,38 @@
+import logging
+
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 
-from ...tools.cryptography import get_crypto_service
-from .model import LLMModelCatalog, LLMProvider
+from .selection import ResolvedModel
+
+logger = logging.getLogger(__name__)
 
 
-class LLMFactory:
-    def __init__(self) -> None:
-        self.CrytpoService = get_crypto_service()
+class ChatModelFactory:
+    """Builds chat models from registry-resolved configuration."""
 
-    def create_llm(
-        self, model_config: LLMModelCatalog, provider_config: LLMProvider
-    ) -> BaseChatModel:
+    def create_chat_model(self, resolved: ResolvedModel) -> BaseChatModel:
+        params = dict(resolved.default_params)
 
-        params = (
-            model_config.default_params.copy() if model_config.default_params else {}
-        )
-
-        api_key = None
-        if provider_config.api_key_encrypted:
-            try:
-                api_key = self.CrytpoService.decrypt(provider_config.api_key_encrypted)
-            except Exception as e:
-                print(f"Can't decrypt API KEY: {e}")
-                pass
-
-        if provider_config.base_url:
-            params["base_url"] = provider_config.base_url
-
-        if api_key:
-            params["api_key"] = api_key
-
-        provider_type = provider_config.provider_type
-
-        """
-        num_ctx
-        if provider_type == "ollama":
-        """
+        if resolved.base_url:
+            params["base_url"] = resolved.base_url
+        if resolved.api_key:
+            params["api_key"] = resolved.api_key
 
         try:
-            llm = init_chat_model(
-                model=model_config.model_name, model_provider=provider_type, **params
+            return init_chat_model(
+                model=resolved.model_name,
+                model_provider=resolved.provider_type,
+                **params,
             )
-            return llm
         except Exception as e:
+            # Never include the API key in logs or errors.
             raise RuntimeError(
-                f"Can't init model: {model_config.model_name} "
-                f"for provider: {provider_type}. Error: {e}"
-            )
+                f"Can't init chat model '{resolved.model_name}' for provider "
+                f"type '{resolved.provider_type}': {e}"
+            ) from e
 
 
-# Deppendency
-def get_llm_factory() -> LLMFactory:
-    return LLMFactory()
+# Dependency
+def get_llm_factory() -> ChatModelFactory:
+    return ChatModelFactory()

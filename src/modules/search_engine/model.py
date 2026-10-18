@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import JSON
@@ -10,4 +10,4 @@ class SearchProviderConfig(SQLModel, table=True):
     name: str = Field(index=True)
     provider_type: str = Field(index=True)
     is_active: bool = Field(default=True)
-    settings: Dict[str, Any] = Field(sa_column=Column(JSON), default={})
+    settings: dict[str, Any] = Field(sa_column=Column(JSON), default={})

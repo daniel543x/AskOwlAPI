@@ -1,0 +1,15 @@
+# SearXNG settings for AskOwl.
+# Inherits everything from upstream defaults; only overrides are listed here.
+# The container entrypoint replaces "ultrasecretkey" with $SEARXNG_SECRET.
+use_default_settings: true
+
+server:
+  secret_key: "ultrasecretkey"
+  limiter: false
+  image_proxy: true
+
+search:
+  # The JSON format is required by the AskOwl search provider.
+  formats:
+    - html
+    - json

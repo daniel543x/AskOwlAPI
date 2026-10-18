@@ -1,7 +1,7 @@
 # AskOwl
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/)
 ![Status: WIP](https://img.shields.io/badge/Status-WIP-yellow.svg)
 
 **AskOwl** is a self-hosted, LLM-powered search engine designed to give you full control over your information discovery process.
@@ -84,15 +84,25 @@ The main configuration file is `.env`.
 ### Local Development Environment
 To run the project for development purposes:
 1.  Clone the repository.
-2.  Create a Python virtual environment: `python -m venv venv` and activate it.
-3.  Install the `uv` package manager: `pip install uv`.
-4.  Install dependencies: `uv pip install -r pyproject.toml --all-extras`.
-5.  Run the application from the root directory: `uv run main.py`.
+2.  Install the [`uv`](https://docs.astral.sh/uv/) package manager (recommended): `pip install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`.
+3.  Install dependencies: `uv sync --all-extras`.
+4.  Start the supporting services (Postgres + SearXNG): `podman-compose up -d db searXNG`.
+5.  Run the application from the root directory: `uv run main.py` (API on `http://localhost:3000`).
 
-### Testsuv pip install -r pyproject.toml
-The project uses `pytest` for testing. To run them, execute:
+Note: the application refuses to start without a valid `MASTER_KEY` in `.env` (see `.env.template`).
+
+### Tests
+The project uses `pytest` for testing. Unit tests run fully offline:
 ```bash
-pytest
+uv run pytest
+```
+Integration tests (require a live Postgres) are deselected by default:
+```bash
+uv run pytest -m integration
+```
+Lint:
+```bash
+uv run ruff check src tests
 ```
 
 ### Contributing

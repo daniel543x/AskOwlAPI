@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import JSON
@@ -12,5 +12,5 @@ class ScrapySettings(SQLModel, table=True):
     enabled: bool = Field(default=False)
     is_default: bool = Field(default=False)
 
-    api_key: Optional[str] = Field(default=None)
-    settings: Dict[str, Any] = Field(sa_column=Column(JSON), default={})
+    api_key: str | None = Field(default=None)
+    settings: dict[str, Any] = Field(sa_column=Column(JSON), default={})

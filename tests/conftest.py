@@ -1,91 +1,117 @@
-# Add this import at the very top
-from dotenv import load_dotenv
-
-# Load environment variables from .env file immediately
-load_dotenv()
-
-import asyncio
 import os
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
+from urllib.parse import quote_plus
 
-import pytest
+# Provide deterministic, offline-safe settings BEFORE any src import:
+# the app refuses to start without a valid MASTER_KEY.
+os.environ.setdefault(
+    "MASTER_KEY", "s2w6bWtjpHynwD8xBHyDzICIRvJ1ioxmhP39k6iBKDI="
+)
+
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
+from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.app import app
-from src.modules.identity import models
-from src.modules.identity.role.model import Role, UserRole
+from src.app import app  # noqa: E402
+from src.modules.chunk_store.model import Chunk  # noqa: E402, F401
+from src.modules.identity.role.model import Role, UserRole  # noqa: E402, F401
+from src.modules.identity.role.service import init_roles  # noqa: E402
 
-# Import all your models here
-from src.modules.identity.user.model import User
-from src.tools.db import get_session, init_db  # Check this file as per Step 2
-
-# --- Build the Test Database URL ONCE ---
-# Use a single, clear block to build the URL.
-# This makes it easy to debug.
-POSTGRES_USER = os.getenv("POSTGRES_USER", "user")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "password")
-POSTGRES_SERVER = os.getenv("POSTGRES_SERVER", "localhost")
-POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
-POSTGRES_DB = os.getenv("POSTGRES_DB", "database")
-
-TEST_DATABASE_URL = (
-    f"postgresql+asyncpg://{POSTGRES_USER}:{POSTGRES_PASSWORD}@"
-    f"{POSTGRES_SERVER}:{POSTGRES_PORT}/{POSTGRES_DB}"
+# Import all models so create_all sees every table.
+from src.modules.identity.user.model import User  # noqa: E402, F401
+from src.modules.llm_provider.model import (  # noqa: E402, F401
+    DefaultSettings,
+    ModelCatalogEntry,
+    ModelProvider,
+    UserModelPreference,
 )
-
-# --- DEBUGGING STEP ---
-# Add this print statement to see the EXACT URL being used.
-print(f"--- PYTEST: Using Test Database URL: {TEST_DATABASE_URL} ---")
-
-# ... (rest of your conftest.py fixtures are likely fine) ...
-test_engine = create_async_engine(TEST_DATABASE_URL, echo=True)
-TestSessionLocal = async_sessionmaker(
-    bind=test_engine, class_=AsyncSession, expire_on_commit=False
-)
+from src.modules.scrapy.model import ScrapySettings  # noqa: E402, F401
+from src.modules.search_engine.model import SearchProviderConfig  # noqa: E402, F401
+from src.tools.db import get_session, init_db  # noqa: E402
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+def _integration_database_url() -> str:
+    """URL of the dedicated integration-test database.
+
+    NEVER the application database: the fixture drops all tables on
+    teardown. The test DB is a separate database (created on demand) on the
+    same server the POSTGRES_* variables point at, and a hard guard refuses
+    to run if it would resolve to the configured application database.
+    """
+    test_db = os.getenv("POSTGRES_DB_TEST", "askowl_test")
+    app_db = os.getenv("POSTGRES_DB", "database")
+    if test_db == app_db:
+        raise RuntimeError(
+            "Integration tests would use the application database "
+            f"'{app_db}' (POSTGRES_DB_TEST must differ from POSTGRES_DB; "
+            "the fixture drops all tables)."
+        )
+    return (
+        f"postgresql+asyncpg://{os.getenv('POSTGRES_USER', 'postgres')}:"
+        f"{quote_plus(os.getenv('POSTGRES_PASSWORD', 'postgres'))}@"
+        f"{os.getenv('POSTGRES_SERVER', 'localhost')}:"
+        f"{os.getenv('POSTGRES_PORT', '5432')}/{test_db}"
+    )
+
+
+async def _ensure_test_database() -> str:
+    """Create the integration-test database if it does not exist yet."""
+    from sqlalchemy import text
+
+    url = _integration_database_url()
+    server_url, test_db = url.rsplit("/", 1)
+    # Connect through the maintenance database to create the test DB if
+    # needed; Postgres always requires a database on connect.
+    engine = create_async_engine(f"{server_url}/postgres", isolation_level="AUTOCOMMIT")
+    try:
+        async with engine.connect() as conn:
+            exists = await conn.scalar(
+                text("SELECT 1 FROM pg_database WHERE datname = :name"),
+                {"name": test_db},
+            )
+            if not exists:
+                await conn.execute(text(f'CREATE DATABASE "{test_db}"'))
+        return url
+    finally:
+        await engine.dispose()
 
 
 @pytest_asyncio.fixture(scope="function")
-async def db_session() -> AsyncGenerator[AsyncSession, None]:
-    """
-    Pytest fixture that provides a transactional scope for a test.
-    """
-    # --- THIS IS THE CRITICAL DEBUGGING STEP ---
-    # Print the names of all tables registered in SQLModel.metadata.
-    # This will tell us for sure if the models were imported correctly.
-    print("\n--- PYTEST DEBUG: Registered tables in metadata ---")
-    for table_name in SQLModel.metadata.tables:
-        print(f"  - {table_name}")
-    print("--------------------------------------------------\n")
+async def db_session() -> AsyncGenerator[AsyncSession]:
+    """Transactional database session. Requires a live Postgres (integration)."""
+    url = await _ensure_test_database()
+    test_engine = create_async_engine(url, echo=False)
+    session_factory = async_sessionmaker(
+        bind=test_engine, class_=AsyncSession, expire_on_commit=False
+    )
 
-    # The init_db function should now be able to find all tables.
     await init_db(engine=test_engine)
 
-    async with TestSessionLocal() as session:
+    # Seed default roles the way the app lifespan does, so routes that
+    # require them (e.g. user creation) behave as in production.
+    async with session_factory() as session:
+        await init_roles(session=session)
+
+    async with session_factory() as session:
         yield session
 
     async with test_engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.drop_all)
+    await test_engine.dispose()
 
 
 @pytest_asyncio.fixture(scope="function")
-async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
-    def override_get_session():
-        return db_session
+async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
+    """HTTP client wired to the app with the DB session overridden (integration)."""
+
+    async def override_get_session():
+        yield db_session
 
     app.dependency_overrides[get_session] = override_get_session
 
     transport = ASGITransport(app=app)
-
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 

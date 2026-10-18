@@ -1,4 +1,4 @@
-from typing import Dict, List
+import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -6,9 +6,11 @@ from sqlmodel import select
 from .factory import ScraperFactory
 from .model import ScrapySettings
 
+logger = logging.getLogger(__name__)
+
 
 async def init_scrapy_settings(session: AsyncSession):
-    registered_scrapers: Dict[str, type] = ScraperFactory.REGISTRY
+    registered_scrapers: dict[str, type] = ScraperFactory.REGISTRY
     DEFAULT_SCRAPER_NAME = "trafilatura"
 
     statement = select(ScrapySettings)
@@ -16,21 +18,25 @@ async def init_scrapy_settings(session: AsyncSession):
     db_scrapers = result.scalars().all()
     db_scrapers_map = {scraper.name: scraper for scraper in db_scrapers}
 
-    current_defaults: List[ScrapySettings] = [s for s in db_scrapers if s.is_default]
+    current_defaults: list[ScrapySettings] = [s for s in db_scrapers if s.is_default]
 
     needs_commit = False
 
     if len(current_defaults) == 0:
-        print("No default scraper found. Setting 'trafilatura' as default and enabled.")
+        logger.info(
+            "No default scraper found. Setting 'trafilatura' as default and enabled."
+        )
         trafilatura_entry = db_scrapers_map.get(DEFAULT_SCRAPER_NAME)
         if trafilatura_entry:
             trafilatura_entry.is_default = True
             trafilatura_entry.enabled = True
             needs_commit = True
     elif len(current_defaults) > 1:
-        print(
-            f"Inconsistent state: {len(current_defaults)} default scrapers found. "
-            f"Fixing to have only '{DEFAULT_SCRAPER_NAME}' as default."
+        logger.warning(
+            "Inconsistent state: %d default scrapers found. "
+            "Fixing to have only '%s' as default.",
+            len(current_defaults),
+            DEFAULT_SCRAPER_NAME,
         )
         for scraper in current_defaults:
             if scraper.name == DEFAULT_SCRAPER_NAME:
@@ -41,7 +47,7 @@ async def init_scrapy_settings(session: AsyncSession):
 
     for scraper_name in registered_scrapers:
         if scraper_name not in db_scrapers_map:
-            print(f"Creating new scraper entry for '{scraper_name}'.")
+            logger.info("Creating new scraper entry for '%s'.", scraper_name)
             is_default = (
                 scraper_name == DEFAULT_SCRAPER_NAME and len(current_defaults) == 0
             )
@@ -51,15 +57,15 @@ async def init_scrapy_settings(session: AsyncSession):
                 is_default=is_default,
                 enabled=is_default,
                 api_key=None,
-                config={},
+                settings={},
             )
             session.add(new_scraper)
             needs_commit = True
 
     if needs_commit:
         await session.commit()
-        print("Database changes committed.")
+        logger.info("Database changes committed.")
     else:
-        print("No changes needed.")
+        logger.info("No changes needed.")
 
-    print("Database initialization for scrapers finished successfully.")
+    logger.info("Database initialization for scrapers finished successfully.")

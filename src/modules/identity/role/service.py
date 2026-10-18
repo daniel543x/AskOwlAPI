@@ -1,4 +1,3 @@
-from typing import List
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -9,7 +8,7 @@ from sqlmodel import select
 from .model import Role, RoleCreate, UserRole
 
 
-async def create_role(session: AsyncSession, role: "RoleCreate") -> Role:
+async def create_role(session: AsyncSession, role: RoleCreate) -> Role:
     db_role = Role.model_validate(role)
     session.add(db_role)
     await session.commit()
@@ -103,7 +102,7 @@ async def remove_role_from_user(
     await session.commit()
 
 
-async def get_user_roles(session: AsyncSession, user_id: UUID) -> List[str]:
+async def get_user_roles(session: AsyncSession, user_id: UUID) -> list[str]:
     statement = select(Role.name).join(UserRole).where(UserRole.user_id == user_id)
     result = await session.execute(statement)
     return list(result.scalars().all())

@@ -1,0 +1,133 @@
+{
+  "_note": "Starter golden set for retrieval evaluation (~20 queries with known-good sources). Curate and extend as quality issues are found; recall@n and MRR are computed over these URLs.",
+  "entries": [
+    {
+      "query": "rust programming language ownership and borrowing",
+      "relevant_urls": [
+        "https://doc.rust-lang.org/book/ch04-00-understanding-ownership.html",
+        "https://www.rust-lang.org/"
+      ]
+    },
+    {
+      "query": "python asyncio event loop explained",
+      "relevant_urls": [
+        "https://docs.python.org/3/library/asyncio-eventloop.html",
+        "https://docs.python.org/3/library/asyncio.html"
+      ]
+    },
+    {
+      "query": "kubernetes deployment vs statefulset differences",
+      "relevant_urls": [
+        "https://kubernetes.io/docs/concepts/workloads/controllers/deployment/",
+        "https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/"
+      ]
+    },
+    {
+      "query": "http/2 multiplexing vs http/1.1 pipelining",
+      "relevant_urls": [
+        "https://httpwg.org/specs/rfc9113.html",
+        "https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Evolution_of_HTTP"
+      ]
+    },
+    {
+      "query": "postgres index types btree gin gist",
+      "relevant_urls": [
+        "https://www.postgresql.org/docs/current/indexes-types.html",
+        "https://www.postgresql.org/docs/current/indexes.html"
+      ]
+    },
+    {
+      "query": "what is vector similarity search pgvector",
+      "relevant_urls": [
+        "https://github.com/pgvector/pgvector"
+      ]
+    },
+    {
+      "query": "fastapi dependency injection explained",
+      "relevant_urls": [
+        "https://fastapi.tiangolo.com/tutorial/dependencies/",
+        "https://fastapi.tiangolo.com/advanced/"
+      ]
+    },
+    {
+      "query": "docker container vs virtual machine differences",
+      "relevant_urls": [
+        "https://docs.docker.com/get-started/docker-concepts/building-images/containers-vs-virtual-machines/"
+      ]
+    },
+    {
+      "query": "sql transaction isolation levels explained",
+      "relevant_urls": [
+        "https://www.postgresql.org/docs/current/transaction-iso.html"
+      ]
+    },
+    {
+      "query": "ldap authentication how it works",
+      "relevant_urls": [
+        "https://www.rfc-editor.org/rfc/rfc4511"
+      ]
+    },
+    {
+      "query": "b trees vs b+ trees database indexes",
+      "relevant_urls": [
+        "https://en.wikipedia.org/wiki/B%2B_tree"
+      ]
+    },
+    {
+      "query": "oauth 2.0 authorization code flow with pkce",
+      "relevant_urls": [
+        "https://www.rfc-editor.org/rfc/rfc7636",
+        "https://www.oauth.com/oauth2-servers/pkce/"
+      ]
+    },
+    {
+      "query": "llm tool calling function calling explained",
+      "relevant_urls": [
+        "https://platform.openai.com/docs/guides/function-calling"
+      ]
+    },
+    {
+      "query": "javascript event loop microtasks macrotasks",
+      "relevant_urls": [
+        "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Event_loop"
+      ]
+    },
+    {
+      "query": "git rebase vs merge when to use",
+      "relevant_urls": [
+        "https://git-scm.com/book/en/v2/Git-Branching-Rebasing"
+      ]
+    },
+    {
+      "query": "cap theorem distributed systems",
+      "relevant_urls": [
+        "https://en.wikipedia.org/wiki/CAP_theorem"
+      ]
+    },
+    {
+      "query": "searxng metasearch engine json api",
+      "relevant_urls": [
+        "https://docs.searxng.org/dev/search_api.html"
+      ]
+    },
+    {
+      "query": "trafilatura web content extraction python",
+      "relevant_urls": [
+        "https://trafilatura.readthedocs.io/"
+      ]
+    },
+    {
+      "query": "ollama running local llms api",
+      "relevant_urls": [
+        "https://github.com/ollama/ollama"
+      ]
+    },
+    {
+      "query": "cross encoder vs bi encoder retrieval reranking",
+      "relevant_urls": [
+        "https://www.sbert.net/examples/applications/cross-encoder/README.html",
+        "https://www.sbert.net/examples/applications/retrieve_rerank/README.html"
+      ]
+    }
+  ]
+}

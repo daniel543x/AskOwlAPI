@@ -222,3 +222,7 @@ lerna-debug.log*
 coverage/
 *.cover
 .nyc_output/
+
+# ===== AskOwl =====
+eval_reports/
+.crushrc

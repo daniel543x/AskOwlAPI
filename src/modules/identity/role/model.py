@@ -1,5 +1,5 @@
 import uuid
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -16,7 +16,10 @@ class RoleBase(SQLModel):
 
 class Role(RoleBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True, index=True)
-    users: List["User"] = Relationship(back_populates="roles", link_model=UserRole)
+    # Quoted forward ref: User is only importable under TYPE_CHECKING (cycle).
+    users: list["User"] = Relationship(  # noqa: UP037
+        back_populates="roles", link_model=UserRole
+    )
 
 
 class RoleCreate(RoleBase):
