@@ -112,6 +112,7 @@ async def get_user_roles(session: AsyncSession, user_id: UUID) -> list[str]:
 async def init_roles(session: AsyncSession) -> None:
     default_roles_data = [
         {"name": "user", "description": "Default user with standard permissions."},
+        {"name": "pro", "description": "Elevated role: research and agent modes."},
         {"name": "admin", "description": "Administrator with full system access."},
     ]
 

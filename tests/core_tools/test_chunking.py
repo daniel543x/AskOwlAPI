@@ -1,4 +1,4 @@
-from src.core.ask.services.chunking import chunk_markdown_data
+from src.core.tools.chunking import chunk_markdown_data
 
 
 def test_splits_markdown_by_headers_and_keeps_url():

@@ -18,12 +18,12 @@ from typing import Any
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from ....modules.chunk_store.repository import ChunkRepository
-from ....modules.embedding.base import IEmbedder
-from ....modules.owl_reranker.base import IRanker
-from ....modules.scrapy.providers.base import IScraper
-from ....modules.search_engine.providers.base import ISearchProvider
-from ....tools.settings import settings
+from ...modules.chunk_store.repository import ChunkRepository
+from ...modules.embedding.base import IEmbedder
+from ...modules.owl_reranker.base import IRanker
+from ...modules.scrapy.providers.base import IScraper
+from ...modules.search_engine.providers.base import ISearchProvider
+from ...tools.settings import settings
 from .chunking import chunk_markdown_data
 
 logger = logging.getLogger(__name__)

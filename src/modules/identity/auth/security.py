@@ -78,3 +78,26 @@ async def get_current_admin_user(
             status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions"
         )
     return current_user
+
+
+# Roles allowed to use the elevated modes (`research`, `agent`).
+ELEVATED_ROLES = ("pro", "admin")
+
+
+async def get_current_elevated_user(
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> User:
+    from ..role.service import get_user_roles
+
+    user_roles = await get_user_roles(session=session, user_id=current_user.id)
+
+    if not any(role in ELEVATED_ROLES for role in user_roles):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "This mode requires an elevated role "
+                f"({' or '.join(ELEVATED_ROLES)})."
+            ),
+        )
+    return current_user
