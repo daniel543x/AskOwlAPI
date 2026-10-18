@@ -9,7 +9,7 @@ backends (JSON). Models may be local (Ollama), on the host/LAN, or in the cloud 
 admin-curated model catalog decides. Core rule: **the LLM is never used without a tool call.**
 
 `PLAN.md` is the source of truth for what to build (phases, checklists, definitions of
-done). `ROADMAP.md` is historical. Read the current phase in `PLAN.md` before starting.
+done). Read the current phase in `PLAN.md` before starting.
 
 ## Environment & commands
 

@@ -1,11 +1,8 @@
 # AskOwl Improvement Plan
 
 Status: draft v1 (2026-10-17). Source of truth for phased work. `CRUSH.md` tells the dev agent
-(crush) how to work in this repo; this file tells it what to build.
-
-Complements `ROADMAP.md` (rough mapping: Phases 0–1 ≈ Stage 1, Phase 4 ≈ Stage 2 agentic,
-Phase 5 personas ≈ Stage 3, Phase 6 ≈ Stages 4–5; Phase 7, the Jev/Laya decision layer,
-is deliberately ordered last).
+(crush) how to work in this repo; this file tells it what to build. (Replaces the retired
+`ROADMAP.md`; still-valuable roadmap ideas were folded into Phase 6 and §4.)
 
 ---
 
@@ -234,14 +231,19 @@ same query vs. no persona.
 
 - [ ] History module (fill the empty files): PostgreSQL conversations/messages, per user,
       wired into ask routes; `conversation_id` handling.
+- [ ] Admin user management: block/unblock users (`is_active`), enforced by auth middleware
+      and all API-key checks; admin listing of users.
 - [ ] API keys for clients/backends: server-generated keys, hash-only storage (reuse
-      `CryptoService`), scopes tied to modes/roles, rate limiting. Design doc first
+      `CryptoService`), scopes tied to modes/roles, rate limiting; reject valid keys whose
+      user is blocked/inactive; track `last_used_at`. Design doc first
       (open decision — scheme not finalized).
-- [ ] Alembic migrations; retire `create_all` (Phase 3's pgvector schema migrates too).
+- [ ] Alembic migrations; retire `create_all` (Phase 3's pgvector schema migrates too);
+      validate upgrade **and downgrade** paths on a clean database.
 - [ ] CI (GitHub Actions): ruff, unit tests (no services), integration tests with
-      postgres + searxng services, container build.
+      postgres + searxng services, container build; dependency vulnerability scan
+      (e.g. `pip-audit`) and a secrets-exposure check on every PR.
 - [ ] Fill `docs/` per `docs/doc_plan.md`; README rewrite (modes, model selection, topology
-      options); release tagging.
+      options) verified by a fresh-clone test; release tagging.
 
 ### Phase 7 — Decision layer (Jev / Laya pre-scorers) — deliberately last
 
@@ -274,3 +276,15 @@ and measured via the Phase 3 eval harness; failures degrade gracefully (skip, ne
 | 2 | Laya packaging: HTTP sidecar (recommended, matches Jev cloud too) vs in-process SDK | daniel | Phase 7 |
 | 3 | API-key scheme (shape, scopes, rotation) | daniel | Phase 6 |
 | 4 | Keep or drop the `pro` role name once modes are gated | daniel | Phase 4 |
+
+---
+
+## 4. Backlog (unscheduled; carried over from the retired `ROADMAP.md`)
+
+- **Alternate search backends:** Tavily / SerpAPI / Bing API providers for the `search_engine`
+  module, configurable per request or per persona. Doubles as the "API-keyed engines"
+  mitigation for the search-egress poisoning diagnosed at Phase 3 closure.
+- **API-caller tool for agent modes:** let Phase 4/5 agents call external REST APIs with
+  user-provided (encrypted) credentials as an additional first-class tool.
+- **Soft delete for user data:** hide-but-preserve semantics (conversations, personas) instead
+  of hard row deletion.
