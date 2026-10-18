@@ -32,12 +32,43 @@ logger = logging.getLogger(__name__)
 PipelineEvent = tuple[str, dict[str, Any]]
 
 
-def make_budget() -> Budget:
-    """Budget for one research/agent run, from settings."""
+def _bounded(overrides: dict, key: str, ceiling: int | float, cast) -> int | float:
+    """Persona override for `key`, cast and clamped to [1, ceiling].
+
+    Malformed values (wrong type, unparseable) fall back to the ceiling
+    (the settings value); personas are user input and never crash a run.
+    """
+    raw = overrides.get(key, ceiling)
+    try:
+        value = cast(raw)
+    except (TypeError, ValueError):
+        return ceiling
+    return max(1, min(value, ceiling))
+
+
+def make_budget(overrides: dict | None = None) -> Budget:
+    """Budget for one research/agent run, from settings.
+
+    A persona's `default_parameters` may override the bounded subset
+    (max_iterations, time_budget_seconds, token_budget); unknown keys are
+    ignored and the settings values always act as the ceiling.
+    """
+    overrides = overrides or {}
     return Budget(
-        max_iterations=settings.AGENT_MAX_ITERATIONS,
-        time_budget_seconds=settings.AGENT_TIME_BUDGET_SECONDS,
-        token_budget=settings.AGENT_TOKEN_BUDGET,
+        max_iterations=int(
+            _bounded(overrides, "max_iterations", settings.AGENT_MAX_ITERATIONS, int)
+        ),
+        time_budget_seconds=float(
+            _bounded(
+                overrides,
+                "time_budget_seconds",
+                settings.AGENT_TIME_BUDGET_SECONDS,
+                float,
+            )
+        ),
+        token_budget=int(
+            _bounded(overrides, "token_budget", settings.AGENT_TOKEN_BUDGET, int)
+        ),
     )
 
 
@@ -203,6 +234,7 @@ async def agent_sse_adapter(
     model: BaseChatModel,
     toolbox: AskToolbox,
     budget: Budget,
+    persona=None,
 ) -> AsyncGenerator[str]:
     """Translate agent-loop events into an SSE stream."""
     event_id = 0
@@ -212,7 +244,7 @@ async def agent_sse_adapter(
         event_id += 1
         return f"event: {event}\nid: {event_id}\ndata: {json.dumps(data)}\n\n"
 
-    async for event, data in agent_logic(goal, model, toolbox, budget):
+    async for event, data in agent_logic(goal, model, toolbox, budget, persona):
         yield frame(event, data)
 
 

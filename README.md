@@ -109,9 +109,10 @@ All modes require authentication (JWT bearer or `X-API-Key`).
 *   **`agent`** (elevated role): an autonomous agent loop over the shared tools
     (`web_search`, `fetch_pages`, `get_context`), bounded by
     iteration/time/token budgets, answering through a `SubmitOutcome` tool
-    call. SSE.
-*   **`agents`/personas** (planned): user-created personas that constrain the
-    agent loop to a topic scope.
+    call. Optionally scoped by one of your **personas** (`persona_id`):
+    user-created profiles whose topic context biases queries and whose
+    domain/engine constraints scope the search. Manage personas via
+    `POST/GET/PATCH/DELETE /personas`.
 
 ## Models and Providers
 

@@ -43,7 +43,7 @@ class CachedSearchProvider:
         self._cache: dict[str, list] = {}
         self.query_count = 0
 
-    async def search(self, query: str) -> list:
+    async def search(self, query: str, engines: list[str] | None = None) -> list:
         if query not in self._cache:
             self._cache[query] = list(await self.inner.search(query=query))
             self.query_count += 1

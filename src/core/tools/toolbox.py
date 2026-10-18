@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -58,12 +59,17 @@ class AskToolbox:
         ranker: IRanker,
         embedder: IEmbedder | None = None,
         chunk_repo: ChunkRepository | None = None,
+        allowed_domains: list[str] | None = None,
+        allowed_engines: list[str] | None = None,
     ):
         self.searching = searching
         self.scraper = scraper
         self.ranker = ranker
         self.embedder = embedder
         self.chunk_repo = chunk_repo
+        # Persona constraints: None/empty = unconstrained.
+        self.allowed_domains = [d.lower() for d in (allowed_domains or [])]
+        self.allowed_engines = allowed_engines or None
 
         self.raw_results: list = []
         self.ranked_sources: list[dict[str, Any]] = []
@@ -74,7 +80,12 @@ class AskToolbox:
 
     async def web_search(self, query: str) -> str:
         """Search the web and rank the results; returns JSON for the LLM."""
-        self.raw_results = await self.searching.search(query=query)
+        self.raw_results = await self.searching.search(
+            query, engines=self.allowed_engines
+        )
+
+        if self.allowed_domains:
+            self.raw_results = self._filter_domains(self.raw_results)
 
         ranked = await asyncio.to_thread(
             self.ranker.rank_web_search, query, self.raw_results, settings.TOP_N_URLS
@@ -90,6 +101,25 @@ class AskToolbox:
             for item in ranked
         ]
         return json.dumps(self.ranked_sources)
+
+    def _filter_domains(self, results: list) -> list:
+        """Keep only results whose host matches an allowed domain (suffix)."""
+        kept = []
+        for result in results:
+            host = (urlparse(result.url).hostname or "").lower()
+            if any(
+                host == domain or host.endswith(f".{domain}")
+                for domain in self.allowed_domains
+            ):
+                kept.append(result)
+        dropped = len(results) - len(kept)
+        if dropped:
+            logger.debug(
+                "Domain constraint dropped %d of %d search results.",
+                dropped,
+                len(results),
+            )
+        return kept
 
     async def fetch_pages(self, urls: list[str] | None = None) -> str:
         """Download pages and split them into chunks; returns page previews.

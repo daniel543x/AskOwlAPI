@@ -27,11 +27,13 @@ class SearXNGProvider(ISearchProvider):
         self.categories = categories or settings.SEARXNG_CATEGORIES
         self.timeout = timeout if timeout is not None else settings.SEARXNG_TIMEOUT
 
-    async def search(self, query: str) -> list[SearchResult]:
+    async def search(
+        self, query: str, engines: list[str] | None = None
+    ) -> list[SearchResult]:
         params = {
             "q": query,
             "format": "json",
-            "engines": self.engines,
+            "engines": ",".join(engines) if engines else self.engines,
             "categories": self.categories,
         }
         try:
