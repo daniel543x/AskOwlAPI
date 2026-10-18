@@ -17,7 +17,7 @@ src/
 │                           #   ToolArgStream, ToolProtocolError
 └── modules/                # pluggable capabilities (model/repository/factory/
                             #   router pattern per module)
-    ├── identity/           # JWT auth, users, roles (user/pro/admin)
+    ├── identity/           # JWT auth, users, roles (user/research/admin)
     ├── api_keys/           # X-API-Key auth, scopes, rate limiting
     ├── history/            # conversations/messages per user
     ├── personas/           # user-owned agent profiles

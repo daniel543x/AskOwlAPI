@@ -109,7 +109,7 @@ async def get_current_admin_user(
 
 
 # Roles allowed to use the elevated modes (`research`, `agent`).
-ELEVATED_ROLES = ("pro", "admin")
+ELEVATED_ROLES = ("research", "admin")
 
 
 async def get_current_elevated_user(

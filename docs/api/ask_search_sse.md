@@ -1,7 +1,9 @@
 # Ask Search API — SSE Protocol
 
-Applies to `GET /ask/search?stream=true` (SSE) and `GET /ask/search?stream=false`
-(JSON). The JSON mode returns the same data as one document (see below).
+Applies to `POST /ask/search` (body: `{"query", "stream", "conversation_id"}`).
+The JSON mode (`stream=false`) returns the same data as one document (see
+below). POST because a turn persists conversation history; model-selection
+params (`model_id`, `embedder_id`, `reranker_id`) stay on the query string.
 
 Current protocol version: **v2** (breaking; there are no external consumers yet).
 Changelog at the bottom.

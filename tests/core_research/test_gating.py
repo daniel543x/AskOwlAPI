@@ -98,7 +98,7 @@ async def test_research_forbidden_for_plain_user_role(auth_client, db_session):
 
 @pytest.mark.asyncio
 async def test_research_allowed_for_pro_role(auth_client, db_session):
-    _, token = await make_user_with_role(db_session, role_name="pro")
+    _, token = await make_user_with_role(db_session, role_name="research")
 
     response = await auth_client.get(
         "/ask/research",
@@ -137,7 +137,7 @@ async def test_agent_mode_forbidden_for_plain_user_role(auth_client, db_session)
 
 @pytest.mark.asyncio
 async def test_agent_mode_streams_for_pro_role(auth_client, db_session):
-    _, token = await make_user_with_role(db_session, role_name="pro")
+    _, token = await make_user_with_role(db_session, role_name="research")
 
     # Agent loop model: one tool round, then the outcome.
     app.dependency_overrides[get_llm_client] = lambda: ScriptedToolModel(
@@ -167,9 +167,9 @@ async def test_search_mode_allowed_for_plain_user_role(auth_client, db_session):
             tool_call("CitedAnswer", {"answer": "Answer. [Source](u)"}),
         ]
     )
-    response = await auth_client.get(
+    response = await auth_client.post(
         "/ask/search",
-        params={"query": "rust", "stream": False},
+        json={"query": "rust", "stream": False},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200

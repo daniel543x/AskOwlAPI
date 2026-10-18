@@ -2,7 +2,7 @@
 
 Applies to `GET /ask/research` (SSE with `stream=true`, default; JSON with
 `stream=false`) and `GET /ask/agent` (SSE only). Both routes require an
-elevated role (`pro` or `admin`); see `docs/api/ask_search_sse.md` for the
+elevated role (`research` or `admin`); see `docs/api/ask_search_sse.md` for the
 base wire format (SSE framing, event ids, terminal events) — this document
 only lists the extensions over protocol v2.
 
