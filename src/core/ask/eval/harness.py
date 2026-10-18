@@ -18,11 +18,11 @@ from pathlib import Path
 from typing import Any
 
 from ....modules.chunk_store.repository import ChunkRepository
+from ....modules.decision.base import IDecisionMaker
 from ....modules.embedding.base import IEmbedder
 from ....modules.owl_reranker.base import IRanker
 from ....modules.scrapy.providers.base import IScraper
 from ....modules.search_engine.providers.base import ISearchProvider
-from ....modules.decision.base import IDecisionMaker
 from ...tools.toolbox import AskToolbox
 from .metrics import mrr, recall_at_k
 
