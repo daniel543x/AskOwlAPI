@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Column
+from sqlalchemy import Column, DateTime
 from sqlmodel import JSON, Field, SQLModel
 
 
@@ -24,7 +24,9 @@ class Chunk(SQLModel, table=True):
     source_url: str = Field(index=True)
     content_hash: str = Field(index=True, unique=True)
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(UTC), index=True
+        default_factory=lambda: datetime.now(UTC),
+        sa_type=DateTime(timezone=True),
+        index=True,
     )
 
 

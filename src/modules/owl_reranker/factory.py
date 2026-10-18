@@ -3,7 +3,7 @@ import logging
 import uuid
 
 from fastapi import Depends, HTTPException, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ...tools.db import engine, get_session
 from ...tools.settings import settings

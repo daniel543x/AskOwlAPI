@@ -3,7 +3,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import PrimaryKeyConstraint
+from sqlalchemy import DateTime, PrimaryKeyConstraint
 from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 
 
@@ -41,7 +41,9 @@ class ModelProvider(SQLModel, table=True):
 
     is_active: bool = Field(default=True)
     health_status: str = Field(default=ProviderHealth.UNKNOWN.value)
-    last_probe_at: datetime | None = Field(default=None)
+    last_probe_at: datetime | None = Field(
+        default=None, sa_type=DateTime(timezone=True)
+    )
 
     models: list[ModelCatalogEntry] = Relationship(back_populates="provider")
 

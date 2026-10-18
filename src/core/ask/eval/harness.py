@@ -30,6 +30,66 @@ logger = logging.getLogger(__name__)
 GOLDEN_SET_PATH = Path(__file__).parent / "golden_set.json"
 
 
+class CachedSearchProvider:
+    """Memoizing search provider so every eval config sees identical results.
+
+    Upstream engines flap between runs (CAPTCHAs, rate-limit suspensions);
+    without a cache the baseline and vector configurations would be compared
+    against different search results, which biases the verdict.
+    """
+
+    def __init__(self, inner: ISearchProvider):
+        self.inner = inner
+        self._cache: dict[str, list] = {}
+        self.query_count = 0
+
+    async def search(self, query: str) -> list:
+        if query not in self._cache:
+            self._cache[query] = list(await self.inner.search(query=query))
+            self.query_count += 1
+        return list(self._cache[query])
+
+
+class CachedScraper:
+    """Per-URL memoizing scraper: each page is fetched once per eval process.
+
+    Only successful extractions (non-empty content) are cached, so transient
+    fetch failures are retried on the next call instead of being frozen in.
+    """
+
+    def __init__(self, inner: IScraper):
+        self.inner = inner
+        self._cache: dict[str, dict[str, Any]] = {}
+        self.fetch_count = 0
+
+    async def scrape(
+        self, data_from_search: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        if not data_from_search:
+            return []
+        misses = [
+            item
+            for item in data_from_search
+            if item.get("url") not in self._cache
+        ]
+        self.fetch_count += len(misses)
+        if misses:
+            fetched = await self.inner.scrape(misses) or []
+            for page in fetched:
+                if page.get("url") and page.get("content"):
+                    self._cache[page["url"]] = page
+        return [
+            dict(self._cache[item["url"]])
+            if item.get("url") in self._cache
+            else {"content": "", "url": item.get("url", "")}
+            for item in data_from_search
+        ]
+
+    @property
+    def name(self) -> str:
+        return f"cached({self.inner.name})"
+
+
 @dataclass
 class EvalQuery:
     query: str
@@ -127,6 +187,25 @@ async def run_eval(
         mean_mrr=sum(r.reciprocal_rank for r in results) / count,
         mean_latency_ms=sum(r.latency_ms for r in results) / count,
     )
+
+
+def comparison_verdict(
+    baseline: EvalReport, vector: EvalReport
+) -> tuple[bool, str]:
+    """Gate for the Phase 3 DoD ("vector must not lose to the baseline").
+
+    A vector run in which any query silently fell back to in-memory ranking
+    is invalid: it compares the baseline against itself and proves nothing.
+    """
+    degraded = sum(1 for r in vector.results if not r.vector_retrieval)
+    if degraded:
+        return False, (
+            f"vector config fell back to baseline ranking on {degraded}/"
+            f"{len(vector.results)} queries (embedder or chunk store "
+            "failure); fix the underlying error and re-run"
+        )
+    better = vector.mean_recall >= baseline.mean_recall
+    return better, f"recall {vector.mean_recall:.3f} vs {baseline.mean_recall:.3f}"
 
 
 def format_report(report: EvalReport) -> str:

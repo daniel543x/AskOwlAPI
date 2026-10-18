@@ -12,10 +12,10 @@ Complete replacement of the communication engine with LangChain. Create an abstr
     - [x] Rewrite LLM factory to use LangChain (implement `factory.py` with provider classes).
     - [x] Fix the `/ask/search` route – ensure it correctly invokes the LangChain chain.
     - [x] Verify and fix the number of links returned by the ranker (web search).
-    - [ ] Add support for both streaming and non-streaming responses in `/ask/search`.
+    - [x] Add support for both streaming and non-streaming responses in `/ask/search`.
         - [x] Implement streaming version using Server-Sent Events (SSE) for token-by-token delivery.
-        - [ ] **Ensure the streaming format is "backend-friendly"** – use a simple JSON structure per event, easy to parse by external services.
-        - [ ] Ensure the non-streaming fallback returns a complete JSON response.
+        - [x] **Ensure the streaming format is "backend-friendly"** – use a simple JSON structure per event, easy to parse by external services.
+        - [x] Ensure the non-streaming fallback returns a complete JSON response.
 
 *Version: 0.2.0-alpha*
 

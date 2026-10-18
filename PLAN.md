@@ -86,6 +86,14 @@ Defects (fix in Phase 0 unless noted):
 - Tests: 26 lines (identity only), conftest requires live Postgres. No Alembic, no CI.
 - `psycopg2-binary` dependency unused (app uses asyncpg).
 - README quickstart broken (`uv pip install -r pyproject.toml` is not valid uv usage).
+- Found 2026-10-17 (while registering the OpenRouter provider): `GET /health/models` returns
+  500 — `ModelRepository.probe_providers()` (`src/modules/llm_provider/repository.py`) commits,
+  which expires the provider ORM instances; the route then reads `provider.id` and the lazy
+  refresh raises `MissingGreenlet` (same trap `_set_default_if_missing` already documents).
+  Health state is persisted before the crash, so `GET /admin/models/providers` shows it.
+  **Fixed 2026-10-17** (phase-3 branch): `probe_providers` now refreshes each provider after
+  the commit; regression test in `tests/modules/llm_provider/test_repository.py`
+  (integration-marked).
 
 ---
 
@@ -181,9 +189,24 @@ documented; both SSE and JSON consumers served.
 
 **DoD:** answers are produced from vector-retrieved + reranked context; eval report exists;
 default configuration beats the Phase 2 baseline on the golden set.
-*Status: implemented; the measured comparison run (`uv run python -m src.core.ask.eval`)
-needs the live stack (Postgres+pgvector, SearXNG, Ollama with `bge-m3` pulled) and is
-pending that run before Phase 3 is closed.*
+*Status: implemented; closing is blocked on a **valid** comparison run. The 2026-10-17
+22:10 report (`eval_reports/eval_report.json`) is invalid: `vector_retrieval` is false on
+every query — the embedder was unreachable, so the "vector" run silently degraded to the
+baseline path and the resulting tie proves nothing. Fixes on this branch: the eval CLI now
+fails loudly when the vector config degrades (`comparison_verdict`), metrics normalize
+URL variants (www prefix, host casing, trailing slash) before scoring, and search/scrape
+results are cached across configurations so engine flakiness cannot bias the comparison
+(diagnosed 2026-10-17: from this host only bing responds — brave/ddg/startpage CAPTCHA or
+suspended, qwant API error — capping search-level recall at 4/28 golden URLs; that is an
+environment/IP-reputation issue, not a pipeline defect. Worse, bing then started returning
+*unrelated spam* with HTTP 200 (silent poisoning: a "Who is Donald Trump?" query yielded
+patheos.com religion blogs), and the searxng container's egress to Wikipedia's API 403s —
+the whole egress IP has reputation damage. The pipeline itself is mechanically healthy
+end-to-end without Ollama; search-layer mitigation (proxy egress, API-keyed engines,
+result-sanity heuristics) is a design decision to schedule, not a Phase 3 item). Re-run once an embedder is
+reachable: local Ollama with `bge-m3` pulled (deferred for now) or the catalog's
+OpenAI-compatible entry — the OpenRouter free tier is daily-quota-capped (resets
+2026-10-18 00:00 UTC).*
 
 ### Phase 4 — Decision layer (Jev / Laya pre-scorers)
 

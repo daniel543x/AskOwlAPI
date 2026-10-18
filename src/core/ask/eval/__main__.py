@@ -1,11 +1,12 @@
 """Eval CLI: compare retrieval configurations against the golden set.
 
-Requires live services (Postgres+pgvector, SearXNG, and Ollama for the
-embedding model). The DB is wiped of chunks first so both configurations
-start from the same store state.
+Requires live services (Postgres+pgvector, SearXNG, and an embedding model
+resolved from the catalog — local or cloud). The DB is wiped of chunks first so
+both configurations start from the same store state.
 
 Usage:
     uv run python -m src.core.ask.eval [--golden PATH] [--out REPORT.json]
+                                       [--embedder-id UUID]
 """
 
 import argparse
@@ -34,19 +35,29 @@ from ....modules.search_engine.providers.searxng import SearXNGProvider
 from ....tools.db import engine
 from ....tools.logging import configure_logging
 from ....tools.settings import settings
-from .harness import format_report, load_golden_set, run_eval
+from .harness import (
+    CachedScraper,
+    CachedSearchProvider,
+    comparison_verdict,
+    format_report,
+    load_golden_set,
+    run_eval,
+)
 
 logger = logging.getLogger(__name__)
 
 _EVAL_USER_ID = uuid.uuid4()
 
 
-async def _resolve_embedder(repo: ModelRepository):
+async def _resolve_embedder(
+    repo: ModelRepository, requested_model_id: uuid.UUID | None = None
+):
     try:
         resolved = await repo.resolve_model(
             kind=ModelKind.EMBEDDING.value,
             user_id=_EVAL_USER_ID,
             user_roles=["admin"],
+            requested_model_id=requested_model_id,
         )
         return EmbeddingFactory().create_embedder(resolved)
     except (SelectionError, ValueError) as e:
@@ -54,13 +65,17 @@ async def _resolve_embedder(repo: ModelRepository):
         return None
 
 
-_EVAL_USER_ID = __import__("uuid").uuid4()
-
-
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--golden", type=Path, default=None)
     parser.add_argument("--out", type=Path, default=Path("eval_reports"))
+    parser.add_argument(
+        "--embedder-id",
+        type=uuid.UUID,
+        default=None,
+        help="Catalog entry id of the embedding model to evaluate "
+        "(defaults to the catalog's embedding default).",
+    )
     args = parser.parse_args()
 
     configure_logging(settings)
@@ -75,11 +90,13 @@ async def main() -> int:
         repo = ModelRepository(session)
         ranker_model = await _resolve_ranker_model(session, None)
         ranker = await RankerFactory.from_resolved(ranker_model)
-        embedder = await _resolve_embedder(repo)
+        embedder = await _resolve_embedder(repo, args.embedder_id)
         chunk_repo = ChunkRepository(session)
 
-        searching = SearXNGProvider()
-        scraper = TrafilturaScraper()
+        # Cache search + scrape results so both configurations run against
+        # identical inputs even when upstream engines flap between runs.
+        searching = CachedSearchProvider(SearXNGProvider())
+        scraper = CachedScraper(TrafilturaScraper())
 
         print("[eval] running baseline (cross-encoder over request chunks)...")
         baseline = await run_eval(
@@ -98,19 +115,23 @@ async def main() -> int:
         else:
             print("[eval] skipped vector config (no embedder)")
 
+    print(
+        f"[eval] inputs: {searching.query_count} unique searches, "
+        f"{scraper.fetch_count} page fetches (cached across configs)"
+    )
+
     args.out.mkdir(parents=True, exist_ok=True)
     out_file = args.out / "eval_report.json"
     out_file.write_text(json.dumps([r.to_dict() for r in reports], indent=2))
     print(f"[eval] report written to {out_file}")
 
     if len(reports) == 2:
-        better = reports[1].mean_recall >= reports[0].mean_recall
+        passed, detail = comparison_verdict(reports[0], reports[1])
         print(
-            "[eval] vector vs baseline: "
-            f"recall {reports[1].mean_recall:.3f} vs {reports[0].mean_recall:.3f} "
-            f"({'PASS' if better else 'FAIL'})"
+            f"[eval] vector vs baseline: {detail} "
+            f"({'PASS' if passed else 'FAIL'})"
         )
-        return 0 if better else 1
+        return 0 if passed else 1
     return 0
 
 

@@ -51,7 +51,7 @@ async def get_llm_client(
     repo: ModelRepository = Depends(get_repository),
     factory: ChatModelFactory = Depends(get_llm_factory),
     user: User = Depends(get_current_user),
-    request_model_id: uuid.UUID | None = Query(default=None),
+    request_model_id: uuid.UUID | None = Query(default=None, alias="model_id"),
 ) -> BaseChatModel:
     """Chat model for ask routes; requires the `tools` capability.
 

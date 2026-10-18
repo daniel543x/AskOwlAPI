@@ -16,6 +16,9 @@ done). `ROADMAP.md` is historical. Read the current phase in `PLAN.md` before st
 - Python 3.14, dependencies managed with **uv**: `uv sync --all-extras`.
 - Run locally: needs Postgres + SearXNG → `podman-compose up -d db searXNG`, then
   `uv run main.py` (API on :3000).
+- Local dev login (admin): `admin@askowl.dev` / `Ask0wlAdmin!2026`.
+- Python LSP: use LSP tooling (definitions, references, rename, symbol-aware replaces)
+  for navigating and editing Python code, not plain text search.
 - Tests: `uv run pytest` — must pass **offline** (no Postgres, no network). DB-dependent
   tests are marked `integration` and skipped by default.
 - Lint: `uv run ruff check src tests`.
@@ -62,6 +65,11 @@ done). `ROADMAP.md` is historical. Read the current phase in `PLAN.md` before st
 
 - Never commit `.env`, real keys, or model weights. Secrets come from env at startup; a
   missing `MASTER_KEY` must abort startup.
+- **API keys for model providers are stored encrypted in the database** (via
+  `src/tools/crypto.py`, keyed by `MASTER_KEY`) — this is a design requirement, not a
+  preference. Plaintext keys in DB columns, migrations, env files, or logs are a violation.
+  Keys are decrypted only in memory when constructing a provider client and are never
+  returned by API routes or logged.
 - Do not add dependencies without checking they support Python 3.14 and justify them in the
   PR. The app must run with **no** model provider reachable (degrade with clear errors,
   never crash-loop).

@@ -10,6 +10,7 @@ from ..llm_provider.repository import ModelRepository, get_repository
 from ..llm_provider.selection import ResolvedModel, SelectionError
 from .base import IEmbedder
 from .providers.ollama import OllamaEmbedder
+from .providers.openai_compatible import OpenAICompatibleEmbedder
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ class EmbeddingFactory:
 
     REGISTRY: dict[str, type] = {
         "ollama": OllamaEmbedder,
+        "openai": OpenAICompatibleEmbedder,
     }
 
     def create_embedder(self, resolved: ResolvedModel) -> IEmbedder:
@@ -46,6 +48,34 @@ class EmbeddingFactory:
                 batch_size=int(resolved.default_params.get("batch_size", 16)),
                 timeout=float(resolved.default_params.get("timeout", 60.0)),
                 api_key=resolved.api_key,
+            )
+
+        if resolved.provider_type == "openai":
+            if not resolved.base_url:
+                raise ValueError(
+                    "OpenAI-compatible embedding entries need a provider "
+                    "base_url."
+                )
+            if not resolved.api_key:
+                raise ValueError(
+                    "OpenAI-compatible embedding entries need a provider API key."
+                )
+            if not resolved.vector_dims:
+                raise ValueError(
+                    f"Embedding entry '{resolved.model_name}' has no vector_dims "
+                    "set; entries must declare it."
+                )
+            return OpenAICompatibleEmbedder(
+                base_url=resolved.base_url,
+                model_name=resolved.model_name,
+                dims=resolved.vector_dims,
+                api_key=resolved.api_key,
+                batch_size=int(resolved.default_params.get("batch_size", 16)),
+                timeout=float(resolved.default_params.get("timeout", 60.0)),
+                max_concurrency=int(
+                    resolved.default_params.get("max_concurrency", 2)
+                ),
+                max_retries=int(resolved.default_params.get("max_retries", 4)),
             )
 
         raise ValueError(

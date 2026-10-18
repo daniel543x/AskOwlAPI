@@ -458,6 +458,12 @@ class ModelRepository:
             )
 
         await self.session.commit()
+        # The commit above expired the provider instances; refresh them
+        # explicitly so callers (e.g. GET /health/models building response
+        # models) never trigger a lazy refresh, which raises MissingGreenlet
+        # in async context.
+        for provider in providers:
+            await self.session.refresh(provider)
         return providers
 
     # <----- Bootstrap ----->
@@ -593,7 +599,11 @@ class ModelRepository:
         existing = await self.session.get(DefaultSettings, key)
         if existing is None:
             self.session.add(DefaultSettings(key=key, value=str(model_id)))
-            await self.session.commit()
+            # Flush, do not commit: a commit would expire the ORM instances the
+            # callers keep using (e.g. `provider` in `_maybe_seed_ollama`) and
+            # their lazy refresh would raise MissingGreenlet in async context.
+            # `bootstrap` commits everything once seeding is done.
+            await self.session.flush()
 
 
 # Dependency
