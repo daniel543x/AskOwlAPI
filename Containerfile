@@ -1,5 +1,7 @@
 # AskOwl API container: uv-managed deps, migrations baked in.
-FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
+# Multi-stage: the venv and uv wheel cache stay in the builder; the final
+# image carries only the runtime files (no cache, no chown duplication).
+FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim AS builder
 
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1
@@ -10,14 +12,23 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
-# Application code, migrations, and the alembic config (startup runs them).
+# Application code and the alembic config (startup runs them).
 COPY src ./src
 COPY migrations ./migrations
 COPY alembic.ini main.py ./
 
+FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
+
+ENV UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1
+
+WORKDIR /app
+
 # Run as an unprivileged user (needs a writable home for uv's cache).
-RUN groupadd --system askowl && useradd --system --create-home --gid askowl askowl \
-    && chown -R askowl:askowl /app
+RUN groupadd --system askowl && useradd --system --create-home --gid askowl askowl
+
+COPY --from=builder --chown=askowl:askowl /app /app
+
 USER askowl
 
 EXPOSE 3000
