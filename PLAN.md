@@ -124,6 +124,12 @@ Defects (fix in Phase 0 unless noted):
   gate, and the admin create/update API rejects unknown names up front. Full access-matrix
   unit tests plus an invariant test asserting every seeded role has a hierarchy entry;
   `docs/api/models.md` role wording updated.
+- Report tail (2026-10-26, `ref/` findings F-01 and F-04): the remaining regression test
+  the session-expiry class needs now exists — search runs with a stub embedder that
+  really stores chunks (mid-request commit on the shared session) and the turn still
+  persists with JSON 200 — and the test harness is hermetic: conftest pins
+  `LOG_LEVEL`/`DEBUG` before importing src with a canary asserting the singleton, so
+  the developer shell or local `.env` can no longer flip pipeline behavior under test.
 
 ---
 
