@@ -493,8 +493,11 @@ is noted; each PR is one branch.
       `recency_bias` request param (ceiling `RECENCY_BIAS_MAX`, boost re-orders
       after rank_chunks), `chunk.conversation_id` + scoped vector candidates +
       `scope` request param (**ships `"global"`**; flip to `"conversation"` is an
-      open decision), HNSW ANN index (migration `e5a91c3f47bd`), boot-time chunk
-      eviction (`CHUNK_TTL_DAYS=30`).
+      open decision), boot-time chunk eviction (`CHUNK_TTL_DAYS=30`).
+      *Audit note (2026-10-26): the AR-8 HNSW index is deferred — pgvector
+      requires fixed column dimensions for HNSW/IVFFlat, but
+      `chunk.embedding` is intentionally untyped (multi-embedder, decision
+      #1). Revisit with a dims-per-column decision when the store grows.*
 - [ ] PR 7 `wu/hybrid` (WU-4): lexical + vector RRF fusion behind `hybrid_alpha`
       (default 1.0 until measured).
 - [ ] PR 8 `wu/modes` (WU-12): mode presets — deferred until a UI client asks.
