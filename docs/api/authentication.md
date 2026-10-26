@@ -7,15 +7,30 @@ AskOwl supports two authentication schemes on the same routes:
 | JWT (login session) | `Authorization: Bearer <token>` | interactive clients |
 | API key | `X-API-Key: <key>` | other backends, scripts |
 
-## JWT
+## JWT (login sessions)
 
 1. `POST /auth/login` with `{"username_or_email", "password"}` →
-   `{"access_token", "token_type": "bearer"}` (expires in
-   `ACCESS_TOKEN_EXPIRE_MINUTES`, default 30).
+   `{"access_token", "token_type": "bearer", "refresh_token"}` (access
+   token expires in `ACCESS_TOKEN_EXPIRE_MINUTES`, default 360 = 6 hours).
 2. Send `Authorization: Bearer <access_token>`.
+3. When it expires, `POST /auth/refresh` with
+   `{"refresh_token": "..."}` → a fresh pair. The refresh token is
+   **single-use**: every call retires the presented token and mints a new
+   one — always store the latest token from the response.
+4. `POST /auth/logout` with `{"refresh_token": "..."}` revokes the session
+   (idempotent, always 204).
 
 Login fails (401) for unknown credentials **and for blocked accounts**;
 blocked users also fail JWT validation (403) everywhere.
+
+Refresh-token rules (design: docs/architecture/auth.md):
+
+- Hash-only server-side storage; the raw token is shown exactly once at
+  login/refresh and never again.
+- Replaying an already-rotated or revoked token is treated as theft: the
+  whole rotation chain is revoked and every refresh in it returns 401.
+- Sessions live `REFRESH_TOKEN_EXPIRE_DAYS` (default 90) from the last
+  refresh; password change or admin block revokes all sessions immediately.
 
 ## API keys (design: docs/architecture/api_keys.md)
 
@@ -49,7 +64,9 @@ scope (`search` / `research` / `agent`); JWT sessions bypass scope checks.
 | Route | Auth | Notes |
 |---|---|---|
 | `GET /healthy` | none | Liveness probe; returns `{"status", "version"}`. |
-| `POST /auth/login` | none | Returns the JWT. |
+| `POST /auth/login` | none | Returns access + refresh token. |
+| `POST /auth/refresh` | none (refresh token is the credential) | Single-use rotation. |
+| `POST /auth/logout` | none (refresh token is the credential) | Idempotent 204. |
 | `POST /user` | none | Registration. |
 | `GET /user/{id}`, `GET /user/nn/{nickname}`, `PATCH /user/{id}`, `DELETE /user/{id}` | **none (known gap)** | No auth dependency is wired today; treat as insecure until fixed — tracked in PLAN §1 audit. |
 | `GET /auth/users/me` | user | |

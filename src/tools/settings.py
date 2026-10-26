@@ -23,7 +23,17 @@ class Settings(BaseSettings):
         description="Fernet key used for secret encryption. Required, no fallback."
     )
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    # 6 hours; sessions outlive this via refresh tokens (PLAN Phase 8).
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 360
+
+    # <----- Refresh-token sessions (PLAN Phase 8) ----->
+    # Single-use rotation: a session lives this long while it keeps being
+    # refreshed; abandoned sessions die with their last token.
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 90
+    # Superseded (rotated/expired/revoked) rows are kept this long for
+    # reuse-detection evidence and audit, then purged by a startup/lifespan
+    # sweep — keeps the table small without losing forensic history.
+    REFRESH_TOKEN_RETENTION_DAYS: int = 30
 
     # <----- Logging ----->
     LOG_LEVEL: str = "INFO"
