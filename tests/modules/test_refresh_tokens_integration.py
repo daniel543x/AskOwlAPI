@@ -156,9 +156,15 @@ async def test_password_change_revokes_live_sessions(client, db_session):
     user = await make_user(db_session)
     tokens = await login(client, user)
 
+    from src.modules.identity.auth.service import create_access_token
+
     change = await client.patch(
         f"/user/{user.id}",
         json={"password": "An0therSecret!pass"},
+        headers={
+            "Authorization": "Bearer "
+            + create_access_token({"sub": str(user.id)})
+        },
     )
     assert change.status_code == 200, change.text
     assert (await refresh(client, tokens["refresh_token"])).status_code == 401

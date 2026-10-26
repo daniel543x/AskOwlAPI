@@ -402,3 +402,74 @@ async def test_delete_conversation(auth_client, db_session):
     assert (
         await auth_client.get(f"/history/{conversation_id}", headers=bearer(token))
     ).status_code == 404
+
+
+# <----- /user routes: self-or-admin visibility (PLAN §1 audit fix) ----->
+
+
+@pytest.mark.asyncio
+async def test_user_routes_reject_anonymous(auth_client, db_session):
+    user, _ = await make_user(db_session)
+
+    assert (await auth_client.get(f"/user/{user.id}")).status_code == 401
+    assert (await auth_client.get(f"/user/nn/{user.nickname}")).status_code == 401
+    patch = await auth_client.patch(f"/user/{user.id}", json={"nickname": "nope"})
+    assert patch.status_code == 401
+    assert (await auth_client.delete(f"/user/{user.id}")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_foreign_users_are_hidden_not_forbidden(auth_client, db_session):
+    _, owner_token = await make_user(db_session)
+    other, _ = await make_user(db_session)
+
+    read = await auth_client.get(f"/user/{other.id}", headers=bearer(owner_token))
+    assert read.status_code == 404
+    by_nick = await auth_client.get(
+        f"/user/nn/{other.nickname}", headers=bearer(owner_token)
+    )
+    assert by_nick.status_code == 404
+    patch = await auth_client.patch(
+        f"/user/{other.id}",
+        json={"nickname": "stolen"},
+        headers=bearer(owner_token),
+    )
+    assert patch.status_code == 404
+    deleted = await auth_client.delete(
+        f"/user/{other.id}", headers=bearer(owner_token)
+    )
+    assert deleted.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_self_can_read_and_update_own_profile(auth_client, db_session):
+    user, token = await make_user(db_session)
+    headers = bearer(token)
+
+    me = await auth_client.get(f"/user/{user.id}", headers=headers)
+    assert me.status_code == 200
+    assert me.json()["id"] == str(user.id)
+
+    by_nick = await auth_client.get(f"/user/nn/{user.nickname}", headers=headers)
+    assert by_nick.status_code == 200
+
+    renamed = await auth_client.patch(
+        f"/user/{user.id}",
+        json={"nickname": user.nickname},
+        headers=headers,
+    )
+    assert renamed.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_admin_can_manage_other_users(auth_client, db_session):
+    _, admin_token = await make_user(db_session, role_name="admin")
+    other, _ = await make_user(db_session)
+
+    read = await auth_client.get(f"/user/{other.id}", headers=bearer(admin_token))
+    assert read.status_code == 200
+
+    deleted = await auth_client.delete(
+        f"/user/{other.id}", headers=bearer(admin_token)
+    )
+    assert deleted.status_code == 204
