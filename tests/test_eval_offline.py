@@ -62,11 +62,11 @@ class InMemoryChunkRepo:
     async def existing_hashes(self, hashes):
         return set()
 
-    async def store_chunks(self, chunks, embeddings):
+    async def store_chunks(self, chunks, embeddings, conversation_id=None):
         self.stored.extend(zip(chunks, embeddings, strict=True))
         return len(chunks)
 
-    async def vector_candidates(self, query_embedding, k):
+    async def vector_candidates(self, query_embedding, k, conversation_id=None):
         def cosine(a, b):
             dot = sum(x * y for x, y in zip(a, b, strict=True))
             return dot  # vectors are normalized

@@ -93,7 +93,10 @@ async def test_get_context_falls_back_when_vector_retrieval_fails():
 
     class ExplodingRepo:
         async def store_chunks(
-            self, chunks: list[dict[str, Any]], embeddings: list[list[float]]
+            self,
+            chunks: list[dict[str, Any]],
+            embeddings: list[list[float]],
+            conversation_id=None,
         ) -> int:
             return 0
 
@@ -101,7 +104,7 @@ async def test_get_context_falls_back_when_vector_retrieval_fails():
             return set()
 
         async def vector_candidates(
-            self, query_embedding: list[float], k: int
+            self, query_embedding: list[float], k: int, conversation_id=None
         ) -> list[dict[str, Any]]:
             raise RuntimeError("pgvector unavailable")
 

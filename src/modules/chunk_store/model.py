@@ -23,6 +23,9 @@ class Chunk(SQLModel, table=True):
     embedding: list[float] | None = Field(default=None, sa_column=Column(Vector()))
     source_url: str = Field(index=True)
     content_hash: str = Field(index=True, unique=True)
+    # Conversation scope (WU-5 / AR-8): NULL = legacy unscoped rows, which
+    # stay retrievable from every conversation (cross-query accumulation).
+    conversation_id: uuid.UUID | None = Field(default=None, index=True)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_type=DateTime(timezone=True),

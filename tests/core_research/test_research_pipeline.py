@@ -376,3 +376,16 @@ async def test_compression_on_replaces_contexts_with_briefs(monkeypatch):
     assert result["gathered"][0]["context"] == "Brief: 80.0% adoption."
     assert "first paragraph" not in result["gathered"][0]["context"]
     assert result["rounds_used"] == 0
+
+
+# <----- Current date in research prompts (AR-7 task 1) ----->
+
+
+@pytest.mark.asyncio
+async def test_research_prompts_carry_the_current_date():
+    model = research_model(subquestions=["sq one"])
+    await collect_research(model, today="2020-01-01")
+
+    # Planner (call 0) and synthesis (last call) both carry the date line.
+    assert model.calls[0][0].startswith("Current date: 2020-01-01.")
+    assert model.calls[-1][0].startswith("Current date: 2020-01-01.")
