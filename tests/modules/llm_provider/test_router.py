@@ -63,8 +63,8 @@ class FakeRepo:
     def __init__(self):
         self.provider = FakeProvider(id=uuid.uuid4())
         self.chat_entry = FakeEntry(id=uuid.uuid4(), provider_id=self.provider.id)
-        self.pro_entry = FakeEntry(
-            id=uuid.uuid4(), provider_id=self.provider.id, required_role="pro"
+        self.gated_entry = FakeEntry(
+            id=uuid.uuid4(), provider_id=self.provider.id, required_role="research"
         )
         self.embedding_entry = FakeEntry(
             id=uuid.uuid4(),
@@ -83,14 +83,14 @@ class FakeRepo:
     async def get_available_models(self, user_roles, kind=None):
         everything = [
             (self.chat_entry, self.provider),
-            (self.pro_entry, self.provider),
+            (self.gated_entry, self.provider),
             (self.embedding_entry, self.provider),
         ]
         out = []
         for entry, provider in everything:
             if kind and entry.kind != kind:
                 continue
-            if entry.required_role == "pro" and "admin" not in user_roles:
+            if entry.required_role != "user" and "admin" not in user_roles:
                 continue
             out.append((entry, provider))
         return out
@@ -102,9 +102,9 @@ class FakeRepo:
         ]
 
     async def set_user_preference(self, user_id, model_id, user_roles):
-        if model_id == self.pro_entry.id:
+        if model_id == self.gated_entry.id:
             raise SelectionError(
-                f"Model {model_id} requires role 'pro'.", tier="permission"
+                f"Model {model_id} requires role 'research'.", tier="permission"
             )
         if model_id == uuid.UUID("00000000-0000-0000-0000-00000000dead"):
             raise SelectionError(f"Model {model_id} not found or not active.")
@@ -151,7 +151,7 @@ class FakeRepo:
         )
 
     async def list_models(self, kind=None):
-        entries = [self.chat_entry, self.pro_entry, self.embedding_entry]
+        entries = [self.chat_entry, self.gated_entry, self.embedding_entry]
         return [e for e in entries if not kind or e.kind == kind]
 
     async def update_model(self, model_id, data: ModelEntryUpdate):
@@ -236,7 +236,7 @@ async def test_set_preference_happy_path(client):
 
 async def test_set_preference_role_denied(client):
     ac, repo = client
-    response = await ac.put(f"/models/{repo.pro_entry.id}/preference")
+    response = await ac.put(f"/models/{repo.gated_entry.id}/preference")
     assert response.status_code == 403
 
 

@@ -11,7 +11,12 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-ROLE_HIERARCHY = {"user": 0, "pro": 1, "admin": 2}
+ROLE_HIERARCHY = {"user": 0, "research": 1, "admin": 2}
+
+# The seeded role was renamed to `research` (PLAN decision #4; the data
+# migration renames role rows, not catalog strings), so legacy catalog
+# rows may still carry the pre-rename name. It keeps its slot.
+_LEGACY_ROLE_ALIASES = {"pro": "research"}
 
 # Tiers in resolution order, used for error reporting.
 TIER_REQUEST = "request"
@@ -68,11 +73,34 @@ class CatalogView:
     defaults: dict[str, uuid.UUID] = field(default_factory=dict)
 
 
+def _role_level(role: str) -> int | None:
+    """Level of a named role; None for unknown names."""
+    name = _LEGACY_ROLE_ALIASES.get(role, role)
+    return ROLE_HIERARCHY.get(name)
+
+
 def has_role_access(user_roles: list[str], required_role: str) -> bool:
-    max_user_level = max(
-        (ROLE_HIERARCHY.get(role, 0) for role in user_roles), default=0
+    """Max-level gate with least-privilege defaults.
+
+    An empty or whitespace-only `required_role` gates nothing; an unknown
+    role name denies everyone (a typo in the catalog must not silently
+    open the gate), and unknown names in a user's role set contribute
+    nothing to their level.
+    """
+    if not required_role.strip():
+        return True
+    required_level = _role_level(required_role)
+    if required_level is None:
+        return False
+    user_level = max(
+        (
+            level
+            for role in user_roles
+            if (level := _role_level(role)) is not None
+        ),
+        default=0,
     )
-    return max_user_level >= ROLE_HIERARCHY.get(required_role, 0)
+    return user_level >= required_level
 
 
 def _check_model(

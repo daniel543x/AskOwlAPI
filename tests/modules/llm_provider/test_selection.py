@@ -157,4 +157,6 @@ def test_has_role_access_hierarchy():
     assert has_role_access(["pro"], "user")
     assert has_role_access(["user", "admin"], "pro")
     assert has_role_access([], "user")
-    assert has_role_access(["user"], "unknown-role")
+    # Unknown role names now deny (F-03 least-privilege default); a user
+    # carrying unknown names still passes plain entries (level defaults 0).
+    assert not has_role_access(["user"], "unknown-role")
