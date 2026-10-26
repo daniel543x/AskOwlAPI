@@ -1,11 +1,17 @@
 # Ask Search API — SSE Protocol
 
-Applies to `POST /ask/search` (body: `{"query", "stream", "conversation_id", "max_urls"}`).
+Applies to `POST /ask/search` (body: `{"query", "stream", "conversation_id", "max_urls", "query_variations", "cache"}`).
 The JSON mode (`stream=false`) returns the same data as one document (see
 below). POST because a turn persists conversation history; model-selection
 params (`model_id`, `embedder_id`, `reranker_id`) stay on the query string.
 `max_urls` (int, optional, `>= 1`) caps the URLs selected for this turn;
 omitted = the `TOP_N_URLS` default, clamped server-side to `TOP_N_URLS_MAX`.
+`query_variations` (int, optional, `>= 1`, default 1) fans out rule-based
+query variants (WU-2) that merge into one ranked pool; clamped server-side
+to `QUERY_VARIATIONS_MAX`.
+`cache` (`"on"` | `"bypass"`, default `"on"`) — `"bypass"` forces fresh
+search + scrape for this turn (evals, admin debugging); a cache hit is
+otherwise invisible except latency.
 
 Current protocol version: **v2** (breaking; there are no external consumers yet).
 Changelog at the bottom.
@@ -133,6 +139,16 @@ The LLM is never used without a tool call:
   (HTTP 422 with an explanation).
 
 ## Changelog
+
+### v2.4 (2026-10-26, WU-10 + WU-2 — additive)
+
+- Added: request body fields `query_variations` (rule-based fan-out,
+  default 1 = today's behavior) and `cache` (`"on"` default; `"bypass"`
+  forces fresh search + scrape for the turn).
+- Behavior: identical (query, engines) search calls within
+  `SEARCH_CACHE_TTL_S` are memoized in-process, and scraped pages are
+  cached Postgres-side for `PAGE_CACHE_TTL_S`; both are invisible to the
+  protocol except latency. Empty results are never cached.
 
 ### v2.3 (2026-10-26, AR-2 / WU-3 + WU-6 — additive)
 

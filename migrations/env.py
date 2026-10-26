@@ -25,7 +25,7 @@ from src.modules.llm_provider.model import (  # noqa: F401
     UserModelPreference,
 )
 from src.modules.personas.model import Persona  # noqa: F401
-from src.modules.scrapy.model import ScrapySettings  # noqa: F401
+from src.modules.scrapy.model import ScrapedPage, ScrapySettings  # noqa: F401
 from src.modules.search_engine.model import SearchProviderConfig  # noqa: F401
 from src.tools.db import SQLModel, build_database_url
 

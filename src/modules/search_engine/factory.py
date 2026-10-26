@@ -1,4 +1,6 @@
+import hashlib
 import inspect
+import json
 import logging
 from typing import Any
 
@@ -7,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from ...tools.db import get_session
+from ...tools.settings import settings
+from .caching import CachedSearchProvider
 from .model import SearchProviderConfig
 from .providers.base import ISearchProvider
 from .providers.searxng import SearXNGProvider
@@ -45,6 +49,16 @@ class SearchProviderFactory:
         "searxng": SearXNGProvider,
     }
 
+    # One shared CachedSearchProvider per provider configuration, so the
+    # cache outlives per-request provider construction (WU-10).
+    _cache_wrappers: dict[str, CachedSearchProvider] = {}
+
+    @classmethod
+    def _cache_key(cls, provider_type: str, settings_to_apply: dict[str, Any]) -> str:
+        blob = json.dumps(settings_to_apply, sort_keys=True, default=str)
+        digest = hashlib.sha256(blob.encode()).hexdigest()[:16]
+        return f"{provider_type}:{digest}"
+
     @classmethod
     def register_provider(cls, name: str, provider_class: type[ISearchProvider]):
         cls._providers[name] = provider_class
@@ -56,6 +70,37 @@ class SearchProviderFactory:
         """Get the default search provider based on database configuration."""
         provider = await cls.create_provider(session)
         return provider, type(provider).__name__
+
+    @classmethod
+    def _provider_for(
+        cls, provider_type: str, settings_to_apply: dict[str, Any]
+    ) -> ISearchProvider:
+        """Constructed provider for one configuration, cache-decorated.
+
+        The factory runs per request, so the wrapper (and its inner
+        provider) must live in a module-level registry keyed by the config
+        blob — otherwise the cache would silently reset every request.
+        """
+        if not settings.SEARCH_CACHE:
+            provider_cls = cls._providers[provider_type]
+            return provider_cls(
+                **filter_provider_kwargs(provider_cls, settings_to_apply)
+            )
+
+        key = cls._cache_key(provider_type, settings_to_apply)
+        wrapper = cls._cache_wrappers.get(key)
+        if wrapper is None:
+            provider_cls = cls._providers[provider_type]
+            provider: ISearchProvider = provider_cls(
+                **filter_provider_kwargs(provider_cls, settings_to_apply)
+            )
+            wrapper = CachedSearchProvider(
+                provider,
+                ttl_seconds=settings.SEARCH_CACHE_TTL_S,
+                max_entries=settings.SEARCH_CACHE_MAX_ENTRIES,
+            )
+            cls._cache_wrappers[key] = wrapper
+        return wrapper
 
     @classmethod
     async def create_provider(
@@ -98,9 +143,7 @@ class SearchProviderFactory:
         if provider_type not in cls._providers:
             raise ValueError(f"Unsupported provider type: {provider_type}")
 
-        provider_cls = cls._providers[provider_type]
-
-        return provider_cls(**filter_provider_kwargs(provider_cls, settings_to_apply))
+        return cls._provider_for(provider_type, settings_to_apply)
 
 
 # Dependency

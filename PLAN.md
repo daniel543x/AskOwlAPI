@@ -459,8 +459,13 @@ is noted; each PR is one branch.
       normalized URL + fusion tie-break (`src/modules/search_engine/fusion.py`),
       `max_urls` request cap (`TOP_N_URLS_MAX`), `URL_SELECTION_MIN_FUSION` floor
       (default off), `debug` event carries `dropped_results`/`merged_results`.
-- [ ] PR 2 `wu/cache` (WU-10 + WU-2 / AR-1): search-result TTL cache, Postgres page
-      cache, embed-skip, rule-based `query_variations`.
+- [x] PR 2 `wu/cache` (WU-10 + WU-2 / AR-1): search-result TTL cache (one shared
+      instance per provider config in the factory), Postgres `scraped_page` page
+      cache (migration `b7e4d29c81af`) wrapped in the scraper factory, embed-skip
+      (`ChunkRepository.existing_hashes`), rule-based `query_variations`, and the
+      `cache: "on" | "bypass"` request param. Defaults reproduce today's pipeline;
+      a cache hit is invisible except latency. *Stacked on PR 1 (shares
+      `normalize_url` keys and the dedup merge).*
 - [ ] PR 3 `wu/citations` (WU-9 / AR-5 + AR-9): numbered `[n]` citations + validator +
       offline fixture eval in CI.
 - [ ] PR 4 `wu/rewrite` (WU-1 / AR-4): history-aware standalone rewriting

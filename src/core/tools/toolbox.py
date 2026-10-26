@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
+from ...modules.chunk_store.model import chunk_hash
 from ...modules.decision.base import IDecisionMaker
 from ...modules.owl_reranker.base import IRanker
 from ...modules.scrapy.providers.base import IScraper
@@ -47,6 +48,8 @@ class ChunkStoreLike(Protocol):
     async def store_chunks(
         self, chunks: list[dict[str, Any]], embeddings: list[list[float]]
     ) -> int: ...
+
+    async def existing_hashes(self, hashes: list[str]) -> set[str]: ...
 
     async def vector_candidates(
         self, query_embedding: list[float], k: int
@@ -122,7 +125,25 @@ class AskToolbox:
         self.raw_results = await self.searching.search(
             query, engines=self.allowed_engines
         )
+        return await self._rank_results(query)
 
+    async def web_search_many(self, queries: list[str]) -> str:
+        """Fan out query variants (WU-2) and rank the merged pool.
+
+        The variants run against the provider unchanged; the AR-2 merge
+        collapses the duplicates so ranking cost does not multiply. The
+        first query is the primary one (sanity filter + ranking use it).
+        """
+        results: list = []
+        for query in queries:
+            results.extend(
+                await self.searching.search(query, engines=self.allowed_engines)
+            )
+        self.raw_results = results
+        return await self._rank_results(queries[0])
+
+    async def _rank_results(self, query: str) -> str:
+        """Sanity, dedup+fusion, floor, and ranking over `raw_results`."""
         if self.allowed_domains:
             self.raw_results = self._filter_domains(self.raw_results)
 
@@ -249,12 +270,56 @@ class AskToolbox:
         return "\n\n---\n\n".join(previews) if previews else "No content extracted."
 
     async def _embed_and_store(self) -> None:
+        """Embed and persist chunks, skipping already-stored ones (WU-10).
+
+        The hash is computed exactly like `ChunkRepository.store_chunks`, so
+        a re-visit of the same page re-embeds nothing.
+        """
         assert self.embedder and self.chunk_repo
+
+        def _hashes(chunks: list[dict[str, Any]]) -> list[str]:
+            return [
+                chunk_hash(
+                    (chunk.get("metadata") or {}).get("url", "")
+                    or chunk.get("url", ""),
+                    chunk["content"],
+                )
+                for chunk in chunks
+            ]
+
+        try:
+            existing = await self.chunk_repo.existing_hashes(
+                _hashes(self.chunks)
+            )
+        except Exception:
+            # Skip-check failure must not skip the store entirely; fall
+            # through and let store_chunks' own conflict handling dedupe.
+            logger.warning(
+                "Embed-skip hash lookup failed; embedding all chunks.",
+                exc_info=True,
+            )
+            existing = set()
+
+        todo = [
+            chunk
+            for chunk, digest in zip(
+                self.chunks, _hashes(self.chunks), strict=True
+            )
+            if digest not in existing
+        ]
+        if not todo:
+            logger.debug("Embed-skip: all %d chunks already stored.", len(self.chunks))
+            return
+
         embeddings = await self.embedder.embed_texts(
-            [chunk["content"] for chunk in self.chunks]
+            [chunk["content"] for chunk in todo]
         )
-        inserted = await self.chunk_repo.store_chunks(self.chunks, embeddings)
-        logger.debug("Stored %d new chunks in the vector store.", inserted)
+        inserted = await self.chunk_repo.store_chunks(todo, embeddings)
+        logger.debug(
+            "Stored %d new chunks in the vector store (%d skipped).",
+            inserted,
+            len(self.chunks) - len(todo),
+        )
 
     async def get_context(self, query: str) -> str:
         """Select the context chunks for the query.

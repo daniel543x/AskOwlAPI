@@ -8,6 +8,7 @@ over POST.
 """
 
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -54,6 +55,22 @@ class SearchRequest(BaseModel):
             "TOP_N_URLS default; clamped server-side to TOP_N_URLS_MAX."
         ),
     )
+    query_variations: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Rule-based query fan-out for this turn (WU-2). Variants run "
+            "against the search provider and merge into one ranked pool; "
+            "clamped server-side to QUERY_VARIATIONS_MAX."
+        ),
+    )
+    cache: Literal["on", "bypass"] = Field(
+        default="on",
+        description=(
+            '"bypass" forces fresh search + scrape for this turn (WU-10), '
+            "e.g. for evals or admin debugging."
+        ),
+    )
 
 
 @router.post("/search", dependencies=[Depends(require_scope("search"))])
@@ -82,6 +99,8 @@ async def ask_search(
                 conversation_id=request.conversation_id,
                 decision_maker=decision_maker,
                 max_urls=request.max_urls,
+                query_variations=request.query_variations,
+                cache=request.cache,
             ),
             media_type="text/event-stream",
         )
@@ -98,5 +117,7 @@ async def ask_search(
         conversation_id=request.conversation_id,
         decision_maker=decision_maker,
         max_urls=request.max_urls,
+        query_variations=request.query_variations,
+        cache=request.cache,
     )
     return {"answer": answer}

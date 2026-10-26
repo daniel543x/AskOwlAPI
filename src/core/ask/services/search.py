@@ -9,7 +9,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from typing import Any
 
 from fastapi import HTTPException
@@ -22,6 +22,7 @@ from ....modules.history.repository import HistoryRepository
 from ....modules.owl_reranker.base import IRanker
 from ....modules.scrapy.providers.base import IScraper
 from ....modules.search_engine.providers.base import ISearchProvider
+from ....tools.cache_flags import cache_bypass
 from ....tools.settings import settings
 from ...tools.pre_scores import choose_query, grounding_confidence
 from ...tools.toolbox import AskToolbox
@@ -31,6 +32,7 @@ from .llm_steps import (
     rewrite_query,
     stream_cited_answer,
 )
+from .variations import generate_variations
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +71,7 @@ async def search_logic(
     session=None,
     decision_maker=None,
     max_urls: int | None = None,
+    query_variations: int = 1,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the search pipeline, yielding (event, payload) pairs.
 
@@ -106,10 +109,18 @@ async def search_logic(
                 "used_tool_call": used_tool_call,
             }
 
-        # <----- Web search + ranking ----->
+        # <----- Web search + ranking (optional rule-based fan-out, WU-2) ----->
+        variation_count = max(1, min(query_variations, settings.QUERY_VARIATIONS_MAX))
+        queries = generate_variations(optimized_query, variation_count)
         yield "status", {"step": "Searching URLs..."}
         async with _stage("web_search"):
-            await toolbox.web_search(optimized_query)
+            if len(queries) > 1:
+                yield "status", {
+                    "step": f"Searching {len(queries)} query variants..."
+                }
+                await toolbox.web_search_many(queries)
+            else:
+                await toolbox.web_search(optimized_query)
 
         if not toolbox.ranked_sources:
             yield "error", {"error": "No search results found."}
@@ -219,6 +230,8 @@ async def search_sse_adapter(
     conversation_id=None,
     decision_maker=None,
     max_urls: int | None = None,
+    query_variations: int = 1,
+    cache: str = "on",
 ) -> AsyncGenerator[str]:
     """Translate pipeline events into an SSE stream (protocol v2).
 
@@ -249,45 +262,49 @@ async def search_sse_adapter(
             {"conversation_id": str(conversation.id), "created": created},
         )
 
-    pipeline = search_logic(
-        query, searching, model, scraper, ranker, embedder=embedder,
-        session=session, decision_maker=decision_maker, max_urls=max_urls,
-    )
-    async for event, data in pipeline:
-        if event == "answer_ready":
-            yield frame("status", {"step": "Generating answer..."})
+    bypass = cache == "bypass"
+    with cache_bypass() if bypass else nullcontext():
+        async for event, data in search_logic(
+            query, searching, model, scraper, ranker, embedder=embedder,
+            session=session, decision_maker=decision_maker, max_urls=max_urls,
+            query_variations=query_variations,
+        ):
+            if event == "answer_ready":
+                yield frame("status", {"step": "Generating answer..."})
 
-            answer_parts: list[str] = []
-            try:
-                async for delta in _stream_answer_frames(
-                    data["query"], data["context"], model, history
-                ):
-                    answer_parts.append(delta)
-                    yield frame("message", {"text": delta})
+                answer_parts: list[str] = []
+                try:
+                    async for delta in _stream_answer_frames(
+                        data["query"], data["context"], model, history
+                    ):
+                        answer_parts.append(delta)
+                        yield frame("message", {"text": delta})
 
-                answer_text = "".join(answer_parts)
-                await _save_turn(session, conversation, data["query"], answer_text)
+                    answer_text = "".join(answer_parts)
+                    await _save_turn(session, conversation, data["query"], answer_text)
 
-                if settings.PRE_SCORE_GROUNDING_CHECK and decision_maker:
-                    supported = await grounding_confidence(
-                        decision_maker, data["query"], data["context"], answer_text
+                    if settings.PRE_SCORE_GROUNDING_CHECK and decision_maker:
+                        supported = await grounding_confidence(
+                            decision_maker, data["query"], data["context"], answer_text
+                        )
+                        if supported is not None:
+                            yield frame("grounding", {"supported": round(supported, 4)})
+
+                    if not data["context"].strip():
+                        yield frame("done", {"status": "no_context"})
+                    else:
+                        yield frame("done", {"status": "completed"})
+                except ToolProtocolError as e:
+                    logger.exception("Answer streaming failed for query: %s", query)
+                    yield frame("error", {"error": str(e)})
+                except Exception as e:
+                    logger.exception("Answer streaming failed for query: %s", query)
+                    yield frame(
+                        "error", {"error": f"Answer generation failed: {str(e)}"}
                     )
-                    if supported is not None:
-                        yield frame("grounding", {"supported": round(supported, 4)})
-
-                if not data["context"].strip():
-                    yield frame("done", {"status": "no_context"})
-                else:
-                    yield frame("done", {"status": "completed"})
-            except ToolProtocolError as e:
-                logger.exception("Answer streaming failed for query: %s", query)
-                yield frame("error", {"error": str(e)})
-            except Exception as e:
-                logger.exception("Answer streaming failed for query: %s", query)
-                yield frame("error", {"error": f"Answer generation failed: {str(e)}"})
-            return
-        else:
-            yield frame(event, data)
+                return
+            else:
+                yield frame(event, data)
 
 
 # <----- JSON Adapter ----->
@@ -303,6 +320,8 @@ async def search_json_adapter(
     conversation_id=None,
     decision_maker=None,
     max_urls: int | None = None,
+    query_variations: int = 1,
+    cache: str = "on",
 ) -> dict[str, Any]:
     """Run the pipeline and return the full result as one JSON-ready dict.
 
@@ -318,17 +337,20 @@ async def search_json_adapter(
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
-    pipeline = search_logic(
-        query, searching, model, scraper, ranker, embedder=embedder,
-        session=session, decision_maker=decision_maker, max_urls=max_urls,
-    )
-    async for event, data in pipeline:
-        if event == "error":
-            error_detail = data.get("error", "Failed to execute search logic.")
-            break
-        if event == "answer_ready":
-            answer_data = data
-            break
+    bypass = cache == "bypass"
+    with cache_bypass() if bypass else nullcontext():
+        pipeline = search_logic(
+            query, searching, model, scraper, ranker, embedder=embedder,
+            session=session, decision_maker=decision_maker, max_urls=max_urls,
+            query_variations=query_variations,
+        )
+        async for event, data in pipeline:
+            if event == "error":
+                error_detail = data.get("error", "Failed to execute search logic.")
+                break
+            if event == "answer_ready":
+                answer_data = data
+                break
 
     if error_detail:
         raise HTTPException(status_code=500, detail=error_detail)
