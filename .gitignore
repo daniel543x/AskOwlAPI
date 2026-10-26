@@ -226,3 +226,6 @@ coverage/
 # ===== AskOwl =====
 eval_reports/
 .crushrc
+
+# ===== Local reports (task-agent output) =====
+ref/
