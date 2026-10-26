@@ -473,3 +473,50 @@ async def test_admin_can_manage_other_users(auth_client, db_session):
         f"/user/{other.id}", headers=bearer(admin_token)
     )
     assert deleted.status_code == 204
+
+
+# <----- Vector store in the pipeline: the turn must survive (report F-01) ----->
+
+
+class StoringEmbedder:
+    """Offline embedder: deterministic vectors, really engages the chunk store.
+
+    When an embedder resolves, the search pipeline stores chunks mid-request
+    (a commit on the shared session) before the answer turn is persisted —
+    the exact sequence that used to 500 the JSON request and silently drop
+    the turn.
+    """
+
+    dims = 4
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
+
+
+@pytest.mark.asyncio
+async def test_search_with_vector_store_persists_the_turn(auth_client, db_session):
+    user, token = await make_user(db_session)
+
+    # Vector store in the hot path, exactly like a deploy with an embedder.
+    app.dependency_overrides[get_optional_embedder] = lambda: StoringEmbedder()
+
+    response = await auth_client.post(
+        "/ask/search",
+        json={"query": "storable question", "stream": False},
+        headers=bearer(token),
+    )
+    assert response.status_code == 200, response.text
+    conversation_id = response.json()["answer"].get("conversation_id")
+    assert conversation_id
+
+    # The user/assistant turn was persisted despite the mid-pipeline commit.
+    listed = await auth_client.get("/history", headers=bearer(token))
+    assert listed.status_code == 200
+    listed_ids = [c["id"] for c in listed.json()]
+    assert conversation_id in listed_ids
+
+    fetched = await auth_client.get(
+        f"/history/{conversation_id}", headers=bearer(token)
+    )
+    assert fetched.status_code == 200
+    assert [m["role"] for m in fetched.json()["messages"]] == ["user", "assistant"]

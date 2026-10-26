@@ -7,6 +7,12 @@ from urllib.parse import quote_plus
 os.environ.setdefault(
     "MASTER_KEY", "s2w6bWtjpHynwD8xBHyDzICIRvJ1ioxmhP39k6iBKDI="
 )
+# Hermetic tests: the settings singleton (created below) must not inherit
+# the developer shell or the local .env. Debug mode, for instance, would
+# make the pipeline emit extra SSE events that break the documented
+# happy-path sequence a protocol test asserts.
+os.environ["LOG_LEVEL"] = "INFO"
+os.environ["DEBUG"] = "false"
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
