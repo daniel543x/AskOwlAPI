@@ -68,7 +68,7 @@ scope (`search` / `research` / `agent`); JWT sessions bypass scope checks.
 | `POST /auth/refresh` | none (refresh token is the credential) | Single-use rotation. |
 | `POST /auth/logout` | none (refresh token is the credential) | Idempotent 204. |
 | `POST /user` | none | Registration. |
-| `GET /user/{id}`, `GET /user/nn/{nickname}`, `PATCH /user/{id}`, `DELETE /user/{id}` | **none (known gap)** | No auth dependency is wired today; treat as insecure until fixed — tracked in PLAN §1 audit. |
+| `GET /user/{id}`, `GET /user/nn/{nickname}`, `PATCH /user/{id}`, `DELETE /user/{id}` | user (self) or admin | Foreign users return 404 so ids cannot be probed. |
 | `GET /auth/users/me` | user | |
 | `/personas` (all methods) | user | Own personas only. |
 | `/api-keys` (all methods) | user | Own keys only. |

@@ -4,16 +4,12 @@ All timestamps are ISO 8601 UTC strings. All ids are UUIDs.
 
 ## User management
 
-- `POST /user` — register. 201 `UserRead`, 400 on duplicate email/nickname.
-- `GET /user/{id}` — read a user (`UserRead`).
-- `GET /user/nn/{nickname}` — read a user by nickname (`UserRead`).
-- `PATCH /user/{id}` — update; 404 unknown id, 400 on duplicate fields.
-- `DELETE /user/{id}` — delete; 204, 404 unknown id.
-
-> **Known gap**: the four routes above currently have **no authentication
-> dependency wired** (see the auth matrix in
-> [authentication.md](authentication.md) and PLAN §1 audit). Do not expose
-> them publicly until fixed.
+- `POST /user` — register (open; 201 `UserRead`, 400 on duplicate email/nickname).
+- `GET /user/{id}` — read a user (`UserRead`). Self or admin; foreign users 404.
+- `GET /user/nn/{nickname}` — read a user by nickname (`UserRead`). Self or admin.
+- `PATCH /user/{id}` — update; self or admin, 404 unknown/foreign id, 400 on
+  duplicate fields.
+- `DELETE /user/{id}` — delete; self or admin, 204, 404 unknown/foreign id.
 
 ### Schemas
 

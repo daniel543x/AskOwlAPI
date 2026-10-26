@@ -98,6 +98,11 @@ Defects (fix in Phase 0 unless noted):
   anonymous caller can read, modify (including password), or delete any user by id. The docs
   mark these as a known gap; fix before any public deployment (wire `get_current_user` +
   ownership checks, or fold under `/admin` + self-service `/auth/users/me`).
+  **Fixed 2026-10-26** (`fix/user-routes-auth` branch): the four routes now require
+  `get_current_user` and enforce self-or-admin visibility — foreign targets return 404
+  (not 403) so ids cannot be probed, matching the personas convention. `POST /user`
+  stays open as registration. Covered by 4 integration tests (anonymous 401, foreign
+  404, self 200, admin 200/204); docs auth matrix + users page updated.
 
 ---
 
