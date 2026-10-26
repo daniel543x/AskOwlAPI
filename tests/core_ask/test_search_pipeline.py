@@ -55,7 +55,12 @@ async def collect_sse(**kwargs) -> list[str]:
 # <----- Protocol v2: framing and event sequence ----->
 
 
-async def test_sse_happy_path_event_sequence():
+async def test_sse_happy_path_event_sequence(monkeypatch):
+    from src.core.ask.services import search as search_module
+
+    # Debug events are conditional on settings; pin them off so the
+    # documented happy-path sequence holds regardless of the local .env.
+    monkeypatch.setattr(search_module.settings, "DEBUG", False)
     events = parse_frames(await collect_sse())
     names = [name for name, _ in events]
 
@@ -85,6 +90,7 @@ async def test_sse_frames_have_ids_framing_and_terminator():
         assert "\ndata: " in frame
         assert "da ta" not in frame
         match = SSE_FRAME_RE.match(frame)
+        assert match is not None
         ids.append(int(match.group("id")))
 
     assert ids == list(range(1, len(frames) + 1))

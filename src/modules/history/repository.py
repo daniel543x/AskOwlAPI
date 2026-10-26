@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from .model import ROLE_ASSISTANT, ROLE_USER, Conversation, Message
 
@@ -39,7 +39,7 @@ class HistoryRepository:
         statement = (
             select(Conversation)
             .where(Conversation.user_id == user_id)
-            .order_by(Conversation.created_at.desc())
+            .order_by(col(Conversation.created_at).desc())
         )
         result = await self.session.execute(statement)
         return list(result.scalars().all())
@@ -48,7 +48,7 @@ class HistoryRepository:
         statement = (
             select(Message)
             .where(Message.conversation_id == conversation_id)
-            .order_by(Message.created_at, Message.id)
+            .order_by(col(Message.created_at), col(Message.id))
         )
         result = await self.session.execute(statement)
         return list(result.scalars().all())

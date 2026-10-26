@@ -13,15 +13,13 @@ gracefully to in-memory ranking when embedding is unavailable.
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlparse
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from ...modules.chunk_store.repository import ChunkRepository
 from ...modules.decision.base import IDecisionMaker
-from ...modules.embedding.base import IEmbedder
 from ...modules.owl_reranker.base import IRanker
 from ...modules.scrapy.providers.base import IScraper
 from ...modules.search_engine.providers.base import ISearchProvider
@@ -30,6 +28,27 @@ from .chunking import chunk_markdown_data
 from .pre_scores import filter_chunks, filter_search_results
 
 logger = logging.getLogger(__name__)
+
+
+class EmbedderLike(Protocol):
+    """Embedder surface the toolbox needs; IEmbedder satisfies it."""
+
+    @property
+    def dims(self) -> int: ...
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
+
+
+class ChunkStoreLike(Protocol):
+    """Chunk-store surface the toolbox needs; ChunkRepository satisfies it."""
+
+    async def store_chunks(
+        self, chunks: list[dict[str, Any]], embeddings: list[list[float]]
+    ) -> int: ...
+
+    async def vector_candidates(
+        self, query_embedding: list[float], k: int
+    ) -> list[dict[str, Any]]: ...
 
 
 class WebSearchArgs(BaseModel):
@@ -59,8 +78,8 @@ class AskToolbox:
         searching: ISearchProvider,
         scraper: IScraper,
         ranker: IRanker,
-        embedder: IEmbedder | None = None,
-        chunk_repo: ChunkRepository | None = None,
+        embedder: EmbedderLike | None = None,
+        chunk_repo: ChunkStoreLike | None = None,
         allowed_domains: list[str] | None = None,
         allowed_engines: list[str] | None = None,
         decision_maker: IDecisionMaker | None = None,
@@ -141,7 +160,9 @@ class AskToolbox:
         if not targets:
             return "No URLs to fetch."
 
-        self.pages = await self.scraper.scrape([{"url": url} for url in targets])
+        self.pages = await self.scraper.scrape(
+            [{"url": url} for url in targets]
+        ) or []
         self.chunks = await asyncio.to_thread(
             chunk_markdown_data,
             [page for page in self.pages if page.get("content")],

@@ -105,7 +105,11 @@ async def test_sse_frames_have_ids_framing_and_terminator():
         async for frame in research_sse_adapter("query", model=model, **make_deps())
     ]
 
-    ids = [int(re.search(r"id: (\d+)", frame).group(1)) for frame in stream]
+    ids = []
+    for frame in stream:
+        match = re.search(r"id: (\d+)", frame)
+        assert match is not None
+        ids.append(int(match.group(1)))
     assert ids == sorted(ids) and ids[0] == 1
     assert all(frame.endswith("\n\n") for frame in stream)
 

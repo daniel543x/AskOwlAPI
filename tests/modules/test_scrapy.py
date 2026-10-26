@@ -34,6 +34,7 @@ async def test_scrape_extracts_content_from_all_pages(monkeypatch):
     result = await scraper.scrape(
         [{"url": "http://a.test/1"}, {"url": "http://a.test/2"}, {"url": "http://a.test/3"}]
     )
+    assert result is not None
 
     assert [item["url"] for item in result] == [
         "http://a.test/1",
@@ -55,6 +56,7 @@ async def test_scrape_returns_empty_content_on_http_error(monkeypatch):
     scraper = TrafilturaScraper()
 
     result = await scraper.scrape([{"url": "http://ok.test/1"}, {"url": "http://fail.test/x"}])
+    assert result is not None
 
     assert result[0]["content"] != ""
     assert result[1] == {"content": "", "url": "http://fail.test/x"}

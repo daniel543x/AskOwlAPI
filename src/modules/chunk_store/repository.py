@@ -1,8 +1,9 @@
 import logging
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -42,7 +43,7 @@ class ChunkRepository:
                     .on_conflict_do_nothing(index_elements=["content_hash"])
                 )
                 result = await self.session.execute(statement)
-                inserted += result.rowcount or 0
+                inserted += cast("CursorResult[Any]", result).rowcount or 0
         except SQLAlchemyError:
             # A failed statement poisons the transaction; roll back so the
             # shared session stays usable for the caller's fallback path.

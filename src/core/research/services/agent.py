@@ -16,7 +16,13 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessageChunk,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 
 from ....tools.settings import settings
 from ...tools.arg_stream import ToolArgStream
@@ -88,6 +94,8 @@ async def _run_tool(toolbox: AskToolbox, name: str, args: dict[str, Any]) -> str
     tool = tool_map.get(name)
     if tool is None:
         return json.dumps({"error": f"Unknown tool '{name}'."})
+    if tool.coroutine is None:
+        return json.dumps({"error": f"Tool '{name}' is not async-callable."})
     return await tool.coroutine(**args)
 
 
@@ -119,7 +127,7 @@ async def agent_logic(
         system = AGENT_SYSTEM
         if persona is not None:
             system += persona_system_block(persona)
-        messages: list = [
+        messages: list[BaseMessage] = [
             SystemMessage(content=system),
             HumanMessage(content=goal),
         ]
@@ -127,7 +135,7 @@ async def agent_logic(
         while not budget.exhausted and budget.iterations_left:
             response = await bound.ainvoke(messages)
             budget.spend_tokens(
-                response.content, json.dumps(response.tool_calls, default=str)
+                str(response.content), json.dumps(response.tool_calls, default=str)
             )
             tool_calls = response.tool_calls or []
 
@@ -222,6 +230,8 @@ async def _stream_forced_outcome(
             HumanMessage(content=goal),
         ]
     ):
+        if not isinstance(chunk, AIMessageChunk):
+            continue
         for tool_chunk in chunk.tool_call_chunks or []:
             name = tool_chunk.get("name") or ""
             if name and name != "SubmitOutcome":

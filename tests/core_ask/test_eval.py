@@ -228,6 +228,7 @@ async def test_evaluate_query_vector_path_uses_store():
             return ranked[:top_n] if top_n else ranked
 
         def rank_chunks(self, query, chunks=None, top_n=None):
+            chunks = chunks or []
             return chunks[:top_n] if top_n else chunks
 
     result = await evaluate_query(

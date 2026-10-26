@@ -7,6 +7,8 @@ with one setting. LLM/embedding provider clients intentionally stay
 direct: they frequently target localhost (Ollama, LAN boxes).
 """
 
+from typing import Any
+
 import httpx
 
 from .settings import settings
@@ -17,7 +19,7 @@ def outbound_proxy() -> str | None:
     return settings.PROXY_URL or None
 
 
-def make_client(**kwargs: object) -> httpx.AsyncClient:
+def make_client(**kwargs: Any) -> httpx.AsyncClient:
     """httpx.AsyncClient with the egress proxy applied when configured."""
     proxy = outbound_proxy()
     if proxy:

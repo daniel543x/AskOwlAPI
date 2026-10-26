@@ -133,7 +133,7 @@ class ScriptedToolModel(BaseChatModel):
             raise response
         return response
 
-    async def _astream(self, messages, stop=None, **kwargs):
+    async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
         self.calls.append([m.content for m in messages])
         response = self._next_response()
 

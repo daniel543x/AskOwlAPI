@@ -44,6 +44,7 @@ async def test_fetch_pages_defaults_to_ranked_sources_and_chunks():
     toolbox = make_toolbox()
     await toolbox.web_search("rust")
     scraper = toolbox.scraper
+    assert isinstance(scraper, FakeScraper)
 
     preview = await toolbox.fetch_pages()
 

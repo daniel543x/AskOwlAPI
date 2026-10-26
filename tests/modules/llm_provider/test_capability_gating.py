@@ -1,16 +1,24 @@
 import uuid
+from typing import cast
 
 import pytest
 from fastapi import HTTPException
+from langchain_core.language_models import BaseChatModel
 
+from src.modules.identity.user.model import User
 from src.modules.llm_provider.dependency import (
     MissingCapabilityError,
     ensure_capability,
     get_llm_client,
 )
 from src.modules.llm_provider.factory import ChatModelFactory
+from src.modules.llm_provider.repository import ModelRepository
 from src.modules.llm_provider.selection import ResolvedModel
 from tests.modules.llm_provider.test_router import FakeUser
+
+
+def _as_user(user: FakeUser) -> User:
+    return cast(User, cast(object, user))
 
 
 def resolved_with_capabilities(capabilities: list[str]) -> ResolvedModel:
@@ -32,7 +40,7 @@ def test_ensure_capability_raises_when_missing():
         ensure_capability(resolved_with_capabilities(["streaming"]), "tools")
 
 
-class FakeRepo:
+class FakeRepo(ModelRepository):
     def __init__(self, resolved: ResolvedModel):
         self.resolved = resolved
         self.resolved_with = None
@@ -47,9 +55,9 @@ class RecordingFactory(ChatModelFactory):
         self.created = []
         self.sentinel = object()
 
-    def create_chat_model(self, resolved):
+    def create_chat_model(self, resolved) -> BaseChatModel:
         self.created.append(resolved)
-        return self.sentinel
+        return cast(BaseChatModel, self.sentinel)
 
 
 async def test_get_llm_client_gates_on_tools_capability():
@@ -58,7 +66,7 @@ async def test_get_llm_client_gates_on_tools_capability():
     user = FakeUser(id=uuid.uuid4(), roles=[])
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_llm_client(repo=repo, factory=factory, user=user)
+        await get_llm_client(repo=repo, factory=factory, user=_as_user(user))
 
     assert exc_info.value.status_code == 422
     assert "tools" in exc_info.value.detail
@@ -71,8 +79,9 @@ async def test_get_llm_client_builds_model_when_capable():
     user = FakeUser(id=uuid.uuid4(), roles=[])
 
     model = await get_llm_client(
-        repo=repo, factory=factory, user=user, request_model_id=None
+        repo=repo, factory=factory, user=_as_user(user), request_model_id=None
     )
 
     assert model is factory.sentinel
+    assert repo.resolved_with is not None
     assert repo.resolved_with[0] == "chat"

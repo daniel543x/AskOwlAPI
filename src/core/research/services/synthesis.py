@@ -5,7 +5,12 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessageChunk,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+)
 
 from ...tools.arg_stream import ToolArgStream
 from ...tools.errors import ToolProtocolError
@@ -50,7 +55,7 @@ def _format_gathered(gathered: list[dict[str, Any]]) -> str:
     return "\n\n".join(sections)
 
 
-def _report_messages(query: str, gathered: list[dict[str, Any]]) -> list:
+def _report_messages(query: str, gathered: list[dict[str, Any]]) -> list[BaseMessage]:
     return [
         SystemMessage(
             content=REPORT_SYSTEM_TEMPLATE.format(
@@ -87,6 +92,8 @@ async def stream_report(
     extractor = ToolArgStream(key="report")
 
     async for chunk in bound.astream(_report_messages(query, gathered)):
+        if not isinstance(chunk, AIMessageChunk):
+            continue
         for tool_chunk in chunk.tool_call_chunks or []:
             name = tool_chunk.get("name") or ""
             if name and name != "ResearchReport":

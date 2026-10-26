@@ -17,13 +17,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from ....modules.chunk_store.repository import ChunkRepository
 from ....modules.decision.base import IDecisionMaker
-from ....modules.embedding.base import IEmbedder
 from ....modules.owl_reranker.base import IRanker
 from ....modules.scrapy.providers.base import IScraper
-from ....modules.search_engine.providers.base import ISearchProvider
-from ...tools.toolbox import AskToolbox
+from ....modules.search_engine.providers.base import ISearchProvider, SearchResult
+from ...tools.toolbox import AskToolbox, ChunkStoreLike, EmbedderLike
 from .metrics import mrr, recall_at_k
 
 logger = logging.getLogger(__name__)
@@ -62,7 +60,7 @@ def is_sane_result(query: str, title: str, snippet: str) -> bool:
     return bool(query_tokens & _tokens(f"{title} {snippet}"))
 
 
-class SanityFilteringProvider:
+class SanityFilteringProvider(ISearchProvider):
     """Search wrapper dropping results topically unrelated to the query.
 
     Purely an eval-input guard: poisoned inputs make any A/B retrieval
@@ -73,7 +71,9 @@ class SanityFilteringProvider:
         self.inner = inner
         self.stats: dict[str, dict[str, int]] = {}
 
-    async def search(self, query: str, engines: list[str] | None = None) -> list:
+    async def search(
+        self, query: str, engines: list[str] | None = None
+    ) -> list[SearchResult]:
         results = await self.inner.search(query, engines=engines)
         kept = [
             result
@@ -97,7 +97,7 @@ class SanityFilteringProvider:
         ]
 
 
-class CachedSearchProvider:
+class CachedSearchProvider(ISearchProvider):
     """Memoizing search provider so every eval config sees identical results.
 
     Upstream engines flap between runs (CAPTCHAs, rate-limit suspensions);
@@ -107,17 +107,19 @@ class CachedSearchProvider:
 
     def __init__(self, inner: ISearchProvider):
         self.inner = inner
-        self._cache: dict[str, list] = {}
+        self._cache: dict[str, list[SearchResult]] = {}
         self.query_count = 0
 
-    async def search(self, query: str, engines: list[str] | None = None) -> list:
+    async def search(
+        self, query: str, engines: list[str] | None = None
+    ) -> list[SearchResult]:
         if query not in self._cache:
-            self._cache[query] = list(await self.inner.search(query=query))
+            self._cache[query] = list(await self.inner.search(query))
             self.query_count += 1
         return list(self._cache[query])
 
 
-class CachedScraper:
+class CachedScraper(IScraper):
     """Per-URL memoizing scraper: each page is fetched once per eval process.
 
     Only successful extractions (non-empty content) are cached, so transient
@@ -208,8 +210,8 @@ async def evaluate_query(
     searching: ISearchProvider,
     scraper: IScraper,
     ranker: IRanker,
-    embedder: IEmbedder | None = None,
-    chunk_repo: ChunkRepository | None = None,
+    embedder: EmbedderLike | None = None,
+    chunk_repo: ChunkStoreLike | None = None,
     decision_maker: IDecisionMaker | None = None,
 ) -> QueryResult:
     """Run retrieval (no LLM) for one golden query and score it."""
@@ -242,8 +244,8 @@ async def run_eval(
     searching: ISearchProvider,
     scraper: IScraper,
     ranker: IRanker,
-    embedder: IEmbedder | None = None,
-    chunk_repo: ChunkRepository | None = None,
+    embedder: EmbedderLike | None = None,
+    chunk_repo: ChunkStoreLike | None = None,
     decision_maker: IDecisionMaker | None = None,
 ) -> EvalReport:
     """Evaluate one configuration over the whole golden set."""

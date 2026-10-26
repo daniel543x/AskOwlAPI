@@ -1,3 +1,5 @@
+from typing import Any
+
 from src.core.tools.toolbox import AskToolbox
 from tests.core_ask.fakes import FakeRanker, FakeSearchProvider
 from tests.core_ask.test_eval import FakeChunkRepo, FakeEmbedder
@@ -8,13 +10,14 @@ class ExplodingEmbedder:
     def dims(self) -> int:
         return 2
 
-    async def embed_texts(self, texts):
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         raise RuntimeError("embedding service down")
 
 
 async def test_fetch_pages_stores_embeddings_when_available():
     from tests.core_ask.fakes import make_scraper
 
+    chunk_repo = FakeChunkRepo()
     toolbox = AskToolbox(
         FakeSearchProvider(),
         make_scraper(),
@@ -22,13 +25,13 @@ async def test_fetch_pages_stores_embeddings_when_available():
         embedder=FakeEmbedder(
             {"http://example.com/a": [1.0, 0.0], "http://example.com/b": [0.0, 1.0]}
         ),
-        chunk_repo=FakeChunkRepo(),
+        chunk_repo=chunk_repo,
     )
 
     await toolbox.web_search("rust")
     await toolbox.fetch_pages()
 
-    assert toolbox.chunk_repo.stored, "chunks should be embedded and stored"
+    assert chunk_repo.stored, "chunks should be embedded and stored"
 
 
 async def test_fetch_pages_degrades_when_embedding_fails():
@@ -89,10 +92,14 @@ async def test_get_context_falls_back_when_vector_retrieval_fails():
     from tests.core_ask.fakes import make_scraper
 
     class ExplodingRepo:
-        async def store_chunks(self, chunks, embeddings):
+        async def store_chunks(
+            self, chunks: list[dict[str, Any]], embeddings: list[list[float]]
+        ) -> int:
             return 0
 
-        async def vector_candidates(self, query_embedding, k):
+        async def vector_candidates(
+            self, query_embedding: list[float], k: int
+        ) -> list[dict[str, Any]]:
             raise RuntimeError("pgvector unavailable")
 
     toolbox = AskToolbox(

@@ -11,7 +11,12 @@ import logging
 from collections.abc import AsyncGenerator
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    HumanMessage,
+    SystemMessage,
+)
 
 from ...tools.arg_stream import ToolArgStream
 from ...tools.errors import ToolProtocolError
@@ -134,6 +139,8 @@ async def stream_cited_answer(
     extractor = ToolArgStream(key="answer")
 
     async for chunk in bound.astream(_answer_messages(query, context, history)):
+        if not isinstance(chunk, AIMessageChunk):
+            continue
         for tool_chunk in chunk.tool_call_chunks or []:
             name = tool_chunk.get("name") or ""
             if name and name != "CitedAnswer":

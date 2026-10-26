@@ -1,12 +1,13 @@
 """Offline unit tests for API-key helpers (no DB)."""
 
+import uuid
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
 from src.modules.api_keys.model import (
+    ApiKey,
     generate_api_key,
     hash_api_key,
     is_expired,
@@ -40,18 +41,27 @@ def test_validate_scopes_dedupes_and_rejects_unknown():
         validate_scopes(["search", "root"])
 
 
+def _key(expires_at: datetime | None) -> ApiKey:
+    return ApiKey(
+        user_id=uuid.uuid4(),
+        name="test",
+        key_hash="hash",
+        key_prefix="ak-",
+        expires_at=expires_at,
+    )
+
+
 def test_is_expired_handles_naive_and_aware_datetimes():
-    key = SimpleNamespace(expires_at=None)
-    assert not is_expired(key)
+    assert not is_expired(_key(expires_at=None))
 
     soon = datetime.now(UTC) + timedelta(minutes=5)
-    assert not is_expired(SimpleNamespace(expires_at=soon))
+    assert not is_expired(_key(expires_at=soon))
 
     past = datetime.now(UTC) - timedelta(minutes=1)
-    assert is_expired(SimpleNamespace(expires_at=past))
+    assert is_expired(_key(expires_at=past))
 
     naive_past = (datetime.now(UTC) - timedelta(minutes=1)).replace(tzinfo=None)
-    assert is_expired(SimpleNamespace(expires_at=naive_past))
+    assert is_expired(_key(expires_at=naive_past))
 
 
 def test_rate_limiter_fixed_window():

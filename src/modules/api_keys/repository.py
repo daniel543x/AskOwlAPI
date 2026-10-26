@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from ..identity.user.model import User
 from .model import ApiKey, ApiKeyCreate, generate_api_key, validate_scopes
@@ -38,7 +38,7 @@ class ApiKeyRepository:
         statement = (
             select(ApiKey)
             .where(ApiKey.user_id == user_id)
-            .order_by(ApiKey.created_at.desc())
+            .order_by(col(ApiKey.created_at).desc())
         )
         result = await self.session.execute(statement)
         return list(result.scalars().all())

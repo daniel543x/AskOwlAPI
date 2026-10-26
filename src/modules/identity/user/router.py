@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from ....tools.db import get_session
 from ..auth.security import get_current_admin_user
@@ -99,7 +99,7 @@ async def admin_list_users(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ):
-    statement = select(User).order_by(User.created_at).offset(offset).limit(limit)
+    statement = select(User).order_by(col(User.created_at)).offset(offset).limit(limit)
     result = await session.execute(statement)
     return list(result.scalars().all())
 

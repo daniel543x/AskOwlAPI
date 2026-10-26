@@ -160,7 +160,7 @@ class IDecisionMaker(ABC):
         scaled = temperature_scale(
             probabilities, self._temperature_for("choice", len(probabilities))
         )
-        choice = max(scaled, key=scaled.get)
+        choice = max(scaled, key=lambda key: scaled[key])
         return ChoiceDecision(
             question_id="q",
             choice=choice,

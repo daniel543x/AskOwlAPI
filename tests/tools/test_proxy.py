@@ -32,29 +32,29 @@ def test_no_proxy_by_default():
     assert outbound_proxy() is None
 
 
-def test_make_client_without_proxy_passes_no_proxy(spy):
+async def test_make_client_without_proxy_passes_no_proxy(spy):
     client = make_client(timeout=5.0)
-    client.aclose()
+    await client.aclose()
 
     assert "proxy" not in spy.captured
     assert spy.captured["timeout"] == 5.0
 
 
-def test_make_client_applies_configured_proxy(monkeypatch, spy):
+async def test_make_client_applies_configured_proxy(monkeypatch, spy):
     monkeypatch.setattr(settings, "PROXY_URL", "http://proxy.example:8080")
 
     assert outbound_proxy() == "http://proxy.example:8080"
     client = make_client(timeout=5.0)
-    client.aclose()
+    await client.aclose()
 
     assert spy.captured["proxy"] == "http://proxy.example:8080"
 
 
-def test_explicit_proxy_kwarg_is_not_overridden(monkeypatch, spy):
+async def test_explicit_proxy_kwarg_is_not_overridden(monkeypatch, spy):
     monkeypatch.setattr(settings, "PROXY_URL", "http://default:1")
 
     client = make_client(proxy="http://explicit:2")
-    client.aclose()
+    await client.aclose()
 
     assert spy.captured["proxy"] == "http://explicit:2"
 

@@ -59,7 +59,7 @@ def verify_token(token: str) -> JWTPayload | None:
 async def get_user_by_api_key(session: AsyncSession, key: str):
     """Deprecated stub kept for import compatibility; resolution lives in
     ApiKeyRepository.resolve (hash lookup, activity/expiry checks)."""
-    from ..api_keys.repository import ApiKeyRepository
+    from ...api_keys.repository import ApiKeyRepository
 
     resolved = await ApiKeyRepository(session).resolve(key)
     return resolved[1] if resolved else None

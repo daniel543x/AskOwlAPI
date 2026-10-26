@@ -28,7 +28,7 @@ class FakeUser:
 @dataclass
 class FakeEntry:
     id: uuid.UUID
-    provider_id: uuid.UUID = None
+    provider_id: uuid.UUID | None = None
     kind: str = "chat"
     model_name: str = "model-x"
     display_name: str = "Model X"
