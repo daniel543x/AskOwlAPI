@@ -56,3 +56,81 @@ async def test_vector_failure_rolls_back_session(db_session):
         [[0.0, 1.0, 0.0, 0.0]],
     )
     assert inserted == 1
+
+
+# <----- Scoping (WU-5 / AR-8) and eviction ----->
+
+
+async def test_scoped_candidates_exclude_foreign_conversations(db_session):
+    import uuid
+
+    repo = ChunkRepository(db_session)
+    mine = uuid.uuid4()
+    theirs = uuid.uuid4()
+
+    await repo.store_chunks(
+        [_chunk("https://mine.example", "my conversation note")],
+        [[1.0, 0.0, 0.0, 0.0]],
+        conversation_id=mine,
+    )
+    await repo.store_chunks(
+        [_chunk("https://theirs.example", "their conversation note")],
+        [[1.0, 0.0, 0.0, 0.0]],
+        conversation_id=theirs,
+    )
+    await repo.store_chunks(
+        [_chunk("https://legacy.example", "legacy unscoped note")],
+        [[1.0, 0.0, 0.0, 0.0]],
+    )
+
+    scoped = await repo.vector_candidates(
+        [1.0, 0.0, 0.0, 0.0], k=10, conversation_id=mine
+    )
+    urls = {c["url"] for c in scoped}
+    assert "https://mine.example" in urls
+    assert "https://legacy.example" in urls  # NULL-scope stays retrievable
+    assert "https://theirs.example" not in urls  # foreign conversations leak in
+
+    unscoped = await repo.vector_candidates([1.0, 0.0, 0.0, 0.0], k=10)
+    assert {c["url"] for c in unscoped} == {
+        "https://mine.example",
+        "https://theirs.example",
+        "https://legacy.example",
+    }
+
+
+async def test_eviction_removes_only_rows_older_than_ttl(db_session):
+
+    from sqlalchemy import text
+
+    repo = ChunkRepository(db_session)
+    await repo.store_chunks(
+        [
+            _chunk("https://fresh.example", "fresh content"),
+            _chunk("https://stale.example", "stale content"),
+        ],
+        [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
+    )
+    await db_session.execute(
+        text(
+            "UPDATE chunk SET created_at = now() - (:days * interval '1 day') "
+            "WHERE source_url = 'https://stale.example'"
+        ),
+        {"days": 60},
+    )
+    await db_session.commit()
+
+    await db_session.execute(
+        text(
+            "DELETE FROM chunk WHERE created_at < now() - "
+            "(:days * interval '1 day')"
+        ),
+        {"days": 30},
+    )
+    await db_session.commit()
+
+    urls = {
+        row.source_url
+        for row in await db_session.execute(text("SELECT source_url FROM chunk"))
+    }
+    assert urls == {"https://fresh.example"}

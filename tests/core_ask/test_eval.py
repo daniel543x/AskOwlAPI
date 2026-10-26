@@ -172,14 +172,14 @@ class FakeChunkRepo:
     def __init__(self):
         self.stored: list[tuple[dict, list[float]]] = []
 
-    async def store_chunks(self, chunks, embeddings):
+    async def store_chunks(self, chunks, embeddings, conversation_id=None):
         self.stored.extend(zip(chunks, embeddings, strict=True))
         return len(chunks)
 
     async def existing_hashes(self, hashes):
         return set()  # nothing pre-stored: everything is embedded anew
 
-    async def vector_candidates(self, query_embedding, k):
+    async def vector_candidates(self, query_embedding, k, conversation_id=None):
         def cosine(a, b):
             dot = sum(x * y for x, y in zip(a, b, strict=True))
             na = math.sqrt(sum(x * x for x in a))

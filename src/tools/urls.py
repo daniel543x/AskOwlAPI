@@ -37,3 +37,18 @@ def normalize_url(url: str) -> str:
         if not (key.lower().startswith("utm_") or key.lower() in TRACKING_PARAMS)
     ]
     return urlunsplit((parts.scheme.lower(), host, path, urlencode(query), ""))
+
+
+def registrable_domain(url: str) -> str:
+    """Heuristic registrable domain: the last two host labels.
+
+    Good enough for chunk metadata (`site`); exact eTLD+1 needs the PSL,
+    which is not worth a dependency here.
+    """
+    host = (urlsplit(url.strip()).hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    labels = [label for label in host.split(".") if label]
+    if len(labels) >= 2:
+        return ".".join(labels[-2:])
+    return host

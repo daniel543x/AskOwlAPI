@@ -80,6 +80,7 @@ async def research_logic(
     ranker: IRanker,
     embedder: IEmbedder | None = None,
     session=None,
+    today: str | None = None,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the research pipeline, yielding (event, payload) pairs.
 
@@ -98,7 +99,7 @@ async def research_logic(
         # <----- Planning (native tool call) ----->
         yield "status", {"step": "Planning sub-questions..."}
         subquestions, used_tool_call = await plan_subquestions(
-            model, query, settings.RESEARCH_MAX_SUBQUESTIONS
+            model, query, settings.RESEARCH_MAX_SUBQUESTIONS, today=today
         )
         budget.spend_tokens(" ".join(subquestions))
 
@@ -189,6 +190,7 @@ async def research_sse_adapter(
     ranker: IRanker,
     embedder: IEmbedder | None = None,
     session=None,
+    today: str | None = None,
 ) -> AsyncGenerator[str]:
     """Translate research events into an SSE stream.
 
@@ -203,7 +205,8 @@ async def research_sse_adapter(
         return f"event: {event}\nid: {event_id}\ndata: {json.dumps(data)}\n\n"
 
     pipeline = research_logic(
-        query, searching, model, scraper, ranker, embedder=embedder, session=session
+        query, searching, model, scraper, ranker, embedder=embedder, session=session,
+        today=today,
     )
     async for event, data in pipeline:
         if event == "answer_ready":
@@ -215,7 +218,9 @@ async def research_sse_adapter(
                 return
 
             try:
-                report = stream_report(model, data["query"], data["gathered"])
+                report = stream_report(
+                    model, data["query"], data["gathered"], today=today
+                )
                 async for delta in report:
                     yield frame("message", {"text": delta})
                 yield frame("done", {"status": "completed"})
@@ -256,13 +261,15 @@ async def research_json_adapter(
     ranker: IRanker,
     embedder: IEmbedder | None = None,
     session=None,
+    today: str | None = None,
 ) -> dict[str, Any]:
     """Run the research pipeline and return the full result as one dict."""
     answer_data: dict[str, Any] | None = None
     error_detail: str | None = None
 
     pipeline = research_logic(
-        query, searching, model, scraper, ranker, embedder=embedder, session=session
+        query, searching, model, scraper, ranker, embedder=embedder, session=session,
+        today=today,
     )
     async for event, data in pipeline:
         if event == "error":
@@ -286,7 +293,7 @@ async def research_json_adapter(
     else:
         try:
             report = await generate_report(
-                model, answer_data["query"], answer_data["gathered"]
+                model, answer_data["query"], answer_data["gathered"], today
             )
         except ToolProtocolError as e:
             raise HTTPException(

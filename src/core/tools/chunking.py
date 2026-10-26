@@ -5,6 +5,8 @@ from langchain_text_splitters import (
     RecursiveCharacterTextSplitter,
 )
 
+from ...tools.urls import registrable_domain
+
 """
 Processes a list of scraped Markdown contents into smaller chunks suitable.
 
@@ -56,6 +58,16 @@ def chunk_markdown_data(data: list[dict[str, str]]) -> list[dict[str, Any]]:
         for doc in docs:
             chunk_metadata = doc.metadata
             chunk_metadata["url"] = url
+            # Page-level metadata carried into every chunk (AR-7/AR-8):
+            # title, site, and the publication/fetch timestamps that the
+            # recency boost and scoping consume.
+            if item.get("title"):
+                chunk_metadata["title"] = item["title"]
+            chunk_metadata["site"] = registrable_domain(url)
+            if item.get("published_at"):
+                chunk_metadata["published_at"] = item["published_at"]
+            if item.get("fetched_at"):
+                chunk_metadata["fetched_at"] = item["fetched_at"]
 
             final_chunks.append(
                 {

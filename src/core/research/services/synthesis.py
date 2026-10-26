@@ -12,6 +12,7 @@ from langchain_core.messages import (
     SystemMessage,
 )
 
+from ....tools.dates import current_date_line
 from ...tools.arg_stream import ToolArgStream
 from ...tools.errors import ToolProtocolError
 from .contracts import ResearchReport
@@ -55,23 +56,29 @@ def _format_gathered(gathered: list[dict[str, Any]]) -> str:
     return "\n\n".join(sections)
 
 
-def _report_messages(query: str, gathered: list[dict[str, Any]]) -> list[BaseMessage]:
+def _report_messages(
+    query: str,
+    gathered: list[dict[str, Any]],
+    today: str | None = None,
+) -> list[BaseMessage]:
     return [
         SystemMessage(
-            content=REPORT_SYSTEM_TEMPLATE.format(
-                context=_format_gathered(gathered)
-            )
+            content=f"{current_date_line(today)}\n"
+            + REPORT_SYSTEM_TEMPLATE.format(context=_format_gathered(gathered))
         ),
         HumanMessage(content=query),
     ]
 
 
 async def generate_report(
-    model: BaseChatModel, query: str, gathered: list[dict[str, Any]]
+    model: BaseChatModel,
+    query: str,
+    gathered: list[dict[str, Any]],
+    today: str | None = None,
 ) -> str:
     """Non-streaming research report via the ResearchReport tool call."""
     bound = model.bind_tools([ResearchReport])
-    response = await bound.ainvoke(_report_messages(query, gathered))
+    response = await bound.ainvoke(_report_messages(query, gathered, today))
 
     for tool_call in response.tool_calls or []:
         if tool_call.get("name") == "ResearchReport":
@@ -85,13 +92,16 @@ async def generate_report(
 
 
 async def stream_report(
-    model: BaseChatModel, query: str, gathered: list[dict[str, Any]]
+    model: BaseChatModel,
+    query: str,
+    gathered: list[dict[str, Any]],
+    today: str | None = None,
 ) -> AsyncGenerator[str]:
     """Stream the `report` argument of the ResearchReport tool call."""
     bound = model.bind_tools([ResearchReport])
     extractor = ToolArgStream(key="report")
 
-    async for chunk in bound.astream(_report_messages(query, gathered)):
+    async for chunk in bound.astream(_report_messages(query, gathered, today)):
         if not isinstance(chunk, AIMessageChunk):
             continue
         for tool_chunk in chunk.tool_call_chunks or []:

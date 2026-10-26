@@ -71,6 +71,24 @@ class SearchRequest(BaseModel):
             "e.g. for evals or admin debugging."
         ),
     )
+    scope: Literal["global", "conversation", "request"] = Field(
+        default="global",
+        description=(
+            "Retrieval scope (WU-5). \"global\" (default, today's behavior) "
+            'retrieves from the whole chunk store; "conversation" restricts '
+            'vector candidates to this conversation (+ legacy unscoped '
+            'rows); "request" restricts retrieval to this turn\'s fetched '
+            "pages."
+        ),
+    )
+    recency_bias: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Recency boost for chunk ranking (WU-11): 0 = neutral, 1 = "
+            "strongest. Clamped server-side to RECENCY_BIAS_MAX."
+        ),
+    )
 
 
 @router.post("/search", dependencies=[Depends(require_scope("search"))])
@@ -101,6 +119,8 @@ async def ask_search(
                 max_urls=request.max_urls,
                 query_variations=request.query_variations,
                 cache=request.cache,
+                scope=request.scope,
+                recency_bias=request.recency_bias,
             ),
             media_type="text/event-stream",
         )
@@ -119,5 +139,7 @@ async def ask_search(
         max_urls=request.max_urls,
         query_variations=request.query_variations,
         cache=request.cache,
+        scope=request.scope,
+        recency_bias=request.recency_bias,
     )
     return {"answer": answer}

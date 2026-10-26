@@ -254,3 +254,27 @@ async def test_every_llm_call_has_tools_bound():
     for tools in model.bindings:
         names = [getattr(t, "__name__", "") for t in tools]
         assert names  # never a bound-less LLM call
+
+
+
+async def collect_research(model, **kwargs):
+    deps = make_deps()
+    deps.update(kwargs)
+    stream = [
+        frame
+        async for frame in research_sse_adapter("query", model=model, **deps)
+    ]
+    return parse_frames(stream)
+
+
+# <----- Current date in research prompts (AR-7 task 1) ----->
+
+
+@pytest.mark.asyncio
+async def test_research_prompts_carry_the_current_date():
+    model = research_model(subquestions=["sq one"])
+    await collect_research(model, today="2020-01-01")
+
+    # Planner (call 0) and synthesis (last call) both carry the date line.
+    assert model.calls[0][0].startswith("Current date: 2020-01-01.")
+    assert model.calls[-1][0].startswith("Current date: 2020-01-01.")
