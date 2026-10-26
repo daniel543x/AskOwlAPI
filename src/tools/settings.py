@@ -59,7 +59,42 @@ class Settings(BaseSettings):
     RANKER_MODEL_NAME: str = "ms-marco-MiniLM-L-12-v2"
     RANKER_CACHE_DIR: str = "/tmp/cache"
     TOP_N_URLS: int = 10
+    # Hard ceiling for the per-request `max_urls` override (WU-6).
+    TOP_N_URLS_MAX: int = 20
     TOP_N_CHUNKS: int = 20
+
+    # <----- Search-result hygiene (AR-2 / WU-3) ----->
+    # Drop results topically unrelated to the query before they cost a page
+    # fetch. On by default: validated by the Phase-3 eval re-run (it drops the
+    # exact rust-query -> peptide-articles poisoning class).
+    RESULT_SANITY_FILTER: bool = True
+    # Fusion floor: drop merged results scoring below this before fetching.
+    # 0.0 = off; meaningful only on calibrated fusion scores, so the default
+    # stays off until measured on the eval harness.
+    URL_SELECTION_MIN_FUSION: float = 0.0
+    # Use the fusion score as the cross-encoder tie-breaker. MiniLM scores
+    # saturate around 0.999x, making its within-top-N ordering noise; fusion
+    # (engine agreement + domain authority + position) breaks those ties.
+    FUSION_TIEBREAK: bool = True
+    # Domain authority for the fusion score: registrable domains or
+    # dot-leading TLD suffixes -> 0..1. Unknown hosts score 0.5.
+    DOMAIN_AUTHORITY: dict[str, float] = Field(
+        default={
+            ".gov": 0.9,
+            ".edu": 0.9,
+            "wikipedia.org": 0.9,
+            "arxiv.org": 0.85,
+            "github.com": 0.8,
+            "stackoverflow.com": 0.8,
+            "postgresql.org": 0.8,
+            "python.org": 0.8,
+        },
+        description=(
+            "Domain authority map for search-result fusion scoring. "
+            "JSON in the environment variable, e.g. "
+            '"{\"github.com\": 0.8, \".gov\": 0.9}".'
+        ),
+    )
 
     # <----- Scraping ----->
     SCRAPER_CONCURRENCY: int = 5

@@ -1,9 +1,11 @@
 # Ask Search API — SSE Protocol
 
-Applies to `POST /ask/search` (body: `{"query", "stream", "conversation_id"}`).
+Applies to `POST /ask/search` (body: `{"query", "stream", "conversation_id", "max_urls"}`).
 The JSON mode (`stream=false`) returns the same data as one document (see
 below). POST because a turn persists conversation history; model-selection
 params (`model_id`, `embedder_id`, `reranker_id`) stay on the query string.
+`max_urls` (int, optional, `>= 1`) caps the URLs selected for this turn;
+omitted = the `TOP_N_URLS` default, clamped server-side to `TOP_N_URLS_MAX`.
 
 Current protocol version: **v2** (breaking; there are no external consumers yet).
 Changelog at the bottom.
@@ -30,7 +32,7 @@ and can be used for reassembly/debugging.
 | `conversation` | `{"conversation_id": "<uuid>", "created": bool}`    | First event (when history persistence is on): the conversation this turn is stored under. `created: false` when an existing `conversation_id` was continued. |
 | `status`       | `{"step": "..."}`                                    | Progress updates between stages.                          |
 | `query`        | `{"query": "...", "tool_call": true}`                | After query rewriting. `tool_call: false` means the rewrite step fell back to the raw user query (tool-protocol error path). |
-| `sources`      | `{"sources": [{"url": str, "title": str, "score": float (0..1, higher = more relevant)}, ...]}` | After web search + ranking (top-N URLs). |
+| `sources`      | `{"sources": [{"url": str, "title": str, "score": float (0..1, higher = more relevant), "fusion_score": float or null}, ...]}` | After web search + ranking (top-N URLs, capped by `max_urls` when given). Results are deduped by normalized URL (tracking params and `www.` do not create duplicates), and topically unrelated results are dropped by the sanity filter (`RESULT_SANITY_FILTER`). `fusion_score` is the deterministic engine-agreement/domain-authority/position score used as the cross-encoder tie-breaker. |
 | `context`      | `{"context": "...", "chunks": int, "vector_retrieval": bool}` | After fetch + chunk ranking; the exact context given to the answer step. `vector_retrieval: true` when candidates came from the pgvector store (hybrid retrieval) instead of the reranker alone. |
 | `message`      | `{"text": "..."}`                                    | One per streamed answer delta; concatenate for the full answer. |
 | `grounding`    | `{"supported": float (0..1)}`                        | After the last `message`, only when the decision layer (Jev/Laya) is configured and `PRE_SCORE_GROUNDING_CHECK=true`: confidence that the answer is grounded in the context. |
@@ -98,7 +100,7 @@ result arrives as one JSON document wrapped in an `answer` object:
   "answer": {
     "query": "what is rust?",
     "optimized_query": "rust programming language",
-    "sources": [{"url": "...", "title": "...", "score": 0.93}],
+    "sources": [{"url": "...", "title": "...", "score": 0.93, "fusion_score": 0.62}],
     "context": "...",
     "answer": "Rust is ... [Source](https://...)",
     "conversation_id": "3fa8...",
@@ -131,6 +133,19 @@ The LLM is never used without a tool call:
   (HTTP 422 with an explanation).
 
 ## Changelog
+
+### v2.3 (2026-10-26, AR-2 / WU-3 + WU-6 — additive)
+
+- Added: `sources` entries carry `fusion_score` (deterministic
+  engine-agreement + domain-authority + position score; the cross-encoder
+  stays the primary ranking signal).
+- Added: request body field `max_urls` (optional; default `TOP_N_URLS`,
+  clamped to `TOP_N_URLS_MAX`).
+- Added: `debug` events with `stage: "web_search"` carrying
+  `dropped_results`, `merged_results`, and `max_urls` when `DEBUG=true`.
+- Behavior: search results are deduplicated by normalized URL and
+  topically unrelated results are dropped by default
+  (`RESULT_SANITY_FILTER=true`; set it to `false` for raw passthrough).
 
 ### v2.2 (2026-10-18, documentation correction — no protocol change)
 

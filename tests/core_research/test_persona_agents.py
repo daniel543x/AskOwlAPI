@@ -67,11 +67,13 @@ async def test_persona_changes_sources_for_same_query():
         model = ScriptedToolModel(
             responses=[tool_call("SubmitOutcome", {"answer": "done"})]
         )
+        # Topical query so the production sanity filter keeps the fixture
+        # results; this test exercises domain constraints, not hygiene.
         events = await collect(
-            agent_logic("memory safety", model, toolbox, big_budget())
+            agent_logic("rust memory safety", model, toolbox, big_budget())
         )
         assert not [e for e in events if e[0] == "error"]
-        await toolbox.web_search("memory safety")
+        await toolbox.web_search("rust memory safety")
         return [s["url"] for s in toolbox.ranked_sources]
 
     constrained = AskToolbox(

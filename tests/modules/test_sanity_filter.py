@@ -1,12 +1,12 @@
-"""Offline tests for the eval sanity filter (egress-poisoning guard)."""
+"""Offline tests for the search-result sanity filter (egress-poisoning guard)."""
 
 import pytest
 
-from src.core.ask.eval.harness import (
+from src.modules.search_engine.providers.base import ISearchProvider, SearchResult
+from src.modules.search_engine.sanity import (
     SanityFilteringProvider,
     is_sane_result,
 )
-from src.modules.search_engine.providers.base import ISearchProvider, SearchResult
 
 
 def test_sane_result_shares_a_content_token():

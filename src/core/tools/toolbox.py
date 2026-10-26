@@ -22,7 +22,9 @@ from pydantic import BaseModel, Field
 from ...modules.decision.base import IDecisionMaker
 from ...modules.owl_reranker.base import IRanker
 from ...modules.scrapy.providers.base import IScraper
+from ...modules.search_engine.fusion import apply_fusion_floor, merge_results
 from ...modules.search_engine.providers.base import ISearchProvider
+from ...modules.search_engine.sanity import is_sane_result
 from ...tools.settings import settings
 from .chunking import chunk_markdown_data
 from .pre_scores import filter_chunks, filter_search_results
@@ -83,6 +85,7 @@ class AskToolbox:
         allowed_domains: list[str] | None = None,
         allowed_engines: list[str] | None = None,
         decision_maker: IDecisionMaker | None = None,
+        max_urls: int | None = None,
     ):
         self.searching = searching
         self.scraper = scraper
@@ -93,6 +96,11 @@ class AskToolbox:
         # Persona constraints: None/empty = unconstrained.
         self.allowed_domains = [d.lower() for d in (allowed_domains or [])]
         self.allowed_engines = allowed_engines or None
+        # Per-request URL-selection cap (WU-6); None = settings default,
+        # always clamped to the operator ceiling TOP_N_URLS_MAX.
+        self.max_urls = max(
+            1, min(max_urls or settings.TOP_N_URLS, settings.TOP_N_URLS_MAX)
+        )
 
         self.raw_results: list = []
         self.ranked_sources: list[dict[str, Any]] = []
@@ -100,9 +108,17 @@ class AskToolbox:
         self.chunks: list[dict[str, Any]] = []
         self.selected_chunks: list[dict[str, Any]] = []
         self.used_vector_retrieval = False
+        # Hygiene stats surfaced in the debug SSE event (WU-3).
+        self.search_stats: dict[str, int] = {}
 
     async def web_search(self, query: str) -> str:
-        """Search the web and rank the results; returns JSON for the LLM."""
+        """Search the web and rank the results; returns JSON for the LLM.
+
+        Hygiene pipeline (AR-2): sanity-drop topically unrelated results,
+        merge engine duplicates by normalized URL, fusion-score the merged
+        pool, apply the fusion floor (never keeping fewer than three), then
+        cross-encoder rank to the URL cap with fusion as the tie-breaker.
+        """
         self.raw_results = await self.searching.search(
             query, engines=self.allowed_engines
         )
@@ -110,21 +126,68 @@ class AskToolbox:
         if self.allowed_domains:
             self.raw_results = self._filter_domains(self.raw_results)
 
+        dropped_sanity = 0
+        if settings.RESULT_SANITY_FILTER:
+            kept = [
+                result
+                for result in self.raw_results
+                if is_sane_result(query, result.title, result.snippet)
+            ]
+            dropped_sanity = len(self.raw_results) - len(kept)
+            self.raw_results = kept
+
         if settings.PRE_SCORE_SEARCH_FILTER and self.decision_maker:
             self.raw_results = await filter_search_results(
                 self.decision_maker, query, self.raw_results
             )
 
-        ranked = await asyncio.to_thread(
-            self.ranker.rank_web_search, query, self.raw_results, settings.TOP_N_URLS
+        merged = merge_results(self.raw_results, settings.DOMAIN_AUTHORITY)
+        merged, dropped_floor = apply_fusion_floor(
+            merged, settings.URL_SELECTION_MIN_FUSION
         )
 
-        titles = {result.url: result.title for result in self.raw_results}
+        ranked = await asyncio.to_thread(
+            self.ranker.rank_web_search,
+            query,
+            [item.as_search_result() for item in merged],
+            self.max_urls,
+        )
+
+        self.search_stats = {
+            "dropped_results": dropped_sanity + dropped_floor,
+            "merged_results": len(self.raw_results) - len(merged),
+            "max_urls": self.max_urls,
+        }
+
+        by_url = {item.url: item for item in merged}
+
+        def _fusion(url: str) -> float:
+            entry = by_url.get(url)
+            return entry.fusion_score if entry else 0.0
+
+        if settings.FUSION_TIEBREAK:
+            # Cross-encoder stays primary; ties at the third decimal (MiniLM
+            # saturates around 0.999x) are broken by the fusion score.
+            # reverse=True keeps ties stable (original order preserved).
+            ranked = sorted(
+                ranked,
+                key=lambda item: (
+                    round(float(item.get("score", 0.0) or 0.0), 3),
+                    _fusion(item["url"]),
+                ),
+                reverse=True,
+            )
+
         self.ranked_sources = [
             {
                 "url": item["url"],
-                "title": titles.get(item["url"], ""),
+                "title": by_url[item["url"]].title
+                if item["url"] in by_url
+                else "",
                 "score": item["score"],
+                "fusion_score": round(by_url[item["url"]].fusion_score, 4)
+                if item["url"] in by_url
+                else None,
             }
             for item in ranked
         ]

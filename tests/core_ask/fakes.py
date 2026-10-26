@@ -23,7 +23,7 @@ class FakeSearchProvider(ISearchProvider):
                 ),
                 SearchResult(
                     title="Result B",
-                    snippet="Another snippet",
+                    snippet="Another snippet about rust",
                     url="http://example.com/b",
                 ),
             ]

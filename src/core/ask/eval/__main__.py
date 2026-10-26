@@ -33,13 +33,13 @@ from ....modules.owl_reranker.factory import (
 )
 from ....modules.scrapy.providers.trafilatura import TrafilturaScraper
 from ....modules.search_engine.providers.searxng import SearXNGProvider
+from ....modules.search_engine.sanity import SanityFilteringProvider
 from ....tools.db import engine
 from ....tools.logging import configure_logging
 from ....tools.settings import settings
 from .harness import (
     CachedScraper,
     CachedSearchProvider,
-    SanityFilteringProvider,
     comparison_verdict,
     format_report,
     load_golden_set,
