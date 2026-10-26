@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     DEFAULT_CHAT_MODEL_NAME: str = "qwen3.5"
     MODEL_PROBE_TIMEOUT: float = 3.0
 
+    # Context window (tokens) for Ollama chat models that don't set num_ctx
+    # in their catalog default_params. Ollama's own default is small and
+    # silently truncates large prompts (e.g. research synthesis), which makes
+    # the model drop the tool instruction and answer in prose.
+    OLLAMA_NUM_CTX: int = 32768
+
     # Default embedding model (PLAN decision #1, 2026-10-17: bge-m3).
     DEFAULT_EMBEDDING_MODEL_NAME: str = "bge-m3"
     DEFAULT_EMBEDDING_MODEL_DIMS: int = 1024
@@ -118,4 +124,4 @@ class Settings(BaseSettings):
         )
 
 
-settings = Settings()
+settings = Settings()  # pyright: ignore[reportCallIssue]
