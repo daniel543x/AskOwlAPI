@@ -13,7 +13,7 @@ Client-side application developers and backend integrators.
 
 _Key documents:_
 
-- [Authentication](api/authentication.md) — JWT login, API keys, roles, auth matrix
+- [Authentication](api/authentication.md) — JWT login + refresh tokens, API keys, roles, auth matrix
 - [Users & personal data](api/users.md) — users, roles, personas, api keys, history
 - [Model catalog](api/models.md) — providers, entries, preferences, defaults
 - [Ask Search SSE protocol](api/ask_search_sse.md) — `search` mode stream
@@ -35,6 +35,7 @@ _Key documents:_
 - [Services](architecture/services.md) — the logic behind the search process
 - [Database](architecture/database.md) — schema, migrations
 - [API keys design](architecture/api_keys.md) — the open decision #3 design
+- [Auth design](architecture/auth.md) — refresh-token sessions (decision #5)
 
 ## 3. Operations (for administrators and DevOps)
 

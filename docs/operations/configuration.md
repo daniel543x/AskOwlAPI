@@ -26,7 +26,7 @@ valid `MASTER_KEY` (Fernet key, url-safe base64, 32 bytes).
 | API keys | `API_KEY_RATE_LIMIT_PER_MINUTE=60` |
 | Egress proxy | `PROXY_URL` (empty = direct) |
 | Decision pre-scores | `PRE_SCORE_SEARCH_FILTER/CHUNK_FILTER/QUERY_CHOICE/GROUNDING_CHECK` (all off), `PRE_SCORE_RELEVANCE_THRESHOLD`, `PRE_SCORE_CHUNK_MIN_SCORE` — see [../architecture/decision_layer.md](../architecture/decision_layer.md) |
-| Auth | `ACCESS_TOKEN_EXPIRE_MINUTES=30` |
+| Auth | `ACCESS_TOKEN_EXPIRE_MINUTES=360` (6 h), `REFRESH_TOKEN_EXPIRE_DAYS=90`, `REFRESH_TOKEN_RETENTION_DAYS=30` — see [../architecture/auth.md](../architecture/auth.md) |
 
 Model selection itself is **not** env-driven: it goes through the
 admin-curated catalog (`/models` routes), per PLAN product decision §0.1.

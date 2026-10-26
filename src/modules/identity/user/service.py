@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from ..auth.passwd import hash_passwd
+from ..auth.repository import RefreshTokenRepository
 from ..role.service import assing_role_in_user_create
 from .model import User, UserCreate, UserUpdate
 
@@ -68,6 +69,8 @@ async def update_user(
 
     if user_update.password:
         db_user.password_hash = await hash_passwd(user_update.password)
+        # New password means every live session dies everywhere.
+        await RefreshTokenRepository(session).revoke_all_for_user(db_user.id)
 
     if user_update.email and user_update.email != db_user.email:
         existing_user = await get_user_by_email(session, user_update.email)
@@ -91,6 +94,8 @@ async def delete_user(session: AsyncSession, user_id: UUID) -> bool:
     user = await session.get(User, user_id)
     if not user:
         return False
+    # Refresh sessions reference the user; clear them before the delete.
+    await RefreshTokenRepository(session).delete_all_for_user(user_id)
     await session.delete(user)
     await session.commit()
     return True

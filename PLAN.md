@@ -364,6 +364,57 @@ paths, pipeline surfacing, tool gating). Note: this branch also carries the cher
 decisions commit (`a9d51d3`, pushed to the PR #5 branch after that PR was merged — see PR
 description).*
 
+### Phase 8 — Auth: refresh tokens (scheduled 2026-10-26, implemented 2026-10-26)
+
+Today `POST /auth/login` returns only a stateless JWT (`ACCESS_TOKEN_EXPIRE_MINUTES`,
+6 h as of 2026-10-26) and clients re-send the password on expiry; API keys cover
+machines, not interactive sessions. This phase adds a proper refresh flow.
+
+- [x] Design doc first (`docs/architecture/auth.md`): token format, storage, rotation and
+      revocation policy, threat model (open decision #5 — do not start before it is decided).
+- [x] `refresh_token` table: hash-only storage (SHA-256, same precedent as API keys —
+      plaintext never stored or logged), user FK, expiry, rotation parent link, rotated /
+      revoked flags, client label + `created_at` + `last_used_at` (per-session rows: each
+      login / device mints its own token so one device can be revoked without the others);
+      Alembic migration (create_all survives only as the pytest harness bootstrap).
+- [x] Issue at `POST /auth/login` next to the access token; the access token stays
+      stateless and DB-validated per request (6 h default, decided 2026-10-26 —
+      `get_current_user` checks `is_active` on every call, so the long window does not
+      delay revocation).
+- [x] `POST /auth/refresh`: single-use rotation on every call — a fresh random secret (new
+      hash in a new row, parent-linked); the old row is kept marked `rotated` because reuse
+      detection depends on the history; reuse of an already-rotated token revokes the whole
+      rotation chain (stolen-token detection).
+- [x] Revocation paths: explicit logout endpoint, password change, and admin block —
+      `is_active` must gate refresh the same way it already gates JWT validation and
+      API-key resolution.
+- [x] Cleanup: expired / rotated rows are retained (reuse evidence + audit) and purged
+      after a retention window by a periodic in-process task on the app lifespan — expired
+      tokens presented at use time just get 401, the row stays until the sweep.
+- [x] Settings: `REFRESH_TOKEN_EXPIRE_DAYS` (decided: 90), `REFRESH_TOKEN_RETENTION_DAYS`
+      (+ any rotation knobs) in `src/tools/settings.py` and `.env.template`; no hardcoded
+      values. The access-token default already moved to 360 min.
+- [x] Tests: offline unit tests for issue / rotate / reject / chain-revoke logic; DB paths
+      (table + route) integration-marked against live Postgres.
+- [x] Docs: auth matrix in `docs/api/` and README login section updated; SSE and JSON
+      clients unaffected (refresh is a plain JSON round-trip before streaming starts).
+
+**DoD:** an interactive client holds a long-lived refresh token and mints fresh access
+tokens without re-sending the password; a rotated/reused token is detected and the chain
+revoked; blocked users cannot refresh.
+*Status: **closed 2026-10-26** (same day as scheduling; decision #5 approved as opaque
+DB-backed). New `RefreshToken` table (migration `c84e1f7a20bd`; migration test's
+table set extended) with hash-only storage and per-session rows; `POST /auth/login`
+now returns `{access_token, token_type, refresh_token}`, `POST /auth/refresh` rotates
+single-use (old row marked rotated, child minted in one commit) and replays revoke the
+whole parent-link chain, `POST /auth/logout` is idempotent 204. Revocation wired into
+password change (`PATCH /user/{id}`), admin block, and user deletion. Purge sweep runs
+at startup and every 6 h on the app lifespan (`REFRESH_TOKEN_RETENTION_DAYS=30`);
+session window `REFRESH_TOKEN_EXPIRE_DAYS=90`, sliding per refresh. 8 offline unit
+tests (token shape, state classification, chain walk) + 9 integration tests (rotation,
+replay-kills-chain, logout, expiry retention, block, password change, purge). Design in
+`docs/architecture/auth.md`; API doc auth matrix updated.*
+
 ---
 
 ## 3. Open decisions
@@ -374,6 +425,7 @@ description).*
 | 2 | ~~Laya packaging~~ **Decided 2026-10-18: HTTP sidecar** (`laya[serve]` container or Jev cloud; one Jev-compatible client) | daniel | Phase 7 |
 | 3 | ~~API-key scheme (shape, scopes, rotation)~~ **Decided (approved) 2026-10-18**: implemented design in `docs/architecture/api_keys.md` | daniel | closed |
 | 4 | ~~Keep or drop the `pro` role name~~ **Decided 2026-10-18: renamed to `research`** (data migration renames seeded rows; assignments preserved via role id) | daniel | closed |
+| 5 | ~~Refresh-token format: opaque random token, DB-backed and revocable (API-key precedent) vs stateless signed JWT (no DB hit, but needs a denylist to revoke)~~ **Decided (approved) 2026-10-26: opaque random token, DB-backed** (SHA-256 hash-only, single-use rotation parent chain; access token 6 h, refresh window 90 days) | daniel | closed |
 
 ---
 

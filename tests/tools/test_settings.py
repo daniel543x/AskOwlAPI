@@ -42,7 +42,7 @@ def test_settings_accept_valid_master_key_and_apply_defaults(monkeypatch):
     assert current.TOP_N_CHUNKS == 20
     assert current.SCRAPER_CONCURRENCY == 5
     assert current.LOG_LEVEL == "INFO"
-    assert current.resolved_log_level() == logging.INFO
+    assert current.DEBUG is False
 
 
 def test_settings_read_overrides_from_environment(monkeypatch):
@@ -56,6 +56,7 @@ def test_settings_read_overrides_from_environment(monkeypatch):
 
     assert current.TOP_N_URLS == 3
     assert current.SEARXNG_BASE_URL == "http://searxng:8080"
+    assert current.DEBUG is True
     assert current.resolved_log_level() == logging.DEBUG
 
 

@@ -30,6 +30,7 @@ EXPECTED_TABLES = {
     "modelcatalogentry",
     "modelprovider",
     "persona",
+    "refreshtoken",
     "role",
     "scrapysettings",
     "searchproviderconfig",

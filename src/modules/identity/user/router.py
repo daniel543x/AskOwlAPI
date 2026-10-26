@@ -133,4 +133,10 @@ async def admin_set_user_status(
     session.add(user)
     await session.commit()
     await session.refresh(user)
+
+    if changes.is_active is False:
+        # Blocking kills every live refresh session, not just JWT validation.
+        from ..auth.repository import RefreshTokenRepository
+
+        await RefreshTokenRepository(session).revoke_all_for_user(user.id)
     return user

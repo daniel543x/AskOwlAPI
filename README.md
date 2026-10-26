@@ -176,8 +176,9 @@ automatically at startup; pre-migration databases are adopted non-destructively.
 4.  Run the application: `uv run main.py` (API on `http://localhost:3000`).
 
 Roles (`user`/`research`/`admin`) are seeded at startup; create the first user via
-`POST /user/` and log in via `POST /auth/login` (JWT bearer). Role-gated mode access
-lands with the `research`/`agents` modes.
+`POST /user/` and log in via `POST /auth/login` (JWT bearer + refresh token;
+`POST /auth/refresh` renews the session, `POST /auth/logout` revokes it). Role-gated
+mode access lands with the `research`/`agents` modes.
 
 ### Tests
 
