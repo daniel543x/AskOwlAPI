@@ -37,6 +37,8 @@ Convert the user's question into an optimized search query:
 1. Noise Removal: remove conversational filler.
 2. Keyword Optimization: focus on entities and nouns.
 3. Language Preservation: keep the user's language.
+4. Standalone Resolution: when a conversation is provided, resolve pronouns
+   and omissions using it, so the query works as a standalone web search.
 You MUST respond by calling the SubmitSearchQuery tool with the optimized
 query. Do not answer the question and do not write any prose."""
 
@@ -61,31 +63,59 @@ Context Chunks:
 # <----- Query rewriting ----->
 
 
-async def rewrite_query(model: BaseChatModel, raw_query: str) -> tuple[str, bool]:
-    """Optimize the query via a native tool call.
+def _history_block(history: list[tuple[str, str]]) -> str:
+    """The last conversation turn pair, truncated, for the rewriter."""
+    last_user = ""
+    last_assistant = ""
+    for role, content in history:
+        if role == "user":
+            last_user = content
+        elif role == "assistant":
+            last_assistant = content
+    return (
+        "Conversation so far:\n"
+        f"User: {last_user[:1000]}\n"
+        f"Assistant: {last_assistant[:500]}\n\n"
+    )
 
-    Returns (optimized_query, used_tool_call). On a tool-protocol error the
-    raw query is used; free-form model text is never parsed or trusted.
+
+async def rewrite_query(
+    model: BaseChatModel,
+    raw_query: str,
+    history: list[tuple[str, str]] | None = None,
+) -> tuple[str, bool, bool]:
+    """Optimize the query via a native tool call (WU-1 / AR-4).
+
+    With `history`, the last turn pair is prepended so pronouns and
+    omissions resolve into a standalone query. Returns
+    (optimized_query, used_tool_call, standalone): on a tool-protocol error
+    the raw query is used (standalone False) — free-form model text is
+    never parsed or trusted.
     """
     bound = model.bind_tools([SubmitSearchQuery])
+    prompt = raw_query
+    if history:
+        prompt = f"{_history_block(history)}Current question: {raw_query}"
     response = await bound.ainvoke(
         [
             SystemMessage(content=QUERY_OPTIMIZER_SYSTEM),
-            HumanMessage(content=raw_query),
+            HumanMessage(content=prompt),
         ]
     )
 
     for tool_call in response.tool_calls or []:
         if tool_call.get("name") == "SubmitSearchQuery":
-            optimized = str(tool_call.get("args", {}).get("query", "")).strip()
+            args = tool_call.get("args", {})
+            optimized = str(args.get("query", "")).strip()
             if optimized:
-                return optimized, True
+                standalone = bool(args.get("standalone", True))
+                return optimized, True, standalone
 
     logger.warning(
         "Query rewriting did not use the SubmitSearchQuery tool; "
         "falling back to the raw query (tool-protocol error path)."
     )
-    return raw_query, False
+    return raw_query, False, False
 
 
 # <----- Answer synthesis ----->

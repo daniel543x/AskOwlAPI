@@ -73,12 +73,18 @@ async def search_logic(
     decision_maker=None,
     max_urls: int | None = None,
     query_variations: int = 1,
+    history: list[tuple[str, str]] | None = None,
+    rewrite: str = "standalone",
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the search pipeline, yielding (event, payload) pairs.
 
     When an embedder and DB session are provided, scraped chunks are
     embedded into the vector store and context is retrieved via hybrid
     retrieval (vector candidates -> cross-encoder rerank).
+
+    `rewrite` (WU-1): "standalone" resolves pronouns/omissions against
+    `history`; "simple" is history-free rewriting (the permanent escape
+    hatch); "none" skips the LLM call entirely (eval/agent callers).
 
     Errors are reported as ``error`` events, never raised, so streaming
     consumers always get a well-formed termination.
@@ -93,8 +99,14 @@ async def search_logic(
 
         # <----- Query rewriting (native tool call) ----->
         yield "status", {"step": "Building query for search engine..."}
-        async with _stage("query_optimization"):
-            optimized_query, used_tool_call = await rewrite_query(model, query)
+        if rewrite == "none":
+            optimized_query, used_tool_call, standalone = query, False, False
+        else:
+            history_for_rewrite = history if rewrite == "standalone" else None
+            async with _stage("query_optimization"):
+                optimized_query, used_tool_call, standalone = await rewrite_query(
+                    model, query, history_for_rewrite
+                )
 
         # <----- Query-choice pre-score (optional decision layer) ----->
         if settings.PRE_SCORE_QUERY_CHOICE and decision_maker:
@@ -103,11 +115,17 @@ async def search_logic(
                     decision_maker, query, optimized_query
                 )
 
-        yield "query", {"query": optimized_query, "tool_call": used_tool_call}
+        yield "query", {
+            "query": optimized_query,
+            "tool_call": used_tool_call,
+            "standalone": standalone,
+        }
         if settings.DEBUG:
             yield "debug", {
                 "stage": "query_optimization",
                 "used_tool_call": used_tool_call,
+                "standalone": standalone,
+                "rewrite": rewrite,
             }
 
         # <----- Web search + ranking (optional rule-based fan-out, WU-2) ----->
@@ -234,6 +252,8 @@ async def search_sse_adapter(
     max_urls: int | None = None,
     query_variations: int = 1,
     cache: str = "on",
+    rewrite: str = "standalone",
+    history: list[tuple[str, str]] | None = None,
 ) -> AsyncGenerator[str]:
     """Translate pipeline events into an SSE stream (protocol v2).
 
@@ -242,7 +262,8 @@ async def search_sse_adapter(
 
     With `session` and `user_id`, the turn is persisted to the caller's
     conversation (`conversation_id`, or a new conversation when omitted);
-    prior turns are injected as chat history into the answer step.
+    prior turns are injected as chat history into the rewriting and answer
+    steps (or the explicit `history` argument, e.g. for tool callers).
     """
     event_id = 0
 
@@ -252,12 +273,13 @@ async def search_sse_adapter(
         return _sse_frame(event_id, event, data)
 
     try:
-        conversation, history, created = await _resolve_conversation(
+        conversation, conversation_history, created = await _resolve_conversation(
             session, user_id, conversation_id, query
         )
     except KeyError:
         yield frame("error", {"error": "Conversation not found."})
         return
+    history = history if history is not None else conversation_history
     if conversation is not None:
         yield frame(
             "conversation",
@@ -269,7 +291,7 @@ async def search_sse_adapter(
         async for event, data in search_logic(
             query, searching, model, scraper, ranker, embedder=embedder,
             session=session, decision_maker=decision_maker, max_urls=max_urls,
-            query_variations=query_variations,
+            query_variations=query_variations, history=history, rewrite=rewrite,
         ):
             if event == "answer_ready":
                 yield frame("status", {"step": "Generating answer..."})
@@ -336,6 +358,8 @@ async def search_json_adapter(
     max_urls: int | None = None,
     query_variations: int = 1,
     cache: str = "on",
+    rewrite: str = "standalone",
+    history: list[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Run the pipeline and return the full result as one JSON-ready dict.
 
@@ -345,18 +369,19 @@ async def search_json_adapter(
     error_detail: str | None = None
 
     try:
-        conversation, history, _created = await _resolve_conversation(
+        conversation, conversation_history, _created = await _resolve_conversation(
             session, user_id, conversation_id, query
         )
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+    history = history if history is not None else conversation_history
 
     bypass = cache == "bypass"
     with cache_bypass() if bypass else nullcontext():
         pipeline = search_logic(
             query, searching, model, scraper, ranker, embedder=embedder,
             session=session, decision_maker=decision_maker, max_urls=max_urls,
-            query_variations=query_variations,
+            query_variations=query_variations, history=history, rewrite=rewrite,
         )
         async for event, data in pipeline:
             if event == "error":

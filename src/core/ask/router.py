@@ -71,6 +71,15 @@ class SearchRequest(BaseModel):
             "e.g. for evals or admin debugging."
         ),
     )
+    rewrite: Literal["standalone", "simple", "none"] = Field(
+        default="standalone",
+        description=(
+            'Query rewriting (WU-1). "standalone" resolves pronouns and '
+            'omissions against the conversation history; "simple" is '
+            'history-free rewriting; "none" skips the rewriting LLM call '
+            "entirely (eval/tool callers)."
+        ),
+    )
 
 
 @router.post("/search", dependencies=[Depends(require_scope("search"))])
@@ -101,6 +110,7 @@ async def ask_search(
                 max_urls=request.max_urls,
                 query_variations=request.query_variations,
                 cache=request.cache,
+                rewrite=request.rewrite,
             ),
             media_type="text/event-stream",
         )
@@ -119,5 +129,6 @@ async def ask_search(
         max_urls=request.max_urls,
         query_variations=request.query_variations,
         cache=request.cache,
+        rewrite=request.rewrite,
     )
     return {"answer": answer}

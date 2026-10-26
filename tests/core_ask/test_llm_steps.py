@@ -18,13 +18,16 @@ from tests.core_ask.fakes import ScriptedToolModel, tool_call
 
 async def test_rewrite_query_uses_submit_search_query_tool_call():
     model = ScriptedToolModel(
-        responses=[tool_call("SubmitSearchQuery", {"query": "rust lang"})]
+        responses=[
+            tool_call("SubmitSearchQuery", {"query": "rust lang", "standalone": True})
+        ]
     )
 
-    optimized, used_tool_call = await rewrite_query(model, "what is rust?")
+    optimized, used_tool_call, standalone = await rewrite_query(model, "what is rust?")
 
     assert optimized == "rust lang"
     assert used_tool_call is True
+    assert standalone is True
     assert model.bindings == [[SubmitSearchQuery]]
     assert len(model.calls) == 1
 
@@ -32,10 +35,13 @@ async def test_rewrite_query_uses_submit_search_query_tool_call():
 async def test_rewrite_query_falls_back_to_raw_query_without_tool_call():
     model = ScriptedToolModel(responses=[AIMessage(content="just prose, no tool")])
 
-    optimized, used_tool_call = await rewrite_query(model, "original question")
+    optimized, used_tool_call, standalone = await rewrite_query(
+        model, "original question"
+    )
 
     assert optimized == "original question"
     assert used_tool_call is False
+    assert standalone is False
 
 
 async def test_rewrite_query_ignores_other_tool_calls():
@@ -43,10 +49,67 @@ async def test_rewrite_query_ignores_other_tool_calls():
         responses=[tool_call("SomeOtherTool", {"query": "nope"})]
     )
 
-    optimized, used_tool_call = await rewrite_query(model, "raw q")
+    optimized, used_tool_call, standalone = await rewrite_query(model, "raw q")
 
     assert optimized == "raw q"
     assert used_tool_call is False
+    assert standalone is False
+
+
+# <----- Standalone (history-aware) rewriting (WU-1 / AR-4) ----->
+
+
+HISTORY = [
+    ("user", "how do cars work?"),
+    ("assistant", "Cars use internal combustion engines."),
+]
+
+
+async def test_history_is_prepended_to_the_rewriter_prompt():
+    model = ScriptedToolModel(
+        responses=[
+            tool_call(
+                "SubmitSearchQuery", {"query": "how do electric cars work"}
+            )
+        ]
+    )
+
+    await rewrite_query(model, "and what about electric ones?", HISTORY)
+
+    prompt = model.calls[0][1]  # human message content after the system message
+    assert "Conversation so far:" in prompt
+    assert "how do cars work?" in prompt
+    assert "and what about electric ones?" in prompt
+
+
+async def test_standalone_flag_flows_from_the_tool_call():
+    model = ScriptedToolModel(
+        responses=[
+            tool_call(
+                "SubmitSearchQuery",
+                {"query": "electric cars", "standalone": False},
+            )
+        ]
+    )
+
+    _, _, standalone = await rewrite_query(model, "electric cars", HISTORY)
+
+    assert standalone is False
+
+
+async def test_history_truncates_long_turns():
+    long_history = [("user", "u" * 2000), ("assistant", "a" * 2000)]
+    model = ScriptedToolModel(
+        responses=[tool_call("SubmitSearchQuery", {"query": "q"})]
+    )
+
+    await rewrite_query(model, "follow-up", long_history)
+
+    prompt = model.calls[0][1]
+    user_line = prompt.split("User: ")[1].split("\n")[0]
+    assistant_line = prompt.split("Assistant: ")[1].split("\n")[0]
+    assert len(user_line) == 1000
+    assert len(assistant_line) == 500
 
 
 # <----- generate_cited_answer ----->
