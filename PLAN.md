@@ -103,6 +103,18 @@ Defects (fix in Phase 0 unless noted):
   (not 403) so ids cannot be probed, matching the personas convention. `POST /user`
   stays open as registration. Covered by 4 integration tests (anonymous 401, foreign
   404, self 200, admin 200/204); docs auth matrix + users page updated.
+- Found 2026-10-26 (flagged by a task agent building the API client; verified live):
+  every commit-then-read auth path returned 500 in production — `POST /auth/refresh` on
+  success (`rotate()`'s commit expires the loaded `User`, then reading `user.id` raises
+  `MissingGreenlet`), API-key requests (`resolve()` commits `last_used_at`, the caller
+  then reads `api_key.id`), admin block and password-change serialization. Root cause
+  is systemic, not per-route: production request sessions ran with the default
+  `expire_on_commit=True` while the whole test suite (conftest) runs `False`, so the
+  class was invisible to every test. **Fixed 2026-10-26** (`fix/session-expiry` branch):
+  app sessions are created with `expire_on_commit=False` — matching the test harness
+  and the Phase 3 `probe_providers` refresh precedent; regression test pins the session
+  configuration (`tests/tools/test_db_session.py`). Verified live: successful refresh,
+  API-key request, admin block all 200.
 
 ---
 
