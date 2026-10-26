@@ -35,5 +35,9 @@ async def init_db(engine: AsyncEngine) -> None:
 
 # For Dependency
 async def get_session() -> AsyncGenerator[AsyncSession]:
-    async with AsyncSession(engine) as session:
+    # expire_on_commit=False matches the test harness (conftest) and keeps
+    # post-commit attribute reads (token rotation, API-key last_used,
+    # admin block) from triggering sync lazy refreshes, which raise
+    # MissingGreenlet in async context — the trap PLAN Phase 3 documents.
+    async with AsyncSession(engine, expire_on_commit=False) as session:
         yield session
