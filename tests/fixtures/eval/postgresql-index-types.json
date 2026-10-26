@@ -1,0 +1,28 @@
+{
+  "query": "postgresql index types",
+  "relevant_urls": [
+    "https://docs.example/postgresql-indexes"
+  ],
+  "search_results": [
+    {
+      "title": "Postgresql index types",
+      "snippet": "btree, gin, gist and hash indexes in postgresql",
+      "url": "https://docs.example/postgresql-indexes"
+    },
+    {
+      "title": "Postgresql tuning",
+      "snippet": "postgresql query tuning with indexes",
+      "url": "https://docs.example/tuning"
+    }
+  ],
+  "pages": [
+    {
+      "url": "https://docs.example/postgresql-indexes",
+      "content": "# Index types\n\nPostgresql provides btree indexes for equality and range scans, gin indexes for full text, and gist indexes for geometric data.\n\n## Choosing\n\nPick the postgresql index type from the query pattern."
+    },
+    {
+      "url": "https://docs.example/tuning",
+      "content": "# Tuning\n\nPostgresql query tuning starts with explain analyze and the right indexes."
+    }
+  ]
+}

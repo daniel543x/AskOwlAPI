@@ -1,0 +1,28 @@
+{
+  "query": "kubernetes statefulset vs deployment",
+  "relevant_urls": [
+    "https://docs.example/statefulsets"
+  ],
+  "search_results": [
+    {
+      "title": "StatefulSets in kubernetes",
+      "snippet": "statefulset versus deployment differences in kubernetes",
+      "url": "https://docs.example/statefulsets"
+    },
+    {
+      "title": "Kubernetes workloads",
+      "snippet": "kubernetes deployment objects explained",
+      "url": "https://docs.example/workloads"
+    }
+  ],
+  "pages": [
+    {
+      "url": "https://docs.example/statefulsets",
+      "content": "# StatefulSet\n\nA kubernetes statefulset keeps stable network identities and persistent storage across pod rescheduling, unlike a deployment.\n\n## When to use\n\nUse statefulsets for databases and queues that need ordered rollout."
+    },
+    {
+      "url": "https://docs.example/workloads",
+      "content": "# Deployments\n\nA kubernetes deployment manages stateless replicas with rolling updates and rollback."
+    }
+  ]
+}

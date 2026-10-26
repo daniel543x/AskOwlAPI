@@ -24,8 +24,10 @@ class CitedAnswer(BaseModel):
     answer: str = Field(
         description=(
             "The final answer in Markdown. Base it strictly on the provided "
-            "context chunks and cite sources inline as [Source](URL) right "
-            "after each claim. If the context does not contain the answer, "
+            "context chunks and cite them with bracketed numbers referring "
+            "to the numbered context chunks, e.g. [1] or [3], placed right "
+            "after each claim; only cite numbers that exist among the "
+            "context chunks. If the context does not contain the answer, "
             "say so explicitly instead of guessing."
         )
     )

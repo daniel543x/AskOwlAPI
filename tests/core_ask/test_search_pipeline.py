@@ -75,9 +75,11 @@ async def test_sse_happy_path_event_sequence(monkeypatch):
         "context",
         "status",  # generating answer
     ]
-    # One message event per streamed answer delta, then the terminator.
-    assert set(names[8:-1]) == {"message"}
-    assert len(names[8:-1]) >= 1
+    # One message event per streamed answer delta, then the terminal
+    # citations event (WU-9) and the terminator.
+    assert set(names[8:-2]) == {"message"}
+    assert len(names[8:-2]) >= 1
+    assert names[-2] == "citations"
     assert names[-1] == "done"
 
 
@@ -125,6 +127,58 @@ async def test_sse_max_urls_limits_sources_event():
     sources = dict(events)["sources"]["sources"]
     assert len(sources) == 1
     assert sources[0]["url"] == "http://example.com/a"
+
+
+# <----- Numbered citations (WU-9 / AR-5) ----->
+
+
+async def test_context_is_numbered_per_chunk():
+    events = parse_frames(await collect_sse())
+
+    context = dict(events)["context"]["context"]
+    assert context.startswith("[1] ")
+    assert "\n\n---\n\n[2] " in context
+
+
+async def test_sse_citations_event_carries_validated_refs():
+    # The fixture pipeline yields 4 chunks (2 pages x 2 header sections);
+    # citing all of them reaches full coverage.
+    answer = "One. [1] Two. [2] Three. [3] Four. [4]"
+    model = make_model(answer=answer)
+    events = parse_frames(await collect_sse(model=model))
+
+    citations = dict(events)["citations"]
+    assert [c["n"] for c in citations["citations"]] == [1, 2, 3, 4]
+    assert citations["citations"][0]["url"] == "http://example.com/a"
+    assert citations["coverage"] == 1.0
+    assert citations["unknown"] == []
+    # Terminal order: citations lands right before done.
+    names = [name for name, _ in events]
+    assert names.index("citations") == len(names) - 2
+
+
+async def test_sse_citations_event_surfaces_unknown_refs():
+    model = make_model(answer="As shown in [9].")
+    events = parse_frames(await collect_sse(model=model))
+
+    citations = dict(events)["citations"]
+    assert citations["unknown"] == [9]
+    assert citations["coverage"] == 0.0
+
+
+async def test_json_mode_returns_citation_fields():
+    model = make_model(answer="Claim one. [1]")
+    result = await search_json_adapter(
+        "what is rust?",
+        FakeSearchProvider(),
+        model,
+        make_scraper(),
+        FakeRanker(),
+    )
+
+    assert [c["n"] for c in result["citations"]] == [1, 2, 3, 4]
+    assert result["citation_coverage"] == 0.25
+    assert result["unknown_citations"] == []
 
 
 async def test_sse_context_and_message_events():

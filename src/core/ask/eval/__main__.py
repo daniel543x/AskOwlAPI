@@ -89,10 +89,47 @@ def _decision_requested() -> bool:
     return settings.PRE_SCORE_SEARCH_FILTER or settings.PRE_SCORE_CHUNK_FILTER
 
 
+async def _dump_fixtures(entries, directory: Path) -> int:
+    """Capture one fixture per golden query from the live stack (AR-9)."""
+    from .fixtures import EvalFixture, save_fixture
+
+    raw_search = SanityFilteringProvider(SearXNGProvider())
+    scraper = TrafilturaScraper()
+    written = 0
+    for entry in entries:
+        results = await raw_search.search(entry.query)
+        pages = await scraper.scrape([{"url": r.url} for r in results]) or []
+        fixture = EvalFixture(
+            query=entry.query,
+            relevant_urls=entry.relevant_urls,
+            search_results=[
+                {"title": r.title, "snippet": r.snippet, "url": r.url}
+                for r in results
+            ],
+            pages=[
+                {"url": p.get("url", ""), "content": p.get("content", "")}
+                for p in pages
+                if p.get("content")
+            ],
+        )
+        path = save_fixture(fixture, directory)
+        written += 1
+        print(f"[eval] fixture written: {path}")
+    print(f"[eval] {written} fixtures written to {directory}")
+    return 0
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--golden", type=Path, default=None)
     parser.add_argument("--out", type=Path, default=Path("eval_reports"))
+    parser.add_argument(
+        "--dump-fixtures",
+        type=Path,
+        default=None,
+        help="Capture raw search results and scraped pages per golden query "
+        "into DIR as offline eval fixtures (AR-9) and exit.",
+    )
     parser.add_argument(
         "--embedder-id",
         type=uuid.UUID,
@@ -126,6 +163,9 @@ async def main() -> int:
     configure_logging(settings)
     entries = load_golden_set(args.golden)
     print(f"[eval] {len(entries)} golden queries")
+
+    if args.dump_fixtures:
+        return await _dump_fixtures(entries, args.dump_fixtures)
 
     reports = []
     async with engine.begin() as conn:

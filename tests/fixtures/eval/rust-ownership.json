@@ -1,0 +1,28 @@
+{
+  "query": "rust ownership",
+  "relevant_urls": [
+    "https://docs.example/rust-ownership"
+  ],
+  "search_results": [
+    {
+      "title": "Rust ownership explained",
+      "snippet": "ownership and borrowing in the rust language",
+      "url": "https://docs.example/rust-ownership"
+    },
+    {
+      "title": "The rust programming language book",
+      "snippet": "the rust book chapter on ownership",
+      "url": "https://docs.example/rust-book"
+    }
+  ],
+  "pages": [
+    {
+      "url": "https://docs.example/rust-ownership",
+      "content": "# Ownership\n\nRust ownership rules decide how values move between bindings. Each value has one owner and ownership transfers on assignment.\n\n## Borrowing\n\nBorrowing lets references access values without taking ownership."
+    },
+    {
+      "url": "https://docs.example/rust-book",
+      "content": "# The Book\n\nThe rust programming language book introduces ownership early because it is central to the language."
+    }
+  ]
+}

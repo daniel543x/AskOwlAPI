@@ -24,6 +24,7 @@ from ....modules.scrapy.providers.base import IScraper
 from ....modules.search_engine.providers.base import ISearchProvider
 from ....tools.cache_flags import cache_bypass
 from ....tools.settings import settings
+from ...tools.citations import validate_citations
 from ...tools.pre_scores import choose_query, grounding_confidence
 from ...tools.toolbox import AskToolbox
 from .llm_steps import (
@@ -153,6 +154,7 @@ async def search_logic(
                 "sources": toolbox.ranked_sources,
                 "query": query,
                 "optimized_query": optimized_query,
+                "citations": toolbox.citations,
             },
         )
 
@@ -283,6 +285,18 @@ async def search_sse_adapter(
                     answer_text = "".join(answer_parts)
                     await _save_turn(session, conversation, data["query"], answer_text)
 
+                    validation = validate_citations(
+                        answer_text, data["citations"]
+                    )
+                    yield frame(
+                        "citations",
+                        {
+                            "citations": data["citations"],
+                            "coverage": validation["coverage"],
+                            "unknown": validation["unknown"],
+                        },
+                    )
+
                     if settings.PRE_SCORE_GROUNDING_CHECK and decision_maker:
                         supported = await grounding_confidence(
                             decision_maker, data["query"], data["context"], answer_text
@@ -382,6 +396,8 @@ async def search_json_adapter(
 
     await _save_turn(session, conversation, answer_data["query"], answer)
 
+    validation = validate_citations(answer, answer_data["citations"])
+
     grounding = None
     if settings.PRE_SCORE_GROUNDING_CHECK and decision_maker:
         grounding = await grounding_confidence(
@@ -394,6 +410,9 @@ async def search_json_adapter(
         "sources": answer_data["sources"],
         "context": context,
         "answer": answer,
+        "citations": answer_data["citations"],
+        "citation_coverage": validation["coverage"],
+        "unknown_citations": validation["unknown"],
         "conversation_id": str(conversation.id) if conversation else None,
         "grounding_supported": (
             round(grounding, 4) if grounding is not None else None

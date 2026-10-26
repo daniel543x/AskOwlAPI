@@ -60,6 +60,10 @@ done). Read the current phase in `PLAN.md` before starting.
   keep the "Open decisions" table current — do not silently decide open items.
 - New DB tables: until Alembic lands (PLAN Phase 6), extend the `create_all` bootstrap in
   `src/init.py` and note the schema change in the PR description.
+- Retrieval/answer behavior changes (anything touching `src/core/tools/toolbox.py`,
+  `src/core/tools/chunking.py`, `llm_steps.py` prompts, or retrieval settings) must re-run the
+  offline fixture eval (`uv run pytest tests/test_eval_offline.py`) and quote the delta in the
+  PR description (PLAN Phase 9 / AR-9).
 
 ## Guardrails
 
