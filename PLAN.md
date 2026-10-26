@@ -115,6 +115,15 @@ Defects (fix in Phase 0 unless noted):
   and the Phase 3 `probe_providers` refresh precedent; regression test pins the session
   configuration (`tests/tools/test_db_session.py`). Verified live: successful refresh,
   API-key request, admin block all 200.
+- Found in `ref/Recomendation.md` (task agent), re-verified 2026-10-26: `ROLE_HIERARCHY`
+  in `src/modules/llm_provider/selection.py` was never updated when `pro` was renamed to
+  `research` (decision #4), so `required_role="research"` resolved to level 0 and **every
+  plain user passed the model-catalog role gate**. **Fixed 2026-10-26** (`fix/role-hierarchy`
+  branch): hierarchy is `{"user": 0, "research": 1, "admin": 2}` with the legacy `pro`
+  name aliased; unknown role names now **deny** (least privilege) instead of opening the
+  gate, and the admin create/update API rejects unknown names up front. Full access-matrix
+  unit tests plus an invariant test asserting every seeded role has a hierarchy entry;
+  `docs/api/models.md` role wording updated.
 
 ---
 

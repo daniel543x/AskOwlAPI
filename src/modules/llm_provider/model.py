@@ -3,6 +3,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+from pydantic import field_validator
 from sqlalchemy import DateTime, PrimaryKeyConstraint
 from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 
@@ -21,6 +22,27 @@ class ProviderHealth(StrEnum):
     DOWN = "down"
     LOCAL = "local"  # in-process implementation, nothing to probe
     UNKNOWN = "unknown"
+
+
+KNOWN_REQUIRED_ROLES = ("user", "research", "admin")
+
+
+def validate_role_name(role: str) -> str:
+    """Catalog entries may only gate on known role names (or nothing).
+
+    A typo here would otherwise deny everyone (the gate is strict), so
+    the admin API rejects it up front; the legacy pre-rename `pro` is
+    accepted for old payloads.
+    """
+    name = role.strip()
+    if not name:
+        return ""
+    if name in KNOWN_REQUIRED_ROLES or name == "pro":
+        return name
+    raise ValueError(
+        f"Unknown required_role '{name}'; "
+        f"valid values: {list(KNOWN_REQUIRED_ROLES)} (or empty for no gate)."
+    )
 
 
 # <----- Tables ----->
@@ -125,6 +147,11 @@ class ModelEntryCreate(SQLModel):
     capabilities: list[str] = []
     vector_dims: int | None = None
 
+    @field_validator("required_role")
+    @classmethod
+    def _validate_required_role(cls, role: str) -> str:
+        return validate_role_name(role)
+
 
 class ModelEntryUpdate(SQLModel):
     model_name: str | None = None
@@ -134,6 +161,13 @@ class ModelEntryUpdate(SQLModel):
     required_role: str | None = None
     capabilities: list[str] | None = None
     vector_dims: int | None = None
+
+    @field_validator("required_role")
+    @classmethod
+    def _validate_required_role(cls, role: str | None) -> str | None:
+        if role is None:
+            return role
+        return validate_role_name(role)
 
 
 class ModelEntryRead(SQLModel):

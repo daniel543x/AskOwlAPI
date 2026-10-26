@@ -14,7 +14,9 @@ responses expose only `has_api_key: bool`).
 ### `GET /models?kind=chat`
 
 Catalog entries **available to the calling user's roles** (each entry carries
-a `required_role`; `user` sees `user`-level entries, `admin` sees all).
+a `required_role` = `user` / `research` / `admin` / empty for no gate;
+`user` sees `user`-level entries, `research` adds elevated entries, `admin`
+sees all; unknown role names on an entry gate it against everyone).
 Optional `kind` filter (`chat` | `embedding` | `reranker` | `decision`).
 Returns `ModelEntry[]`:
 
@@ -109,7 +111,9 @@ one; sending `null` clears it). `ProviderRead`:
 - `DELETE /entries/{model_id}` — delete (204, 404 unknown).
 
 `ModelEntryCreate` (fields as in the `ModelEntry[]` item above, plus
-`provider_id`; `default_params` is an opaque object of provider kwargs).
+`provider_id`; `default_params` is an opaque object of provider kwargs;
+`required_role` must name a known role or be empty — unknown names are
+rejected at creation).
 `ModelEntryUpdate`: all fields optional; the entry's `kind` and `provider_id`
 are immutable. Responses are `ModelEntry` (admin sees all entries regardless
 of `required_role`).
