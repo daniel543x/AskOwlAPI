@@ -24,7 +24,9 @@ from ...tools.errors import ToolProtocolError
 from ...tools.toolbox import AskToolbox
 from .agent import agent_logic
 from .budgets import Budget
+from .compression import compress
 from .planner import plan_subquestions
+from .reflection import reflect
 from .synthesis import NO_CONTEXT_REPORT, generate_report, stream_report
 
 logger = logging.getLogger(__name__)
@@ -80,6 +82,7 @@ async def research_logic(
     ranker: IRanker,
     embedder: IEmbedder | None = None,
     session=None,
+    max_iterations: int = 1,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the research pipeline, yielding (event, payload) pairs.
 
@@ -88,9 +91,16 @@ async def research_logic(
     get_context) exactly like the search pipeline, minus query rewriting
     (the planner already produced search-shaped sub-questions).
 
+    WU-7: with `max_iterations > 1` (clamped to RESEARCH_MAX_ROUNDS), a
+    reflect -> follow-up-search loop runs after the first pass; WU-8
+    compresses each sub-question's context into a running brief when
+    `RESEARCH_COMPRESS_CONTEXT` is on. Defaults reproduce the single-pass,
+    raw-context pipeline exactly.
+
     Errors are reported as ``error`` events, never raised.
     """
     budget = make_budget()
+    rounds_allowed = max(1, min(max_iterations, settings.RESEARCH_MAX_ROUNDS))
     try:
         chunk_repo = ChunkRepository(session) if session is not None else None
         toolbox = AskToolbox(searching, scraper, ranker, embedder, chunk_repo)
@@ -106,19 +116,12 @@ async def research_logic(
         if settings.DEBUG:
             yield "debug", {"stage": "planning", "used_tool_call": used_tool_call}
 
-        # <----- Per-sub-question gathering (shared tools) ----->
         gathered: list[dict[str, Any]] = []
-        for index, subquestion in enumerate(subquestions, start=1):
-            if budget.exhausted:
-                reason = budget.stop_reason() or "budget exhausted"
-                yield "status", {
-                    "step": f"Skipping remaining sub-questions: {reason}."
-                }
-                break
+        briefs: dict[str, str] = {}
+        researched: list[str] = []
 
-            yield "status", {
-                "step": f"Researching {index}/{len(subquestions)}: {subquestion}"
-            }
+        async def gather(subquestion: str) -> AsyncGenerator[PipelineEvent]:
+            """Search + absorb one query into `gathered` (brief when on)."""
             start = time.perf_counter()
 
             await toolbox.web_search(subquestion)
@@ -131,6 +134,23 @@ async def research_logic(
             await toolbox.fetch_pages()
             context = await toolbox.get_context(subquestion)
             budget.spend_tokens(context)
+
+            if settings.RESEARCH_COMPRESS_CONTEXT:
+                try:
+                    context = await compress(
+                        model,
+                        subquestion,
+                        briefs.get(subquestion, ""),
+                        context,
+                        settings.SUBQUESTION_BRIEF_TOKENS,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Context compression failed; keeping raw context.",
+                        exc_info=True,
+                    )
+                briefs[subquestion] = context
+                budget.spend_tokens(context)
 
             yield "context", {
                 "context": context,
@@ -153,6 +173,71 @@ async def research_logic(
                         "context": context,
                     }
                 )
+            researched.append(subquestion)
+
+        # <----- Per-sub-question gathering (shared tools) ----->
+        for index, subquestion in enumerate(subquestions, start=1):
+            if budget.exhausted:
+                reason = budget.stop_reason() or "budget exhausted"
+                yield "status", {
+                    "step": f"Skipping remaining sub-questions: {reason}."
+                }
+                break
+
+            yield "status", {
+                "step": f"Researching {index}/{len(subquestions)}: {subquestion}"
+            }
+            async for event_name, data in gather(subquestion):
+                yield event_name, data
+
+        # <----- Reflect -> follow-up loop (WU-7) ----->
+        # rounds_allowed counts total gathering passes: pass 1 is the
+        # planner pass, so reflection cycles = rounds_allowed - 1.
+        rounds_used = 0
+        if rounds_allowed > 1 and gathered:
+            for round_no in range(1, rounds_allowed):
+                if budget.exhausted:
+                    break
+                missing_info = await reflect(
+                    model,
+                    query,
+                    [
+                        {"subquestion": g["subquestion"], "context": g["context"]}
+                        for g in gathered
+                    ],
+                )
+                budget.spend_iteration()
+                rounds_used = round_no
+                yield "reflect", {
+                    "missing": missing_info.missing,
+                    "follow_ups": missing_info.follow_up_queries,
+                    "rounds_used": rounds_used,
+                }
+                if settings.DEBUG:
+                    yield "debug", {
+                        "stage": "reflection",
+                        "round": round_no,
+                        "missing": len(missing_info.missing),
+                    }
+
+                follow_ups = [
+                    q
+                    for q in missing_info.follow_up_queries
+                    if q.strip() and q.strip() not in researched
+                ]
+                if not follow_ups:
+                    break
+
+                for follow_up in follow_ups:
+                    if budget.exhausted:
+                        break
+                    yield "status", {
+                        "step": f"Follow-up (round {round_no}): {follow_up}"
+                    }
+                    async for event_name, data in gather(follow_up):
+                        yield event_name, data
+
+        stop_reason = budget.stop_reason() if budget.exhausted else None
 
         if not gathered:
             yield (
@@ -162,6 +247,8 @@ async def research_logic(
                     "gathered": [],
                     "no_context": True,
                     "subquestions": subquestions,
+                    "rounds_used": rounds_used,
+                    "budget_stop_reason": None,
                 },
             )
             return
@@ -173,6 +260,8 @@ async def research_logic(
                 "gathered": gathered,
                 "no_context": False,
                 "subquestions": subquestions,
+                "rounds_used": rounds_used,
+                "budget_stop_reason": stop_reason,
             },
         )
 
@@ -189,6 +278,7 @@ async def research_sse_adapter(
     ranker: IRanker,
     embedder: IEmbedder | None = None,
     session=None,
+    max_iterations: int = 1,
 ) -> AsyncGenerator[str]:
     """Translate research events into an SSE stream.
 
@@ -203,7 +293,8 @@ async def research_sse_adapter(
         return f"event: {event}\nid: {event_id}\ndata: {json.dumps(data)}\n\n"
 
     pipeline = research_logic(
-        query, searching, model, scraper, ranker, embedder=embedder, session=session
+        query, searching, model, scraper, ranker, embedder=embedder, session=session,
+        max_iterations=max_iterations,
     )
     async for event, data in pipeline:
         if event == "answer_ready":
@@ -218,7 +309,16 @@ async def research_sse_adapter(
                 report = stream_report(model, data["query"], data["gathered"])
                 async for delta in report:
                     yield frame("message", {"text": delta})
-                yield frame("done", {"status": "completed"})
+                if data.get("budget_stop_reason"):
+                    yield frame(
+                        "done",
+                        {
+                            "status": "budget_exhausted",
+                            "reason": data["budget_stop_reason"],
+                        },
+                    )
+                else:
+                    yield frame("done", {"status": "completed"})
             except ToolProtocolError as e:
                 logger.exception("Report streaming failed for query: %s", query)
                 yield frame("error", {"error": str(e)})
@@ -256,13 +356,15 @@ async def research_json_adapter(
     ranker: IRanker,
     embedder: IEmbedder | None = None,
     session=None,
+    max_iterations: int = 1,
 ) -> dict[str, Any]:
     """Run the research pipeline and return the full result as one dict."""
     answer_data: dict[str, Any] | None = None
     error_detail: str | None = None
 
     pipeline = research_logic(
-        query, searching, model, scraper, ranker, embedder=embedder, session=session
+        query, searching, model, scraper, ranker, embedder=embedder, session=session,
+        max_iterations=max_iterations,
     )
     async for event, data in pipeline:
         if event == "error":
@@ -303,5 +405,7 @@ async def research_json_adapter(
         "query": answer_data["query"],
         "subquestions": answer_data["subquestions"],
         "gathered": answer_data["gathered"],
+        "rounds_used": answer_data["rounds_used"],
+        "budget_stop_reason": answer_data["budget_stop_reason"],
         "report": report,
     }

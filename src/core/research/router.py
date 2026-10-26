@@ -57,6 +57,15 @@ async def ask_research(
     stream: bool = Query(
         True, description="Enable/Disable streaming response. Default True."
     ),
+    max_iterations: int = Query(
+        1,
+        ge=1,
+        description=(
+            "Research depth (WU-7): 1 = planner-once (default, today's "
+            "behavior); >1 enables the reflect -> follow-up loop, clamped "
+            "server-side to RESEARCH_MAX_ROUNDS."
+        ),
+    ),
     searching: ISearchProvider = Depends(get_search_provider),
     model: BaseChatModel = Depends(get_llm_client),
     scraper: IScraper = Depends(get_scraper),
@@ -74,6 +83,7 @@ async def ask_research(
                 ranker,
                 embedder=embedder,
                 session=session,
+                max_iterations=max_iterations,
             ),
             media_type="text/event-stream",
         )
@@ -86,6 +96,7 @@ async def ask_research(
         ranker,
         embedder=embedder,
         session=session,
+        max_iterations=max_iterations,
     )
 
 
