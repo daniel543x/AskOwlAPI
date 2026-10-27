@@ -7,14 +7,19 @@ no models. This is a regression gate on the retrieval *plumbing* (sanity
 filter, dedup, chunking, vector retrieval, context selection, citation
 numbering), not a semantic leaderboard:
 
-Baselines recorded at introduction (PR 3, wu/citations):
+Baselines recorded with the deterministic (crc32) embedder and total-order
+retrieval, PR 7 (wu/hybrid):
     baseline config: mean recall@n = 1.000, mean MRR = 1.000
-    vector config:   mean recall@n = 1.000 (candidates cover every chunk)
-The gates below pin those values minus a small margin; lower any gate only
-with an explicit, quoted eval delta in the PR.
+    vector config:   mean recall@n = 1.000, mean MRR = 0.833
+    hybrid alpha=0.5: recall@n = 1.000, mean MRR = 0.833
+(The hash embedder is not semantic, so vector/hybrid MRR below baseline is
+expected; the live golden-set A/B judges ranking quality.) The gates pin
+those values minus a small margin; lower any gate only with an explicit,
+quoted eval delta in the PR.
 """
 
 import asyncio
+import zlib
 from pathlib import Path
 
 from src.core.ask.eval.fixtures import (
@@ -47,7 +52,9 @@ class HashEmbedder:
         for token in "".join(
             c if c.isalnum() else " " for c in text.lower()
         ).split():
-            bucket = hash(token) % self.dims
+            # crc32, not hash(): str hashing is per-process salted and
+            # would make the "deterministic" embedder machine-dependent.
+            bucket = zlib.crc32(token.encode()) % self.dims
             vector[bucket] += 1.0
         norm = sum(v * v for v in vector) ** 0.5 or 1.0
         return [v / norm for v in vector]
@@ -66,14 +73,28 @@ class InMemoryChunkRepo:
         self.stored.extend(zip(chunks, embeddings, strict=True))
         return len(chunks)
 
+    async def fts_candidates(self, query, k):
+        query_tokens = set(query.lower().split())
+        return [
+            {
+                "content": c["content"],
+                "metadata": dict(c.get("metadata") or {}),
+                "url": (c.get("metadata") or {}).get("url", ""),
+            }
+            for c, _ in self.stored
+            if query_tokens & set(c["content"].lower().split())
+        ][:k]
+
     async def vector_candidates(self, query_embedding, k, conversation_id=None):
         def cosine(a, b):
             dot = sum(x * y for x, y in zip(a, b, strict=True))
             return dot  # vectors are normalized
 
+        # Total order (score, then content): cosine ties must not fall
+        # back to insertion order influenced by salted hash seeds.
         scored = sorted(
             ((cosine(query_embedding, e), c) for c, e in self.stored),
-            key=lambda pair: -pair[0],
+            key=lambda pair: (-pair[0], pair[1]["content"]),
         )
         return [
             {
@@ -121,6 +142,7 @@ async def test_offline_eval_vector_path_meets_recorded_gate():
     report = await _run("vector", fixtures, HashEmbedder(), chunk_repo)
 
     assert report.mean_recall >= 0.95, f"vector recall regressed: {report.mean_recall}"
+    assert report.mean_mrr >= 0.80, f"vector MRR regressed: {report.mean_mrr}"
     assert all(r.vector_retrieval for r in report.results), (
         "vector config silently fell back to in-memory ranking"
     )
@@ -168,3 +190,24 @@ def test_fixture_providers_replay_deterministically():
 
     assert first == second, "replay must be deterministic"
     assert all(page["content"] for page in pages), "fixture pages must have content"
+
+
+async def test_offline_eval_hybrid_alpha_half_meets_vector_gate():
+    """WU-4 alpha A/B on the offline fixtures: the blended pool must not
+    lose to the vector gate (exact-token queries are where the lexical
+    leg should help). Default alpha stays 1.0 until the live golden-set
+    A/B (alpha in {1.0, 0.7, 0.5}) passes.
+    """
+    fixtures = load_fixtures(FIXTURE_DIR)
+    report = await _run("hybrid-0.5", fixtures, HashEmbedder(), InMemoryChunkRepo())
+
+    assert report.mean_recall >= 0.95, (
+        f"hybrid recall regressed: {report.mean_recall}"
+    )
+    # Measured hybrid baseline (hash embedder): MRR 0.833 — below the pure
+    # configs, expected: a hash embedder is not semantic, so blending in
+    # the lexical leg reorders the pool. Recall parity is the plumbing
+    # gate here; whether blending helps real ranking is exactly what the
+    # live golden-set alpha A/B ({1.0, 0.7, 0.5}) decides, and the default
+    # stays alpha=1.0 until then.
+    assert report.mean_mrr >= 0.80, f"hybrid MRR regressed: {report.mean_mrr}"

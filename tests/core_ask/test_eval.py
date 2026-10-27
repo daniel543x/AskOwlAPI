@@ -179,6 +179,18 @@ class FakeChunkRepo:
     async def existing_hashes(self, hashes):
         return set()  # nothing pre-stored: everything is embedded anew
 
+    async def fts_candidates(self, query, k):
+        query_tokens = set(query.lower().split())
+        return [
+            {
+                "content": chunk["content"],
+                "metadata": dict(chunk.get("metadata") or {}),
+                "url": (chunk.get("metadata") or {}).get("url", ""),
+            }
+            for chunk, _ in self.stored
+            if query_tokens & set(chunk["content"].lower().split())
+        ][:k]
+
     async def vector_candidates(self, query_embedding, k, conversation_id=None):
         def cosine(a, b):
             dot = sum(x * y for x, y in zip(a, b, strict=True))

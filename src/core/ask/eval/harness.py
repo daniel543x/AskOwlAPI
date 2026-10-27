@@ -145,11 +145,13 @@ async def evaluate_query(
     embedder: EmbedderLike | None = None,
     chunk_repo: ChunkStoreLike | None = None,
     decision_maker: IDecisionMaker | None = None,
+    hybrid_alpha: float = 1.0,
 ) -> QueryResult:
     """Run retrieval (no LLM) for one golden query and score it."""
     toolbox = AskToolbox(
         searching, scraper, ranker, embedder, chunk_repo,
         decision_maker=decision_maker,
+        hybrid_alpha=hybrid_alpha,
     )
 
     start = time.perf_counter()
@@ -179,11 +181,13 @@ async def run_eval(
     embedder: EmbedderLike | None = None,
     chunk_repo: ChunkStoreLike | None = None,
     decision_maker: IDecisionMaker | None = None,
+    hybrid_alpha: float = 1.0,
 ) -> EvalReport:
     """Evaluate one configuration over the whole golden set."""
     results = [
         await evaluate_query(
-            entry, searching, scraper, ranker, embedder, chunk_repo, decision_maker
+            entry, searching, scraper, ranker, embedder, chunk_repo,
+            decision_maker, hybrid_alpha,
         )
         for entry in entries
     ]

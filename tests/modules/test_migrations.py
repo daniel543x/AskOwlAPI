@@ -104,6 +104,20 @@ async def test_upgrade_downgrade_upgrade_on_clean_database(scratch_db):
         await asyncio.to_thread(command.upgrade, config, "head")
         assert await _tables(scratch_db) == EXPECTED_TABLES
 
+        # WU-4: the lexical leg's GIN expression index exists after
+        # upgrade and disappears on downgrade.
+        engine = create_async_engine(url)
+        async with engine.connect() as conn:
+            index = await conn.scalar(
+                text(
+                    "SELECT indexname FROM pg_indexes "
+                    "WHERE tablename = 'chunk' "
+                    "AND indexname = 'ix_chunk_content_fts'"
+                )
+            )
+        await engine.dispose()
+        assert index == "ix_chunk_content_fts"
+
         config.set_main_option("sqlalchemy.url", url)
         await asyncio.to_thread(command.downgrade, config, "base")
         assert await _tables(scratch_db) == {"alembic_version"}

@@ -79,6 +79,40 @@ class ChunkRepository:
             raise
         return {row.content_hash for row in result}
 
+    async def fts_candidates(self, query: str, k: int) -> list[dict[str, Any]]:
+        """Lexical candidates via Postgres full-text search (WU-4).
+
+        The 'simple' configuration keeps the leg language-agnostic; the
+        GIN expression index (migration) makes the `to_tsvector` filter
+        index-backed. Same row shape as `vector_candidates` so the fusion
+        stage can treat the legs uniformly.
+        """
+        statement = text(
+            "SELECT id, content, metadata, source_url, "
+            "ts_rank(to_tsvector('simple', content), "
+            "websearch_to_tsquery('simple', :query)) AS fts_rank "
+            "FROM chunk "
+            "WHERE to_tsvector('simple', content) "
+            "@@ websearch_to_tsquery('simple', :query) "
+            "ORDER BY fts_rank DESC LIMIT :k"
+        )
+        try:
+            result = await self.session.execute(statement, {"query": query, "k": k})
+        except SQLAlchemyError:
+            # Same rollback discipline as vector_candidates: a failed
+            # lexical leg must not poison the shared session.
+            await self.session.rollback()
+            raise
+        return [
+            {
+                "content": row.content,
+                "metadata": dict(row.metadata or {}),
+                "url": row.source_url,
+                "fts_rank": float(row.fts_rank),
+            }
+            for row in result
+        ]
+
     async def vector_candidates(
         self,
         query_embedding: list[float],
