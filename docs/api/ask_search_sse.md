@@ -12,6 +12,11 @@ to `QUERY_VARIATIONS_MAX`.
 `cache` (`"on"` | `"bypass"`, default `"on"`) — `"bypass"` forces fresh
 search + scrape for this turn (evals, admin debugging); a cache hit is
 otherwise invisible except latency.
+`rewrite` (`"standalone"` | `"simple"` | `"none"`, default `"standalone"`) —
+query rewriting mode (WU-1): `"standalone"` resolves pronouns and omissions
+against the conversation history; `"simple"` is history-free rewriting
+(the permanent escape hatch); `"none"` skips the rewriting LLM call
+entirely (eval/tool callers).
 
 Current protocol version: **v2** (breaking; there are no external consumers yet).
 Changelog at the bottom.
@@ -37,7 +42,7 @@ and can be used for reassembly/debugging.
 |----------------|-----------------------------------------------------|----------------------------------------------------------|
 | `conversation` | `{"conversation_id": "<uuid>", "created": bool}`    | First event (when history persistence is on): the conversation this turn is stored under. `created: false` when an existing `conversation_id` was continued. |
 | `status`       | `{"step": "..."}`                                    | Progress updates between stages.                          |
-| `query`        | `{"query": "...", "tool_call": true}`                | After query rewriting. `tool_call: false` means the rewrite step fell back to the raw user query (tool-protocol error path). |
+| `query`        | `{"query": "...", "tool_call": true, "standalone": true}` | After query rewriting. `tool_call: false` means the rewrite step fell back to the raw user query (tool-protocol error path). `standalone: false` means the query was not resolved against conversation history (no history, `rewrite: "simple"`/`"none"`, or the model said so). |
 | `sources`      | `{"sources": [{"url": str, "title": str, "score": float (0..1, higher = more relevant), "fusion_score": float or null}, ...]}` | After web search + ranking (top-N URLs, capped by `max_urls` when given). Results are deduped by normalized URL (tracking params and `www.` do not create duplicates), and topically unrelated results are dropped by the sanity filter (`RESULT_SANITY_FILTER`). `fusion_score` is the deterministic engine-agreement/domain-authority/position score used as the cross-encoder tie-breaker. |
 | `context`      | `{"context": "...", "chunks": int, "vector_retrieval": bool}` | After fetch + chunk ranking; the exact context given to the answer step. `vector_retrieval: true` when candidates came from the pgvector store (hybrid retrieval) instead of the reranker alone. |
 | `message`      | `{"text": "..."}`                                    | One per streamed answer delta; concatenate for the full answer. |
@@ -148,6 +153,14 @@ The LLM is never used without a tool call:
   (HTTP 422 with an explanation).
 
 ## Changelog
+
+### v2.6 (2026-10-26, WU-1 — additive)
+
+- Added: `query` event payload field `standalone` (whether the rewritten
+  query was resolved against conversation history).
+- Added: request body field `rewrite` (`"standalone"` default, `"simple"`,
+  `"none"`). With history, "and what about electric ones?" now rewrites to
+  a query containing the resolved topic.
 
 ### v2.5 (2026-10-26, WU-9 — additive)
 

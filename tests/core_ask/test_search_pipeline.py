@@ -49,6 +49,8 @@ async def collect_sse(**kwargs) -> list[str]:
             kwargs.get("scraper", make_scraper()),
             kwargs.get("ranker", FakeRanker()),
             max_urls=kwargs.get("max_urls"),
+            history=kwargs.get("history"),
+            rewrite=kwargs.get("rewrite", "standalone"),
         )
     ]
 
@@ -104,6 +106,48 @@ async def test_sse_query_event_carries_optimized_query():
     by_name = dict(events)
     assert by_name["query"]["query"] == "rust programming language"
     assert by_name["query"]["tool_call"] is True
+    # WU-1: standalone flag rides along (True when the rewrite resolved).
+    assert by_name["query"]["standalone"] is True
+
+
+# <----- Standalone (history-aware) rewriting (WU-1 / AR-4) ----->
+
+
+async def test_standalone_mode_passes_history_to_the_rewriter():
+    model = make_model()
+    history = [("user", "how do cars work?"), ("assistant", "Combustion engines.")]
+    events = parse_frames(
+        await collect_sse(model=model, query="and electric ones?", history=history)
+    )
+
+    rewrite_prompt = model.calls[0][1]
+    assert "Conversation so far:" in rewrite_prompt
+    assert "how do cars work?" in rewrite_prompt
+    assert "and electric ones?" in rewrite_prompt
+    assert dict(events)["query"]["standalone"] is True
+
+
+async def test_simple_mode_ignores_history():
+    model = make_model()
+    history = [("user", "how do cars work?"), ("assistant", "Combustion engines.")]
+    await collect_sse(model=model, history=history, rewrite="simple")
+
+    rewrite_prompt = model.calls[0][1]
+    assert "Conversation so far:" not in rewrite_prompt
+
+
+async def test_none_mode_skips_the_rewriting_llm_call():
+    model = make_model(answer=ANSWER_TEXT)
+    events = parse_frames(await collect_sse(model=model, rewrite="none"))
+
+    # Only the answer LLM call happened; the raw query went straight through.
+    assert len(model.calls) == 1
+    by_name = dict(events)
+    assert by_name["query"] == {
+        "query": "what is rust?",
+        "tool_call": False,
+        "standalone": False,
+    }
 
 
 async def test_sse_sources_event_lists_ranked_results():

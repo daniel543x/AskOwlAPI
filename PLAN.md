@@ -474,8 +474,11 @@ is noted; each PR is one branch.
       fixture eval (`tests/fixtures/eval/`, `--dump-fixtures` in the eval CLI,
       `tests/test_eval_offline.py` regression gates recall/MRR/citation coverage,
       `eval-offline` CI job, CRUSH.md process rule).
-- [ ] PR 4 `wu/rewrite` (WU-1 / AR-4): history-aware standalone rewriting
-      (`rewrite` param; **deliberate default flip: `"standalone"`**).
+- [x] PR 4 `wu/rewrite` (WU-1 / AR-4): history-aware standalone rewriting —
+      `SubmitSearchQuery.standalone`, `rewrite_query(model, query, history)` with
+      truncated last-turn block, `SearchRequest.rewrite`
+      (`"standalone"` default — **deliberate default flip**; `"simple"` escape
+      hatch, `"none"` skips the LLM call), `query` event gains `standalone`.
 - [ ] PR 5 `wu/research-loop` (WU-7 + WU-8 / AR-3): reflect–search loop + brief
       compression (`RESEARCH_COMPRESS_CONTEXT` ships false).
 - [ ] PR 6 `wu/recency-scope` (WU-11 + WU-5 / AR-7 + AR-8): dates in prompts and

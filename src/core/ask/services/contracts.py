@@ -12,9 +12,18 @@ class SubmitSearchQuery(BaseModel):
 
     query: str = Field(
         description=(
-            "The optimized web search query: entities and nouns only, no "
-            "conversational filler, same language as the user's question."
+            "The optimized standalone web search query: resolves all "
+            "pronouns and omissions from the conversation, entities and "
+            "nouns only, no conversational filler, same language as the "
+            "user's question. Add a year qualifier when recency matters."
         )
+    )
+    standalone: bool = Field(
+        default=True,
+        description=(
+            "False if the raw query needed no conversation context and "
+            "was returned essentially unchanged."
+        ),
     )
 
 
