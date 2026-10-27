@@ -479,8 +479,14 @@ is noted; each PR is one branch.
       truncated last-turn block, `SearchRequest.rewrite`
       (`"standalone"` default — **deliberate default flip**; `"simple"` escape
       hatch, `"none"` skips the LLM call), `query` event gains `standalone`.
-- [ ] PR 5 `wu/research-loop` (WU-7 + WU-8 / AR-3): reflect–search loop + brief
-      compression (`RESEARCH_COMPRESS_CONTEXT` ships false).
+- [x] PR 5 `wu/research-loop` (WU-7 + WU-8 / AR-3): reflect -> follow-up search
+      loop behind `GET /ask/research?max_iterations` (clamped to
+      `RESEARCH_MAX_ROUNDS=2`; 1 = planner-once default), new `reflect` SSE event,
+      budget-exhausted done status for research; running-brief compression
+      (`ContextBrief`, `SUBQUESTION_BRIEF_TOKENS=2000`) behind
+      `RESEARCH_COMPRESS_CONTEXT` (**ships false**, flips only after a
+      report-quality pass). Reflect/compress degrade deterministically on
+      tool-protocol errors.
 - [ ] PR 6 `wu/recency-scope` (WU-11 + WU-5 / AR-7 + AR-8): dates in prompts and
       chunk metadata, `recency_bias`, `chunk.conversation_id` + scoping + HNSW +
       eviction (`scope` default ships `"global"`; flip is an open decision).

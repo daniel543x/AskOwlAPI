@@ -127,6 +127,16 @@ class Settings(BaseSettings):
     # Estimated tokens (chars/4) across all LLM calls of one research/agent run.
     AGENT_TOKEN_BUDGET: int = 60_000
 
+    # <----- Research reflection loop (WU-7 / WU-8) ----->
+    # Request-level max_iterations clamps to this ceiling (1 = the old
+    # planner-once behavior; >1 enables the reflect -> follow-up loop).
+    RESEARCH_MAX_ROUNDS: int = 2
+    # Running-brief size per sub-question when compression is on (WU-8).
+    SUBQUESTION_BRIEF_TOKENS: int = 2000
+    # Compression ships OFF: it flips to true only after a golden-set /
+    # report-quality pass (WU-8's own gate). Off = raw-context synthesis.
+    RESEARCH_COMPRESS_CONTEXT: bool = False
+
     # <----- API keys ----->
     # Per-key fixed-window limit for X-API-Key traffic (requests/minute).
     API_KEY_RATE_LIMIT_PER_MINUTE: int = 60

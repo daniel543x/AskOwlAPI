@@ -46,3 +46,33 @@ class SubmitOutcome(BaseModel):
             "answered; say what could not be established instead of guessing."
         )
     )
+
+
+class MissingInfo(BaseModel):
+    """Reflection step (WU-7): what is still unknown, and the next search."""
+
+    missing: list[str] = Field(
+        description=(
+            "Concrete facts or angles still missing from the research "
+            "report. Empty when the gathered context already suffices."
+        )
+    )
+    follow_up_queries: list[str] = Field(
+        description=(
+            "Up to 3 standalone web-search queries for the missing items. "
+            "Empty when nothing is missing."
+        ),
+        max_length=3,
+    )
+
+
+class ContextBrief(BaseModel):
+    """Compression step (WU-8): merge new context into a running brief."""
+
+    brief: str = Field(
+        description=(
+            "Updated running summary: previously established facts merged "
+            "with the new context, every numeric value kept exact (never "
+            "rounded or generalized), source URLs kept inline."
+        )
+    )

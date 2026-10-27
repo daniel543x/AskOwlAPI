@@ -254,3 +254,125 @@ async def test_every_llm_call_has_tools_bound():
     for tools in model.bindings:
         names = [getattr(t, "__name__", "") for t in tools]
         assert names  # never a bound-less LLM call
+
+
+# <----- Reflect -> follow-up loop (WU-7 / WU-8) ----->
+
+
+async def collect_research(model, **kwargs):
+    deps = make_deps()
+    deps.update(kwargs)
+    stream = [
+        frame
+        async for frame in research_sse_adapter("query", model=model, **deps)
+    ]
+    return parse_frames(stream)
+
+
+@pytest.mark.asyncio
+async def test_loop_stays_single_pass_by_default():
+    model = research_model(subquestions=["sq one", "sq two"])
+    parsed = await collect_research(model)
+
+    assert "reflect" not in [n for n, _ in parsed]
+    assert parsed[-1] == ("done", {"status": "completed"})
+
+
+@pytest.mark.asyncio
+async def test_reflect_event_and_follow_ups_run_once():
+    # Round 1 reflects, finds two missing angles, both are gathered, and the
+    # round budget (max_iterations=2 -> one reflection cycle) stops the loop.
+    model = ScriptedToolModel(
+        responses=[
+            tool_call("ResearchPlan", {"subquestions": ["sq one"]}),
+            tool_call(
+                "MissingInfo",
+                {
+                    "missing": ["benchmarks", "alternatives"],
+                    "follow_up_queries": ["sq two", "sq three"],
+                },
+            ),
+            tool_call("ResearchReport", {"report": "## Findings\nDone."}),
+        ]
+    )
+    parsed = await collect_research(model, max_iterations=2)
+
+    names = [n for n, _ in parsed]
+    assert names.count("reflect") == 1
+    reflect_payload = next(d for n, d in parsed if n == "reflect")
+    assert reflect_payload["missing"] == ["benchmarks", "alternatives"]
+    assert reflect_payload["rounds_used"] == 1
+    assert names.count("sources") == 3  # sq one + two follow-ups
+    assert [d["subquery"] for n, d in parsed if n == "context"] == [
+        "sq one", "sq two", "sq three",
+    ]
+    assert parsed[-1] == ("done", {"status": "completed"})
+
+
+@pytest.mark.asyncio
+async def test_sufficient_context_ends_the_loop_after_one_reflection():
+    model = ScriptedToolModel(
+        responses=[
+            tool_call("ResearchPlan", {"subquestions": ["sq one"]}),
+            tool_call("MissingInfo", {"missing": [], "follow_up_queries": []}),
+            tool_call("ResearchReport", {"report": "## Findings\nDone."}),
+        ]
+    )
+    parsed = await collect_research(model, max_iterations=2)
+
+    assert [n for n, _ in parsed].count("reflect") == 1
+    assert [n for n, _ in parsed].count("sources") == 1  # no follow-up gathers
+
+
+@pytest.mark.asyncio
+async def test_max_iterations_clamped_to_settings_ceiling(monkeypatch):
+    from src.tools.settings import settings
+
+    monkeypatch.setattr(settings, "RESEARCH_MAX_ROUNDS", 1)
+    model = research_model(subquestions=["sq one"])
+    parsed = await collect_research(
+        model,
+        max_iterations=5,  # would request 4 reflection cycles
+    )
+
+    assert "reflect" not in [n for n, _ in parsed]
+
+
+@pytest.mark.asyncio
+async def test_budget_exhaustion_stops_loop_and_reports_reason(monkeypatch):
+    from src.tools.settings import settings
+
+    # Shrunken token budget: exhausted during/after the first gather, so
+    # sub-question two and the reflection never run and the report degrades
+    # to briefs-so-far with the budget done-status.
+    monkeypatch.setattr(settings, "AGENT_TOKEN_BUDGET", 60)
+    model = research_model(subquestions=["sq one", "sq two"])
+    parsed = await collect_research(model, max_iterations=2)
+
+    done = parsed[-1]
+    assert done[0] == "done"
+    assert done[1]["status"] == "budget_exhausted"
+    assert "token" in done[1]["reason"]
+    # Only the first sub-question was gathered before exhaustion.
+    assert [d["subquery"] for n, d in parsed if n == "context"] == ["sq one"]
+
+
+@pytest.mark.asyncio
+async def test_compression_on_replaces_contexts_with_briefs(monkeypatch):
+    from src.tools.settings import settings
+
+    monkeypatch.setattr(settings, "RESEARCH_COMPRESS_CONTEXT", True)
+    model = ScriptedToolModel(
+        responses=[
+            tool_call("ResearchPlan", {"subquestions": ["sq one"]}),
+            tool_call("ContextBrief", {"brief": "Brief: 80.0% adoption."}),
+            tool_call("ResearchReport", {"report": "## Section\nFindings."}),
+        ]
+    )
+    result = await research_json_adapter(
+        "query", model=model, **make_deps(), max_iterations=1
+    )
+
+    assert result["gathered"][0]["context"] == "Brief: 80.0% adoption."
+    assert "first paragraph" not in result["gathered"][0]["context"]
+    assert result["rounds_used"] == 0
