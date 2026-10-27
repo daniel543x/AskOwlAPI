@@ -27,6 +27,19 @@ jobs:
       # Unit tests are fully offline: no Postgres, no network, no models.
       - run: uv run pytest -q
 
+  # Offline fixture eval (AR-9): a standalone regression gate on retrieval
+  # plumbing + citation numbering. Kept as its own job so a gate failure is
+  # visible at a glance; it needs no services and is fast.
+  eval-offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+      - run: uv sync --frozen --all-extras
+      - run: uv run pytest tests/test_eval_offline.py -q
+
   integration-tests:
     runs-on: ubuntu-latest
     services:

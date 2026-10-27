@@ -466,8 +466,14 @@ is noted; each PR is one branch.
       `cache: "on" | "bypass"` request param. Defaults reproduce today's pipeline;
       a cache hit is invisible except latency. *Stacked on PR 1 (shares
       `normalize_url` keys and the dedup merge).*
-- [ ] PR 3 `wu/citations` (WU-9 / AR-5 + AR-9): numbered `[n]` citations + validator +
-      offline fixture eval in CI.
+- [x] PR 3 `wu/citations` (WU-9 / AR-5 + AR-9): numbered `[n]` context chunks +
+      `CitedAnswer` contract update, deterministic validator
+      (`src/core/tools/citations.py`), terminal SSE `citations` event + JSON
+      `citations`/`citation_coverage`/`unknown_citations` (unknown refs surfaced,
+      never rewritten; legacy `[Source](URL)` styling still accepted). AR-9: offline
+      fixture eval (`tests/fixtures/eval/`, `--dump-fixtures` in the eval CLI,
+      `tests/test_eval_offline.py` regression gates recall/MRR/citation coverage,
+      `eval-offline` CI job, CRUSH.md process rule).
 - [ ] PR 4 `wu/rewrite` (WU-1 / AR-4): history-aware standalone rewriting
       (`rewrite` param; **deliberate default flip: `"standalone"`**).
 - [ ] PR 5 `wu/research-loop` (WU-7 + WU-8 / AR-3): reflect–search loop + brief

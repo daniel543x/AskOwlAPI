@@ -42,11 +42,15 @@ query. Do not answer the question and do not write any prose."""
 
 ANSWER_SYSTEM_TEMPLATE = """You are an expert AI assistant for a search engine.
 Answer the user's question using STRICTLY the context chunks below, which
-were gathered by the search tools.
+were gathered by the search tools. Each chunk is prefixed with its citation
+number, e.g. `[1]`.
 
 Guidelines:
 1. Base the answer ONLY on the provided context.
-2. Cite sources with Markdown links: [Source](URL) right after each claim.
+2. Cite claims with bracketed numbers referring to those context chunks,
+   e.g. `[1]` or `[3]`, placed right after each claim. Cite only numbers
+   that exist among the context chunks; every factual claim needs at least
+   one citation.
 3. If the context does not contain the answer, say so explicitly.
 4. You MUST respond by calling the CitedAnswer tool with the final answer.
 

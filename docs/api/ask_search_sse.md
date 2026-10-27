@@ -42,6 +42,7 @@ and can be used for reassembly/debugging.
 | `context`      | `{"context": "...", "chunks": int, "vector_retrieval": bool}` | After fetch + chunk ranking; the exact context given to the answer step. `vector_retrieval: true` when candidates came from the pgvector store (hybrid retrieval) instead of the reranker alone. |
 | `message`      | `{"text": "..."}`                                    | One per streamed answer delta; concatenate for the full answer. |
 | `grounding`    | `{"supported": float (0..1)}`                        | After the last `message`, only when the decision layer (Jev/Laya) is configured and `PRE_SCORE_GROUNDING_CHECK=true`: confidence that the answer is grounded in the context. |
+| `citations`    | `{"citations": [{"n": int, "url": str, "title": str}, ...], "coverage": float (0..1), "unknown": [int, ...]}` | Terminal-before-`done` (WU-9): the numbered context chunks provided to the model, the fraction of them the answer actually cited, and any `[n]` refs that do not resolve. |
 | `done`         | `{"status": "completed"}` or `{"status": "no_context"}` | Terminal success. `no_context`: nothing could be extracted; a deterministic notice was emitted as the only `message`. |
 | `error`        | `{"error": "..."}`                                   | Terminal failure (no `done` follows).                     |
 | `debug`        | any                                                  | Only when `DEBUG=true`. Stage tracing details; not a stable contract. |
@@ -107,8 +108,11 @@ result arrives as one JSON document wrapped in an `answer` object:
     "query": "what is rust?",
     "optimized_query": "rust programming language",
     "sources": [{"url": "...", "title": "...", "score": 0.93, "fusion_score": 0.62}],
-    "context": "...",
-    "answer": "Rust is ... [Source](https://...)",
+    "context": "[1] ...",
+    "answer": "Rust is ... [1]",
+    "citations": [{"n": 1, "url": "...", "title": ""}],
+    "citation_coverage": 1.0,
+    "unknown_citations": [],
     "conversation_id": "3fa8...",
     "grounding_supported": 0.9871
   }
@@ -120,6 +124,11 @@ result arrives as one JSON document wrapped in an `answer` object:
 - `grounding_supported` (`float | null`) — decision-layer grounding
   confidence, rounded to 4 decimals; `null` when no decision layer is
   configured.
+- `citations` / `citation_coverage` / `unknown_citations` (WU-9) — the
+  numbered context chunks, the fraction of them cited by the answer (0.0
+  when none were provided), and refs that do not resolve. Answers cite
+  context chunks as `[n]`; legacy `[Source](URL)` styling still works in
+  the text but only `[n]` refs are validated.
 
 An unknown `conversation_id` is a 404. Errors that occur before the answer
 step are HTTP errors (500 pipeline failure, 502 answer-contract violation).
@@ -139,6 +148,17 @@ The LLM is never used without a tool call:
   (HTTP 422 with an explanation).
 
 ## Changelog
+
+### v2.5 (2026-10-26, WU-9 — additive)
+
+- Added: terminal `citations` event before `done` — the numbered context
+  chunks, `coverage` (fraction of them the answer cited), and `unknown`
+  refs that do not resolve. Context is now provided to the model as
+  numbered chunks (`[1]`, `[2]`, ...) and the answer contract cites `[n]`.
+  Unknown refs are surfaced, never rewritten.
+- Added: JSON fields `citations`, `citation_coverage`, `unknown_citations`.
+- Transitional: legacy `[Source](URL)` styling still works in answer text,
+  but only `[n]` refs are validated.
 
 ### v2.4 (2026-10-26, WU-10 + WU-2 — additive)
 

@@ -110,6 +110,7 @@ class AskToolbox:
         self.pages: list[dict[str, Any]] = []
         self.chunks: list[dict[str, Any]] = []
         self.selected_chunks: list[dict[str, Any]] = []
+        self.citations: list[dict[str, Any]] = []
         self.used_vector_retrieval = False
         # Hygiene stats surfaced in the debug SSE event (WU-3).
         self.search_stats: dict[str, int] = {}
@@ -354,9 +355,28 @@ class AskToolbox:
             self.selected_chunks = await filter_chunks(
                 self.decision_maker, query, self.selected_chunks
             )
-        return "\n\n---\n\n".join(
-            chunk.get("content", "") for chunk in self.selected_chunks
-        )
+        return self._numbered_context()
+
+    def _numbered_context(self) -> str:
+        """Join chunks as `[n] content` and record the citation list (WU-9).
+
+        The answer contract cites these numbers; `validate_citations`
+        resolves them against `self.citations` after generation.
+        """
+        parts: list[str] = []
+        citations: list[dict[str, Any]] = []
+        for index, chunk in enumerate(self.selected_chunks, start=1):
+            parts.append(f"[{index}] {chunk.get('content', '')}")
+            metadata = chunk.get("metadata") or {}
+            citations.append(
+                {
+                    "n": index,
+                    "url": metadata.get("url") or chunk.get("url") or "",
+                    "title": metadata.get("title") or "",
+                }
+            )
+        self.citations = citations
+        return "\n\n---\n\n".join(parts)
 
     async def _vector_candidates(self, query: str) -> list[dict[str, Any]]:
         assert self.embedder and self.chunk_repo
