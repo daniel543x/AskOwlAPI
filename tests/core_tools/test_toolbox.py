@@ -1,6 +1,8 @@
 import json
 
 from src.core.tools.toolbox import AskToolbox, build_tools
+from src.modules.search_engine.providers.base import SearchResult
+from src.tools.settings import settings
 from tests.core_ask.fakes import (
     FakeRanker,
     FakeScraper,
@@ -12,6 +14,160 @@ from tests.core_ask.fakes import (
 
 def make_toolbox(scraper=None) -> AskToolbox:
     return AskToolbox(FakeSearchProvider(), scraper or make_scraper(), FakeRanker())
+
+
+# <----- Search-result hygiene (AR-2 / WU-3) ----->
+
+
+async def test_web_search_sanity_filter_on_by_default():
+    # The exact Phase 3 poisoning: peptide results for a Rust query.
+    provider = FakeSearchProvider(
+        results=[
+            SearchResult("Rust book", "ownership in rust", "https://a.dev/rust"),
+            SearchResult("Peptides", "amino acids", "https://b.dev/peptides"),
+        ]
+    )
+    toolbox = AskToolbox(provider, make_scraper(), FakeRanker())
+
+    await toolbox.web_search("rust ownership")
+
+    assert [s["url"] for s in toolbox.ranked_sources] == ["https://a.dev/rust"]
+    assert toolbox.search_stats["dropped_results"] == 1
+
+
+async def test_web_search_sanity_filter_off_keeps_everything(monkeypatch):
+    monkeypatch.setattr(settings, "RESULT_SANITY_FILTER", False)
+    provider = FakeSearchProvider(
+        results=[
+            SearchResult("Rust book", "ownership in rust", "https://a.dev/rust"),
+            SearchResult("Peptides", "amino acids", "https://b.dev/peptides"),
+        ]
+    )
+    toolbox = AskToolbox(provider, make_scraper(), FakeRanker())
+
+    await toolbox.web_search("rust ownership")
+
+    assert {s["url"] for s in toolbox.ranked_sources} == {
+        "https://a.dev/rust",
+        "https://b.dev/peptides",
+    }
+    assert toolbox.search_stats["dropped_results"] == 0
+
+
+async def test_web_search_dedup_merges_engine_duplicates():
+    provider = FakeSearchProvider(
+        results=[
+            SearchResult(
+                "Short",
+                "rust book page",
+                "https://doc.rust-lang.org/book?utm_source=google",
+            ),
+            SearchResult(
+                "The Rust Programming Language book",
+                "a longer snippet about the rust book",
+                "https://www.doc.rust-lang.org/book",
+            ),
+            SearchResult("Unrelated", "other rust page", "https://example.com/other"),
+        ]
+    )
+    toolbox = AskToolbox(provider, make_scraper(), FakeRanker())
+
+    await toolbox.web_search("rust book")
+
+    urls = [s["url"] for s in toolbox.ranked_sources]
+    assert urls == ["https://doc.rust-lang.org/book", "https://example.com/other"]
+    merged_entry = toolbox.ranked_sources[0]
+    # Longest title survives the merge (fixes the exact-URL title lookup).
+    assert merged_entry["title"] == "The Rust Programming Language book"
+    assert merged_entry["fusion_score"] > 0
+    assert toolbox.search_stats["merged_results"] == 1
+
+
+async def test_web_search_tiebreak_by_fusion():
+    # Equal cross-encoder scores (FakeRanker: all 1.0); the duplicated
+    # result has higher fusion (engine agreement) and must come first.
+    provider = FakeSearchProvider(
+        results=[
+            SearchResult("Single", "rust one", "https://example.com/single"),
+            SearchResult("Dup A", "rust two", "https://example.com/dup"),
+            SearchResult(
+                "Dup B", "rust three", "https://example.com/dup?utm_campaign=x"
+            ),
+        ]
+    )
+    toolbox = AskToolbox(provider, make_scraper(), FakeRanker())
+
+    await toolbox.web_search("rust")
+
+    assert [s["url"] for s in toolbox.ranked_sources] == [
+        "https://example.com/dup",
+        "https://example.com/single",
+    ]
+
+
+async def test_web_search_tiebreak_off_preserves_ranker_order(monkeypatch):
+    monkeypatch.setattr(settings, "FUSION_TIEBREAK", False)
+    provider = FakeSearchProvider(
+        results=[
+            SearchResult("Single", "rust one", "https://example.com/single"),
+            SearchResult("Dup A", "rust two", "https://example.com/dup"),
+            SearchResult(
+                "Dup B", "rust three", "https://example.com/dup?utm_campaign=x"
+            ),
+        ]
+    )
+    toolbox = AskToolbox(provider, make_scraper(), FakeRanker())
+
+    await toolbox.web_search("rust")
+
+    # Ranker order (first-seen) stands; the merge still collapses duplicates.
+    assert [s["url"] for s in toolbox.ranked_sources] == [
+        "https://example.com/single",
+        "https://example.com/dup",
+    ]
+
+
+async def test_web_search_max_urls_clamped():
+    results = [
+        SearchResult(f"title {i}", f"rust snippet {i}", f"https://example.com/{i}")
+        for i in range(30)
+    ]
+
+    default_toolbox = AskToolbox(
+        FakeSearchProvider(results=results), make_scraper(), FakeRanker()
+    )
+    await default_toolbox.web_search("rust")
+    assert len(default_toolbox.ranked_sources) == settings.TOP_N_URLS
+
+    single_toolbox = AskToolbox(
+        FakeSearchProvider(results=results), make_scraper(), FakeRanker(), max_urls=1
+    )
+    await single_toolbox.web_search("rust")
+    assert len(single_toolbox.ranked_sources) == 1
+    assert single_toolbox.search_stats["max_urls"] == 1
+
+    over_toolbox = AskToolbox(
+        FakeSearchProvider(results=results), make_scraper(), FakeRanker(), max_urls=999
+    )
+    await over_toolbox.web_search("rust")
+    assert len(over_toolbox.ranked_sources) == settings.TOP_N_URLS_MAX
+
+
+async def test_web_search_fusion_floor_never_empties(monkeypatch):
+    monkeypatch.setattr(settings, "URL_SELECTION_MIN_FUSION", 1.0)
+    results = [
+        SearchResult(f"title {i}", f"rust snippet {i}", f"https://example.com/{i}")
+        for i in range(6)
+    ]
+    toolbox = AskToolbox(
+        FakeSearchProvider(results=results), make_scraper(), FakeRanker()
+    )
+
+    await toolbox.web_search("rust")
+
+    # Unreachable floor still keeps the three best-scoring results.
+    assert len(toolbox.ranked_sources) == 3
+    assert toolbox.search_stats["dropped_results"] == 3
 
 
 async def test_web_search_returns_ranked_json_and_stores_state():

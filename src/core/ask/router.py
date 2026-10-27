@@ -46,6 +46,14 @@ class SearchRequest(BaseModel):
     conversation_id: uuid.UUID | None = Field(
         default=None, description="Continue an existing conversation (own only).",
     )
+    max_urls: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Cap on URLs selected for this turn (WU-6). Omit for the "
+            "TOP_N_URLS default; clamped server-side to TOP_N_URLS_MAX."
+        ),
+    )
 
 
 @router.post("/search", dependencies=[Depends(require_scope("search"))])
@@ -73,6 +81,7 @@ async def ask_search(
                 user_id=user.id,
                 conversation_id=request.conversation_id,
                 decision_maker=decision_maker,
+                max_urls=request.max_urls,
             ),
             media_type="text/event-stream",
         )
@@ -88,5 +97,6 @@ async def ask_search(
         user_id=user.id,
         conversation_id=request.conversation_id,
         decision_maker=decision_maker,
+        max_urls=request.max_urls,
     )
     return {"answer": answer}

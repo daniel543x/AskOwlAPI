@@ -11,6 +11,7 @@ from src.core.research.services.pipeline import (
     research_json_adapter,
     research_sse_adapter,
 )
+from src.tools.settings import settings
 from tests.core_ask.fakes import (
     FakeRanker,
     FakeScraper,
@@ -19,6 +20,17 @@ from tests.core_ask.fakes import (
     make_scraper,
     tool_call,
 )
+
+
+@pytest.fixture(autouse=True)
+def _sanity_filter_off(monkeypatch):
+    """Synthetic sub-questions ("sq one") share no tokens with the fixture
+    snippets, so the production sanity filter would drop every result and
+    these tests would exercise the no-context path instead of the pipeline
+    mechanics. Result hygiene has dedicated tests in
+    tests/modules/test_sanity_filter.py and test_toolbox.py.
+    """
+    monkeypatch.setattr(settings, "RESULT_SANITY_FILTER", False)
 
 
 def research_model(

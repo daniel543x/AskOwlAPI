@@ -29,9 +29,13 @@ pytestmark = pytest.mark.integration
 
 
 def research_llm() -> ScriptedToolModel:
+    # The sub-question must be topically related to the FakeSearchProvider
+    # fixtures (they mention "rust"): the production sanity filter (AR-2,
+    # default on) drops results sharing no content token with the query, and
+    # this test exercises the full route with production defaults.
     return ScriptedToolModel(
         responses=[
-            tool_call("ResearchPlan", {"subquestions": ["sq one"]}),
+            tool_call("ResearchPlan", {"subquestions": ["rust subquestion"]}),
             tool_call(
                 "ResearchReport", {"report": "## Section\nFindings. [Source](u)"}
             ),
@@ -107,7 +111,7 @@ async def test_research_allowed_for_pro_role(auth_client, db_session):
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["subquestions"] == ["sq one"]
+    assert body["subquestions"] == ["rust subquestion"]
     assert "Findings" in body["report"]
 
 

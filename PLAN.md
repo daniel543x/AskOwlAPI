@@ -447,6 +447,33 @@ tests (token shape, state classification, chain walk) + 9 integration tests (rot
 replay-kills-chain, logout, expiry retention, block, password change, purge). Design in
 `docs/architecture/auth.md`; API doc auth matrix updated.*
 
+### Phase 9 — Workflow upgrades (`ref/WORKFLOW_UPGRADES.md`, plan: `ref/WORKFLOW_IMPLEMENTATION_PLAN.md`)
+
+User-facing retrieval knobs in the order of the WU rollout sequence. Every
+step ships its default at "current behavior" except where a deliberate flip
+is noted; each PR is one branch.
+
+- [x] PR 1 `wu/hygiene` (WU-3 + WU-6 / AR-2): URL normalization (`src/tools/urls.py`),
+      sanity filter promoted to production (`RESULT_SANITY_FILTER`, **deliberate
+      default flip: on** — validated by the Phase-3 eval re-run), dedup by
+      normalized URL + fusion tie-break (`src/modules/search_engine/fusion.py`),
+      `max_urls` request cap (`TOP_N_URLS_MAX`), `URL_SELECTION_MIN_FUSION` floor
+      (default off), `debug` event carries `dropped_results`/`merged_results`.
+- [ ] PR 2 `wu/cache` (WU-10 + WU-2 / AR-1): search-result TTL cache, Postgres page
+      cache, embed-skip, rule-based `query_variations`.
+- [ ] PR 3 `wu/citations` (WU-9 / AR-5 + AR-9): numbered `[n]` citations + validator +
+      offline fixture eval in CI.
+- [ ] PR 4 `wu/rewrite` (WU-1 / AR-4): history-aware standalone rewriting
+      (`rewrite` param; **deliberate default flip: `"standalone"`**).
+- [ ] PR 5 `wu/research-loop` (WU-7 + WU-8 / AR-3): reflect–search loop + brief
+      compression (`RESEARCH_COMPRESS_CONTEXT` ships false).
+- [ ] PR 6 `wu/recency-scope` (WU-11 + WU-5 / AR-7 + AR-8): dates in prompts and
+      chunk metadata, `recency_bias`, `chunk.conversation_id` + scoping + HNSW +
+      eviction (`scope` default ships `"global"`; flip is an open decision).
+- [ ] PR 7 `wu/hybrid` (WU-4): lexical + vector RRF fusion behind `hybrid_alpha`
+      (default 1.0 until measured).
+- [ ] PR 8 `wu/modes` (WU-12): mode presets — deferred until a UI client asks.
+
 ---
 
 ## 3. Open decisions

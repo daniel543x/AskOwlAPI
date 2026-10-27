@@ -48,6 +48,7 @@ async def collect_sse(**kwargs) -> list[str]:
             kwargs.get("model", make_model(answer=ANSWER_TEXT)),
             kwargs.get("scraper", make_scraper()),
             kwargs.get("ranker", FakeRanker()),
+            max_urls=kwargs.get("max_urls"),
         )
     ]
 
@@ -98,7 +99,6 @@ async def test_sse_frames_have_ids_framing_and_terminator():
 
 async def test_sse_query_event_carries_optimized_query():
     events = parse_frames(await collect_sse())
-
     by_name = dict(events)
     assert by_name["query"]["query"] == "rust programming language"
     assert by_name["query"]["tool_call"] is True
@@ -115,6 +115,16 @@ async def test_sse_sources_event_lists_ranked_results():
     ]
     assert sources[0]["title"] == "Result A"
     assert "score" in sources[0]
+    # WU-3: fusion score rides along on every ranked source.
+    assert sources[0]["fusion_score"] is not None
+
+
+async def test_sse_max_urls_limits_sources_event():
+    events = parse_frames(await collect_sse(max_urls=1))
+
+    sources = dict(events)["sources"]["sources"]
+    assert len(sources) == 1
+    assert sources[0]["url"] == "http://example.com/a"
 
 
 async def test_sse_context_and_message_events():
@@ -237,8 +247,18 @@ async def test_debug_events_emitted_when_debug_enabled(monkeypatch):
         events = parse_frames(await collect_sse())
         names = [name for name, _ in events]
         assert "debug" in names
-        debug_payload = dict(events)["debug"]
-        assert debug_payload["stage"] == "query_optimization"
+        stages = [data["stage"] for name, data in events if name == "debug"]
+        assert "query_optimization" in stages
+        # WU-3: web_search hygiene stats ride a debug event after `sources`.
+        assert "web_search" in stages
+        web_debug = next(
+            data
+            for name, data in events
+            if name == "debug" and data.get("stage") == "web_search"
+        )
+        assert set(web_debug) >= {
+            "stage", "dropped_results", "merged_results", "max_urls",
+        }
     finally:
         monkeypatch.setattr(search_module.settings, "DEBUG", False)
 

@@ -68,6 +68,7 @@ async def search_logic(
     embedder: IEmbedder | None = None,
     session=None,
     decision_maker=None,
+    max_urls: int | None = None,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the search pipeline, yielding (event, payload) pairs.
 
@@ -83,6 +84,7 @@ async def search_logic(
         toolbox = AskToolbox(
             searching, scraper, ranker, embedder, chunk_repo,
             decision_maker=decision_maker,
+            max_urls=max_urls,
         )
 
         # <----- Query rewriting (native tool call) ----->
@@ -114,6 +116,8 @@ async def search_logic(
             return
 
         yield "sources", {"sources": toolbox.ranked_sources}
+        if settings.DEBUG:
+            yield "debug", {"stage": "web_search", **toolbox.search_stats}
 
         # <----- Scraping + chunking ----->
         yield "status", {"step": "Downloading data..."}
@@ -214,6 +218,7 @@ async def search_sse_adapter(
     user_id=None,
     conversation_id=None,
     decision_maker=None,
+    max_urls: int | None = None,
 ) -> AsyncGenerator[str]:
     """Translate pipeline events into an SSE stream (protocol v2).
 
@@ -246,7 +251,7 @@ async def search_sse_adapter(
 
     pipeline = search_logic(
         query, searching, model, scraper, ranker, embedder=embedder,
-        session=session, decision_maker=decision_maker,
+        session=session, decision_maker=decision_maker, max_urls=max_urls,
     )
     async for event, data in pipeline:
         if event == "answer_ready":
@@ -297,6 +302,7 @@ async def search_json_adapter(
     user_id=None,
     conversation_id=None,
     decision_maker=None,
+    max_urls: int | None = None,
 ) -> dict[str, Any]:
     """Run the pipeline and return the full result as one JSON-ready dict.
 
@@ -314,7 +320,7 @@ async def search_json_adapter(
 
     pipeline = search_logic(
         query, searching, model, scraper, ranker, embedder=embedder,
-        session=session, decision_maker=decision_maker,
+        session=session, decision_maker=decision_maker, max_urls=max_urls,
     )
     async for event, data in pipeline:
         if event == "error":
