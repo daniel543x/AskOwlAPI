@@ -12,6 +12,15 @@ to `QUERY_VARIATIONS_MAX`.
 `cache` (`"on"` | `"bypass"`, default `"on"`) — `"bypass"` forces fresh
 search + scrape for this turn (evals, admin debugging); a cache hit is
 otherwise invisible except latency.
+`scope` (`"global"` | `"conversation"` | `"request"`, default `"global"`) —
+retrieval scope (WU-5): `"global"` (today's behavior) retrieves from the
+whole chunk store; `"conversation"` restricts vector candidates to this
+conversation (+ legacy unscoped rows); `"request"` restricts retrieval to
+this turn's fetched pages.
+`recency_bias` (float, `>= 0`, default `0`) — recency boost for chunk
+ranking (WU-11): 0 = neutral; publication-fresh chunks (<30 days) get the
+largest boost, unknown dates are never penalized; clamped server-side to
+`RECENCY_BIAS_MAX`.
 `rewrite` (`"standalone"` | `"simple"` | `"none"`, default `"standalone"`) —
 query rewriting mode (WU-1): `"standalone"` resolves pronouns and omissions
 against the conversation history; `"simple"` is history-free rewriting
@@ -153,6 +162,13 @@ The LLM is never used without a tool call:
   (HTTP 422 with an explanation).
 
 ## Changelog
+
+### v2.7 (2026-10-26, WU-11 + WU-5 — additive)
+
+- Added: request body fields `scope` (`"global"` default) and
+  `recency_bias` (default 0). Prompts now carry the current date, chunks
+  carry `title`/`site`/`published_at`/`fetched_at` metadata, and old
+  chunks are purged at boot (`CHUNK_TTL_DAYS`).
 
 ### v2.6 (2026-10-26, WU-1 — additive)
 

@@ -13,6 +13,8 @@ gracefully to in-memory ranking when embedding is unavailable.
 import asyncio
 import json
 import logging
+import uuid
+from datetime import UTC, datetime
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
@@ -29,6 +31,7 @@ from ...modules.search_engine.sanity import is_sane_result
 from ...tools.settings import settings
 from .chunking import chunk_markdown_data
 from .pre_scores import filter_chunks, filter_search_results
+from .recency import apply_recency_bias
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +49,19 @@ class ChunkStoreLike(Protocol):
     """Chunk-store surface the toolbox needs; ChunkRepository satisfies it."""
 
     async def store_chunks(
-        self, chunks: list[dict[str, Any]], embeddings: list[list[float]]
+        self,
+        chunks: list[dict[str, Any]],
+        embeddings: list[list[float]],
+        conversation_id: uuid.UUID | None = None,
     ) -> int: ...
 
     async def existing_hashes(self, hashes: list[str]) -> set[str]: ...
 
     async def vector_candidates(
-        self, query_embedding: list[float], k: int
+        self,
+        query_embedding: list[float],
+        k: int,
+        conversation_id: uuid.UUID | None = None,
     ) -> list[dict[str, Any]]: ...
 
 
@@ -89,6 +98,10 @@ class AskToolbox:
         allowed_engines: list[str] | None = None,
         decision_maker: IDecisionMaker | None = None,
         max_urls: int | None = None,
+        conversation_id: uuid.UUID | None = None,
+        scope: str = "global",
+        recency_bias: float = 0.0,
+        now: datetime | None = None,
     ):
         self.searching = searching
         self.scraper = scraper
@@ -104,6 +117,17 @@ class AskToolbox:
         self.max_urls = max(
             1, min(max_urls or settings.TOP_N_URLS, settings.TOP_N_URLS_MAX)
         )
+        # Retrieval scope (WU-5): "global" = today's behavior; "conversation"
+        # filters vector candidates to this conversation (+ legacy NULL
+        # rows); "request" restricts retrieval to this turn's fetched pages.
+        self.conversation_id = conversation_id
+        self.scope = scope
+        # Recency boost (WU-11): clamped to the operator ceiling; `now` is
+        # injectable so tests can freeze the clock.
+        self.recency_bias = max(
+            0.0, min(recency_bias, settings.RECENCY_BIAS_MAX)
+        )
+        self.now = now or datetime.now(UTC)
 
         self.raw_results: list = []
         self.ranked_sources: list[dict[str, Any]] = []
@@ -315,7 +339,11 @@ class AskToolbox:
         embeddings = await self.embedder.embed_texts(
             [chunk["content"] for chunk in todo]
         )
-        inserted = await self.chunk_repo.store_chunks(todo, embeddings)
+        inserted = await self.chunk_repo.store_chunks(
+            todo,
+            embeddings,
+            conversation_id=self.conversation_id,
+        )
         logger.debug(
             "Stored %d new chunks in the vector store (%d skipped).",
             inserted,
@@ -332,7 +360,7 @@ class AskToolbox:
         """
         candidates: list[dict[str, Any]] | None = None
 
-        if self.embedder and self.chunk_repo:
+        if self.scope != "request" and self.embedder and self.chunk_repo:
             try:
                 candidates = await self._vector_candidates(query)
             except Exception:
@@ -354,6 +382,10 @@ class AskToolbox:
         if settings.PRE_SCORE_CHUNK_FILTER and self.decision_maker:
             self.selected_chunks = await filter_chunks(
                 self.decision_maker, query, self.selected_chunks
+            )
+        if self.recency_bias > 0:
+            self.selected_chunks = apply_recency_bias(
+                self.selected_chunks, self.recency_bias, self.now
             )
         return self._numbered_context()
 
@@ -382,7 +414,11 @@ class AskToolbox:
         assert self.embedder and self.chunk_repo
         query_embedding = (await self.embedder.embed_texts([query]))[0]
         return await self.chunk_repo.vector_candidates(
-            query_embedding, settings.VECTOR_CANDIDATES_K
+            query_embedding,
+            settings.VECTOR_CANDIDATES_K,
+            conversation_id=(
+                self.conversation_id if self.scope == "conversation" else None
+            ),
         )
 
 

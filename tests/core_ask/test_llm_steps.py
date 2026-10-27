@@ -232,3 +232,38 @@ def test_tool_arg_stream_key_prefix_does_not_match():
     stream.feed('{"annotated": "nope", "answer": "yes"}')
     stream.finish()
     assert stream.saw_value is True
+
+
+# <----- Current date in prompts (AR-7 task 1) ----->
+
+
+async def test_rewrite_prompt_starts_with_the_current_date():
+    model = ScriptedToolModel(
+        responses=[tool_call("SubmitSearchQuery", {"query": "q"})]
+    )
+
+    await rewrite_query(model, "latest postgres news", today="2020-01-01")
+
+    assert model.calls[0][0].startswith("Current date: 2020-01-01.")
+
+
+async def test_answer_prompt_carries_the_current_date_before_context():
+    model = ScriptedToolModel(
+        responses=[tool_call("CitedAnswer", {"answer": "a"})]
+    )
+
+    await generate_cited_answer(model, "q", "[1] context", today="2020-01-01")
+
+    system = model.calls[0][0]
+    assert "Current date: 2020-01-01." in system
+    assert system.index("Current date: 2020-01-01.") < system.index("Context Chunks:")
+
+
+async def test_date_defaults_to_today_when_not_injected():
+    model = ScriptedToolModel(
+        responses=[tool_call("SubmitSearchQuery", {"query": "q"})]
+    )
+
+    await rewrite_query(model, "anything")
+
+    assert model.calls[0][0].startswith("Current date: ")

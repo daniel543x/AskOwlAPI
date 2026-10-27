@@ -18,6 +18,7 @@ from langchain_core.messages import (
     SystemMessage,
 )
 
+from ....tools.dates import current_date_line
 from ...tools.arg_stream import ToolArgStream
 from ...tools.errors import ToolProtocolError
 from .contracts import CitedAnswer, SubmitSearchQuery
@@ -56,6 +57,8 @@ Guidelines:
 3. If the context does not contain the answer, say so explicitly.
 4. You MUST respond by calling the CitedAnswer tool with the final answer.
 
+{current_date}
+
 Context Chunks:
 {context}"""
 
@@ -83,6 +86,7 @@ async def rewrite_query(
     model: BaseChatModel,
     raw_query: str,
     history: list[tuple[str, str]] | None = None,
+    today: str | None = None,
 ) -> tuple[str, bool, bool]:
     """Optimize the query via a native tool call (WU-1 / AR-4).
 
@@ -98,7 +102,9 @@ async def rewrite_query(
         prompt = f"{_history_block(history)}Current question: {raw_query}"
     response = await bound.ainvoke(
         [
-            SystemMessage(content=QUERY_OPTIMIZER_SYSTEM),
+            SystemMessage(
+                content=f"{current_date_line(today)}\n{QUERY_OPTIMIZER_SYSTEM}"
+            ),
             HumanMessage(content=prompt),
         ]
     )
@@ -122,11 +128,18 @@ async def rewrite_query(
 
 
 def _answer_messages(
-    query: str, context: str, history: list[tuple[str, str]] | None = None
+    query: str,
+    context: str,
+    history: list[tuple[str, str]] | None = None,
+    today: str | None = None,
 ) -> list:
-    """System + prior turns + question; the context stays in the system."""
+    """System (with current date) + prior turns + question."""
     messages: list = [
-        SystemMessage(content=ANSWER_SYSTEM_TEMPLATE.format(context=context))
+        SystemMessage(
+            content=ANSWER_SYSTEM_TEMPLATE.format(
+                context=context, current_date=current_date_line(today)
+            )
+        )
     ]
     for role, content in history or []:
         if role == "user":
@@ -142,10 +155,11 @@ async def generate_cited_answer(
     query: str,
     context: str,
     history: list[tuple[str, str]] | None = None,
+    today: str | None = None,
 ) -> str:
     """Non-streaming cited answer via the CitedAnswer tool call."""
     bound = model.bind_tools([CitedAnswer])
-    response = await bound.ainvoke(_answer_messages(query, context, history))
+    response = await bound.ainvoke(_answer_messages(query, context, history, today))
 
     for tool_call in response.tool_calls or []:
         if tool_call.get("name") == "CitedAnswer":
@@ -163,6 +177,7 @@ async def stream_cited_answer(
     query: str,
     context: str,
     history: list[tuple[str, str]] | None = None,
+    today: str | None = None,
 ) -> AsyncGenerator[str]:
     """Stream the `answer` argument of the CitedAnswer tool call.
 
@@ -172,7 +187,9 @@ async def stream_cited_answer(
     bound = model.bind_tools([CitedAnswer])
     extractor = ToolArgStream(key="answer")
 
-    async for chunk in bound.astream(_answer_messages(query, context, history)):
+    async for chunk in bound.astream(
+        _answer_messages(query, context, history, today)
+    ):
         if not isinstance(chunk, AIMessageChunk):
             continue
         for tool_chunk in chunk.tool_call_chunks or []:

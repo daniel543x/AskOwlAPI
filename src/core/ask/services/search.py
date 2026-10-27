@@ -75,6 +75,10 @@ async def search_logic(
     query_variations: int = 1,
     history: list[tuple[str, str]] | None = None,
     rewrite: str = "standalone",
+    scope: str = "global",
+    recency_bias: float = 0.0,
+    conversation_id=None,
+    today: str | None = None,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the search pipeline, yielding (event, payload) pairs.
 
@@ -95,6 +99,9 @@ async def search_logic(
             searching, scraper, ranker, embedder, chunk_repo,
             decision_maker=decision_maker,
             max_urls=max_urls,
+            conversation_id=conversation_id if scope == "conversation" else None,
+            scope=scope,
+            recency_bias=recency_bias,
         )
 
         # <----- Query rewriting (native tool call) ----->
@@ -105,7 +112,7 @@ async def search_logic(
             history_for_rewrite = history if rewrite == "standalone" else None
             async with _stage("query_optimization"):
                 optimized_query, used_tool_call, standalone = await rewrite_query(
-                    model, query, history_for_rewrite
+                    model, query, history_for_rewrite, today=today
                 )
 
         # <----- Query-choice pre-score (optional decision layer) ----->
@@ -191,13 +198,14 @@ async def _stream_answer_frames(
     context: str,
     model: BaseChatModel,
     history: list[tuple[str, str]] | None = None,
+    today: str | None = None,
 ):
     """Yield answer text deltas; deterministic text when context is empty."""
     if not context.strip():
         yield NO_CONTEXT_ANSWER
         return
 
-    async for delta in stream_cited_answer(model, query, context, history):
+    async for delta in stream_cited_answer(model, query, context, history, today):
         yield delta
 
 
@@ -254,6 +262,9 @@ async def search_sse_adapter(
     cache: str = "on",
     rewrite: str = "standalone",
     history: list[tuple[str, str]] | None = None,
+    scope: str = "global",
+    recency_bias: float = 0.0,
+    today: str | None = None,
 ) -> AsyncGenerator[str]:
     """Translate pipeline events into an SSE stream (protocol v2).
 
@@ -292,6 +303,9 @@ async def search_sse_adapter(
             query, searching, model, scraper, ranker, embedder=embedder,
             session=session, decision_maker=decision_maker, max_urls=max_urls,
             query_variations=query_variations, history=history, rewrite=rewrite,
+            scope=scope, recency_bias=recency_bias,
+            conversation_id=conversation.id if conversation is not None else None,
+            today=today,
         ):
             if event == "answer_ready":
                 yield frame("status", {"step": "Generating answer..."})
@@ -299,7 +313,7 @@ async def search_sse_adapter(
                 answer_parts: list[str] = []
                 try:
                     async for delta in _stream_answer_frames(
-                        data["query"], data["context"], model, history
+                        data["query"], data["context"], model, history, today
                     ):
                         answer_parts.append(delta)
                         yield frame("message", {"text": delta})
@@ -360,6 +374,9 @@ async def search_json_adapter(
     cache: str = "on",
     rewrite: str = "standalone",
     history: list[tuple[str, str]] | None = None,
+    scope: str = "global",
+    recency_bias: float = 0.0,
+    today: str | None = None,
 ) -> dict[str, Any]:
     """Run the pipeline and return the full result as one JSON-ready dict.
 
@@ -382,6 +399,9 @@ async def search_json_adapter(
             query, searching, model, scraper, ranker, embedder=embedder,
             session=session, decision_maker=decision_maker, max_urls=max_urls,
             query_variations=query_variations, history=history, rewrite=rewrite,
+            scope=scope, recency_bias=recency_bias,
+            conversation_id=conversation.id if conversation is not None else None,
+            today=today,
         )
         async for event, data in pipeline:
             if event == "error":
@@ -406,7 +426,7 @@ async def search_json_adapter(
     else:
         try:
             answer = await generate_cited_answer(
-                model, answer_data["query"], context, history
+                model, answer_data["query"], context, history, today
             )
         except ToolProtocolError as e:
             raise HTTPException(

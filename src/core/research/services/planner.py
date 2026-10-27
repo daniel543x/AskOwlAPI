@@ -5,6 +5,7 @@ import logging
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from ....tools.dates import current_date_line
 from .contracts import ResearchPlan
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,10 @@ question and do not write any prose."""
 
 
 async def plan_subquestions(
-    model: BaseChatModel, query: str, max_subquestions: int
+    model: BaseChatModel,
+    query: str,
+    max_subquestions: int,
+    today: str | None = None,
 ) -> tuple[list[str], bool]:
     """Plan sub-questions via a native tool call.
 
@@ -34,7 +38,12 @@ async def plan_subquestions(
         content=f"Question: {query}\nAt most {max_subquestions} sub-questions."
     )
     response = await bound.ainvoke(
-        [SystemMessage(content=PLANNER_SYSTEM), request]
+        [
+            SystemMessage(
+                content=f"{current_date_line(today)}\n{PLANNER_SYSTEM}"
+            ),
+            request,
+        ]
     )
 
     for tool_call in response.tool_calls or []:

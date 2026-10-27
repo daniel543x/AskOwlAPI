@@ -487,9 +487,17 @@ is noted; each PR is one branch.
       `RESEARCH_COMPRESS_CONTEXT` (**ships false**, flips only after a
       report-quality pass). Reflect/compress degrade deterministically on
       tool-protocol errors.
-- [ ] PR 6 `wu/recency-scope` (WU-11 + WU-5 / AR-7 + AR-8): dates in prompts and
-      chunk metadata, `recency_bias`, `chunk.conversation_id` + scoping + HNSW +
-      eviction (`scope` default ships `"global"`; flip is an open decision).
+- [x] PR 6 `wu/recency-scope` (WU-11 + WU-5 / AR-7 + AR-8): current date in
+      rewrite/answer/planner/report prompts (injectable clock), page metadata
+      (`title`/`site`/`published_at`/`fetched_at`) carried into chunk metadata,
+      `recency_bias` request param (ceiling `RECENCY_BIAS_MAX`, boost re-orders
+      after rank_chunks), `chunk.conversation_id` + scoped vector candidates +
+      `scope` request param (**ships `"global"`**; flip to `"conversation"` is an
+      open decision), boot-time chunk eviction (`CHUNK_TTL_DAYS=30`).
+      *Audit note (2026-10-26): the AR-8 HNSW index is deferred — pgvector
+      requires fixed column dimensions for HNSW/IVFFlat, but
+      `chunk.embedding` is intentionally untyped (multi-embedder, decision
+      #1). Revisit with a dims-per-column decision when the store grows.*
 - [ ] PR 7 `wu/hybrid` (WU-4): lexical + vector RRF fusion behind `hybrid_alpha`
       (default 1.0 until measured).
 - [ ] PR 8 `wu/modes` (WU-12): mode presets — deferred until a UI client asks.
