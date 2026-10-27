@@ -134,3 +134,28 @@ async def test_eviction_removes_only_rows_older_than_ttl(db_session):
         for row in await db_session.execute(text("SELECT source_url FROM chunk"))
     }
     assert urls == {"https://fresh.example"}
+
+
+async def test_fts_candidates_match_content_tokens(db_session):
+    repo = ChunkRepository(db_session)
+    await repo.store_chunks(
+        [
+            _chunk("https://fts.example/btree", "postgresql btree indexes explained"),
+            _chunk("https://fts.example/gin", "postgresql gin index for full text"),
+            _chunk("https://fts.example/cooking", "sourdough bread recipe"),
+        ],
+        [[1.0, 0.0, 0.0, 0.0] for _ in range(3)],
+    )
+
+    hits = await repo.fts_candidates("postgresql btree index", k=3)
+
+    urls = [c["url"] for c in hits]
+    assert urls[0] == "https://fts.example/btree"  # best ts_rank first
+    assert "https://fts.example/cooking" not in urls
+    # Same row shape as the vector leg so fusion treats them uniformly.
+    assert set(hits[0]) >= {"content", "metadata", "url"}
+
+
+async def test_fts_candidates_no_match_returns_empty(db_session):
+    repo = ChunkRepository(db_session)
+    assert await repo.fts_candidates("xyzzyplugh", k=3) == []

@@ -498,8 +498,13 @@ is noted; each PR is one branch.
       requires fixed column dimensions for HNSW/IVFFlat, but
       `chunk.embedding` is intentionally untyped (multi-embedder, decision
       #1). Revisit with a dims-per-column decision when the store grows.*
-- [ ] PR 7 `wu/hybrid` (WU-4): lexical + vector RRF fusion behind `hybrid_alpha`
-      (default 1.0 until measured).
+- [x] PR 7 `wu/hybrid` (WU-4): lexical FTS leg (`ChunkRepository.fts_candidates`,
+      GIN expression index, migration `c3d84b06e9a2`) fused with the vector leg
+      by alpha-weighted RRF behind `hybrid_alpha` (**default 1.0 = pure vector
+      until the live golden-set alpha A/B {1.0, 0.7, 0.5} passes**); either leg
+      failing alone degrades to the other, both failing to in-memory ranking.
+      Offline fixture gate: hybrid alpha=0.5 keeps recall parity (measured MRR
+      0.833 with the hash embedder — recorded, not a semantic verdict).
 - [ ] PR 8 `wu/modes` (WU-12): mode presets — deferred until a UI client asks.
 
 ---

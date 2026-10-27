@@ -17,6 +17,11 @@ retrieval scope (WU-5): `"global"` (today's behavior) retrieves from the
 whole chunk store; `"conversation"` restricts vector candidates to this
 conversation (+ legacy unscoped rows); `"request"` restricts retrieval to
 this turn's fetched pages.
+`hybrid_alpha` (float, `0..1`, default `1.0`) — hybrid retrieval blend
+(WU-4): `1.0` = pure vector (default, today's behavior); `0.0` = pure
+lexical full-text; in between, both legs fuse by alpha-weighted
+reciprocal rank fusion before the cross-encoder rerank. Either leg
+failing alone degrades to the other.
 `recency_bias` (float, `>= 0`, default `0`) — recency boost for chunk
 ranking (WU-11): 0 = neutral; publication-fresh chunks (<30 days) get the
 largest boost, unknown dates are never penalized; clamped server-side to
@@ -162,6 +167,12 @@ The LLM is never used without a tool call:
   (HTTP 422 with an explanation).
 
 ## Changelog
+
+### v2.8 (2026-10-26, WU-4 — additive)
+
+- Added: request body field `hybrid_alpha` (default `1.0` = today's pure
+  vector behavior; default changes only after the live golden-set alpha
+  A/B). Backed by a GIN full-text index on chunk content.
 
 ### v2.7 (2026-10-26, WU-11 + WU-5 — additive)
 

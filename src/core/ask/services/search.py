@@ -77,6 +77,7 @@ async def search_logic(
     rewrite: str = "standalone",
     scope: str = "global",
     recency_bias: float = 0.0,
+    hybrid_alpha: float = 1.0,
     conversation_id=None,
     today: str | None = None,
 ) -> AsyncGenerator[PipelineEvent]:
@@ -102,6 +103,7 @@ async def search_logic(
             conversation_id=conversation_id if scope == "conversation" else None,
             scope=scope,
             recency_bias=recency_bias,
+            hybrid_alpha=hybrid_alpha,
         )
 
         # <----- Query rewriting (native tool call) ----->
@@ -264,6 +266,7 @@ async def search_sse_adapter(
     history: list[tuple[str, str]] | None = None,
     scope: str = "global",
     recency_bias: float = 0.0,
+    hybrid_alpha: float = 1.0,
     today: str | None = None,
 ) -> AsyncGenerator[str]:
     """Translate pipeline events into an SSE stream (protocol v2).
@@ -303,7 +306,7 @@ async def search_sse_adapter(
             query, searching, model, scraper, ranker, embedder=embedder,
             session=session, decision_maker=decision_maker, max_urls=max_urls,
             query_variations=query_variations, history=history, rewrite=rewrite,
-            scope=scope, recency_bias=recency_bias,
+            scope=scope, recency_bias=recency_bias, hybrid_alpha=hybrid_alpha,
             conversation_id=conversation.id if conversation is not None else None,
             today=today,
         ):
@@ -376,6 +379,7 @@ async def search_json_adapter(
     history: list[tuple[str, str]] | None = None,
     scope: str = "global",
     recency_bias: float = 0.0,
+    hybrid_alpha: float = 1.0,
     today: str | None = None,
 ) -> dict[str, Any]:
     """Run the pipeline and return the full result as one JSON-ready dict.

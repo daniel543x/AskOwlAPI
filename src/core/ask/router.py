@@ -89,6 +89,17 @@ class SearchRequest(BaseModel):
             "strongest. Clamped server-side to RECENCY_BIAS_MAX."
         ),
     )
+    hybrid_alpha: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Hybrid retrieval blend (WU-4): 1.0 = pure vector (default, "
+            "today's behavior), 0.0 = pure lexical full-text. In between, "
+            "both legs fuse by alpha-weighted reciprocal rank fusion "
+            "before the cross-encoder rerank."
+        ),
+    )
     rewrite: Literal["standalone", "simple", "none"] = Field(
         default="standalone",
         description=(
@@ -131,6 +142,7 @@ async def ask_search(
                 rewrite=request.rewrite,
                 scope=request.scope,
                 recency_bias=request.recency_bias,
+                hybrid_alpha=request.hybrid_alpha,
             ),
             media_type="text/event-stream",
         )
@@ -152,5 +164,6 @@ async def ask_search(
         rewrite=request.rewrite,
         scope=request.scope,
         recency_bias=request.recency_bias,
+        hybrid_alpha=request.hybrid_alpha,
     )
     return {"answer": answer}

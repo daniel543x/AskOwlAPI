@@ -66,6 +66,18 @@ class InMemoryChunkRepo:
         self.stored.extend(zip(chunks, embeddings, strict=True))
         return len(chunks)
 
+    async def fts_candidates(self, query, k):
+        query_tokens = set(query.lower().split())
+        return [
+            {
+                "content": c["content"],
+                "metadata": dict(c.get("metadata") or {}),
+                "url": (c.get("metadata") or {}).get("url", ""),
+            }
+            for c, _ in self.stored
+            if query_tokens & set(c["content"].lower().split())
+        ][:k]
+
     async def vector_candidates(self, query_embedding, k, conversation_id=None):
         def cosine(a, b):
             dot = sum(x * y for x, y in zip(a, b, strict=True))
@@ -168,3 +180,24 @@ def test_fixture_providers_replay_deterministically():
 
     assert first == second, "replay must be deterministic"
     assert all(page["content"] for page in pages), "fixture pages must have content"
+
+
+async def test_offline_eval_hybrid_alpha_half_meets_vector_gate():
+    """WU-4 alpha A/B on the offline fixtures: the blended pool must not
+    lose to the vector gate (exact-token queries are where the lexical
+    leg should help). Default alpha stays 1.0 until the live golden-set
+    A/B (alpha in {1.0, 0.7, 0.5}) passes.
+    """
+    fixtures = load_fixtures(FIXTURE_DIR)
+    report = await _run("hybrid-0.5", fixtures, HashEmbedder(), InMemoryChunkRepo())
+
+    assert report.mean_recall >= 0.95, (
+        f"hybrid recall regressed: {report.mean_recall}"
+    )
+    # Measured hybrid baseline (hash embedder): MRR 0.833 — below the pure
+    # configs, expected: a hash embedder is not semantic, so blending in
+    # the lexical leg reorders the pool. Recall parity is the plumbing
+    # gate here; whether blending helps real ranking is exactly what the
+    # live golden-set alpha A/B ({1.0, 0.7, 0.5}) decides, and the default
+    # stays alpha=1.0 until then.
+    assert report.mean_mrr >= 0.80, f"hybrid MRR regressed: {report.mean_mrr}"

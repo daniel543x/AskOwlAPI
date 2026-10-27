@@ -272,6 +272,9 @@ class PreStoredChunkRepo:
         self.stored_chunks.extend(chunks)
         return len(chunks)
 
+    async def fts_candidates(self, query, k):
+        return []
+
     async def vector_candidates(self, query_embedding, k, conversation_id=None):
         return []
 
@@ -445,6 +448,9 @@ class RecordingVectorRepo:
         self.query_conversation_id = conversation_id
         return []
 
+    async def fts_candidates(self, query, k):
+        return []
+
 
 async def test_scope_request_skips_vector_retrieval():
     repo = RecordingVectorRepo()
@@ -550,3 +556,114 @@ async def test_recency_bias_clamped_to_ceiling():
         FakeSearchProvider(), make_scraper(), FakeRanker(), recency_bias=99.0
     )
     assert toolbox.recency_bias == settings.RECENCY_BIAS_MAX
+
+
+# <----- Hybrid retrieval blend (WU-4) ----->
+
+
+class HybridVectorRepo(RecordingVectorRepo):
+    """Vector leg returns both chunks; lexical leg returns one."""
+
+    def __init__(self):
+        super().__init__()
+        self.fts_calls = 0
+        self.vector: list[dict] = []
+        self.lexical: list[dict] = []
+
+    def load(self, vector: list[dict], lexical: list[dict]):
+        self.vector = vector
+        self.lexical = lexical
+        return self
+
+    async def fts_candidates(self, query, k):
+        self.fts_calls += 1
+        return self.lexical
+
+    async def vector_candidates(self, query_embedding, k, conversation_id=None):
+        return self.vector
+
+
+async def test_hybrid_default_alpha_never_queries_the_lexical_leg():
+    repo = HybridVectorRepo().load(
+        [{"content": "vector chunk", "metadata": {}}], []
+    )
+    toolbox = AskToolbox(
+        FakeSearchProvider(), make_scraper(), FakeRanker(),
+        embedder=RecordingEmbedder(), chunk_repo=repo,
+    )
+    await toolbox.web_search("rust")
+    await toolbox.fetch_pages()
+    await toolbox.get_context("rust")
+
+    assert repo.fts_calls == 0
+    assert toolbox.used_vector_retrieval is True
+
+
+async def test_hybrid_fuses_lexical_leg_into_the_pool():
+    repo = HybridVectorRepo().load(
+        [
+            {"content": "vector-only chunk about postgres btree", "metadata": {}},
+            {"content": "shared chunk", "metadata": {}},
+        ],
+        [
+            {"content": "shared chunk", "metadata": {}},
+            {"content": "lexical-only chunk", "metadata": {}},
+        ],
+    )
+    toolbox = AskToolbox(
+        FakeSearchProvider(), make_scraper(), FakeRanker(),
+        embedder=RecordingEmbedder(), chunk_repo=repo, hybrid_alpha=0.5,
+    )
+    await toolbox.web_search("rust")
+    await toolbox.fetch_pages()
+    toolbox.chunks = []  # ensure the pool came from the fused legs
+    await toolbox.get_context("rust")
+
+    assert repo.fts_calls == 1
+    contents = [c["content"] for c in toolbox.selected_chunks]
+    # Union of both legs survives; the double-leg candidate leads.
+    assert "shared chunk" in contents
+    assert "lexical-only chunk" in contents
+    assert contents[0] == "shared chunk"
+
+
+async def test_hybrid_lexical_failure_degrades_to_vector(monkeypatch):
+    repo = HybridVectorRepo().load(
+        [{"content": "vector chunk", "metadata": {}}], []
+    )
+
+    async def exploding_fts(query, k):
+        raise RuntimeError("fts down")
+
+    repo.fts_candidates = exploding_fts
+    toolbox = AskToolbox(
+        FakeSearchProvider(), make_scraper(), FakeRanker(),
+        embedder=RecordingEmbedder(), chunk_repo=repo, hybrid_alpha=0.5,
+    )
+    await toolbox.web_search("rust")
+    await toolbox.fetch_pages()
+    context = await toolbox.get_context("rust")
+
+    assert toolbox.used_vector_retrieval is True
+    assert "vector chunk" in context
+
+
+async def test_hybrid_both_legs_fail_falls_back_in_memory():
+    class BothExplodeRepo(HybridVectorRepo):
+        async def fts_candidates(self, query, k):
+            raise RuntimeError("fts down")
+
+        async def vector_candidates(self, query_embedding, k, conversation_id=None):
+            raise RuntimeError("pgvector down")
+
+    toolbox = AskToolbox(
+        FakeSearchProvider(), make_scraper(), FakeRanker(),
+        embedder=RecordingEmbedder(), chunk_repo=BothExplodeRepo(),
+        hybrid_alpha=0.5,
+    )
+    await toolbox.web_search("rust")
+    await toolbox.fetch_pages()
+    context = await toolbox.get_context("rust")
+
+    assert toolbox.used_vector_retrieval is False
+    assert "first paragraph" in context
