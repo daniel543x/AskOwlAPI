@@ -53,6 +53,22 @@ class ChunkRepository:
         await self.session.commit()
         return inserted
 
+    async def existing_hashes(self, hashes: list[str]) -> set[str]:
+        """Which of the given content hashes are already stored (embed-skip)."""
+        if not hashes:
+            return set()
+        statement = text(
+            "SELECT content_hash FROM chunk WHERE content_hash = ANY(:hashes)"
+        )
+        try:
+            result = await self.session.execute(statement, {"hashes": hashes})
+        except SQLAlchemyError:
+            # Same discipline as store_chunks: roll back so the shared
+            # session stays usable; the caller re-embeds everything.
+            await self.session.rollback()
+            raise
+        return {row.content_hash for row in result}
+
     async def vector_candidates(
         self, query_embedding: list[float], k: int
     ) -> list[dict[str, Any]]:

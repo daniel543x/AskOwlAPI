@@ -1,3 +1,4 @@
+from src.modules.search_engine.caching import CachedSearchProvider
 from src.modules.search_engine.factory import filter_provider_kwargs
 from src.modules.search_engine.providers.searxng import SearXNGProvider
 
@@ -38,3 +39,42 @@ def test_searxng_provider_falls_back_to_settings_defaults(monkeypatch):
     assert provider.engines == settings.SEARXNG_ENGINES
     assert provider.categories == settings.SEARXNG_CATEGORIES
     assert provider.timeout == settings.SEARXNG_TIMEOUT
+
+
+# <----- Factory-level cache wiring (WU-10) ----->
+
+
+def test_factory_reuses_one_cached_wrapper_per_config(monkeypatch):
+    """The factory runs per request; the cache must outlive the request."""
+    from src.modules.search_engine.factory import SearchProviderFactory
+    from src.tools.settings import settings
+
+    monkeypatch.setattr(settings, "SEARCH_CACHE", True)
+    SearchProviderFactory._cache_wrappers.clear()
+    try:
+        first = SearchProviderFactory._provider_for("searxng", {})
+        second = SearchProviderFactory._provider_for("searxng", {})
+        other_config = SearchProviderFactory._provider_for(
+            "searxng", {"engines": "duckduckgo"}
+        )
+
+        assert isinstance(first, CachedSearchProvider)
+        assert isinstance(other_config, CachedSearchProvider)
+        assert first is second, "same config must reuse the same wrapper"
+        assert first is not other_config, "different config gets its own wrapper"
+        # The inner provider is shared too, so memoization actually persists.
+        assert other_config.inner is not first.inner
+    finally:
+        SearchProviderFactory._cache_wrappers.clear()
+
+
+def test_factory_cache_off_returns_raw_provider(monkeypatch):
+    from src.modules.search_engine.factory import SearchProviderFactory
+    from src.tools.settings import settings
+
+    monkeypatch.setattr(settings, "SEARCH_CACHE", False)
+
+    provider = SearchProviderFactory._provider_for("searxng", {})
+
+    assert isinstance(provider, SearXNGProvider)
+    assert not isinstance(provider, CachedSearchProvider)

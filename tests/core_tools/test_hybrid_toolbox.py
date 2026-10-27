@@ -97,6 +97,9 @@ async def test_get_context_falls_back_when_vector_retrieval_fails():
         ) -> int:
             return 0
 
+        async def existing_hashes(self, hashes: list[str]) -> set[str]:
+            return set()
+
         async def vector_candidates(
             self, query_embedding: list[float], k: int
         ) -> list[dict[str, Any]]:
