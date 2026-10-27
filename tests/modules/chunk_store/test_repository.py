@@ -140,8 +140,8 @@ async def test_fts_candidates_match_content_tokens(db_session):
     repo = ChunkRepository(db_session)
     await repo.store_chunks(
         [
-            _chunk("https://fts.example/btree", "postgresql btree indexes explained"),
-            _chunk("https://fts.example/gin", "postgresql gin index for full text"),
+            _chunk("https://fts.example/btree", "postgresql btree index method"),
+            _chunk("https://fts.example/gin", "postgresql gin index type"),
             _chunk("https://fts.example/cooking", "sourdough bread recipe"),
         ],
         [[1.0, 0.0, 0.0, 0.0] for _ in range(3)],

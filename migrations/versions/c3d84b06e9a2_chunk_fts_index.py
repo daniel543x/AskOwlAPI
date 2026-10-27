@@ -8,6 +8,7 @@ Create Date: 2026-10-26 23:40:00.000000
 from typing import Sequence, Union
 
 from alembic import op
+import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
@@ -27,7 +28,7 @@ def upgrade() -> None:
     op.create_index(
         'ix_chunk_content_fts',
         'chunk',
-        ["to_tsvector('simple', content)"],
+        [sa.text("to_tsvector('simple', content)")],
         unique=False,
         postgresql_using='gin',
     )

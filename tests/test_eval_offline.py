@@ -7,14 +7,19 @@ no models. This is a regression gate on the retrieval *plumbing* (sanity
 filter, dedup, chunking, vector retrieval, context selection, citation
 numbering), not a semantic leaderboard:
 
-Baselines recorded at introduction (PR 3, wu/citations):
+Baselines recorded with the deterministic (crc32) embedder and total-order
+retrieval, PR 7 (wu/hybrid):
     baseline config: mean recall@n = 1.000, mean MRR = 1.000
-    vector config:   mean recall@n = 1.000 (candidates cover every chunk)
-The gates below pin those values minus a small margin; lower any gate only
-with an explicit, quoted eval delta in the PR.
+    vector config:   mean recall@n = 1.000, mean MRR = 0.833
+    hybrid alpha=0.5: recall@n = 1.000, mean MRR = 0.833
+(The hash embedder is not semantic, so vector/hybrid MRR below baseline is
+expected; the live golden-set A/B judges ranking quality.) The gates pin
+those values minus a small margin; lower any gate only with an explicit,
+quoted eval delta in the PR.
 """
 
 import asyncio
+import zlib
 from pathlib import Path
 
 from src.core.ask.eval.fixtures import (
@@ -47,7 +52,9 @@ class HashEmbedder:
         for token in "".join(
             c if c.isalnum() else " " for c in text.lower()
         ).split():
-            bucket = hash(token) % self.dims
+            # crc32, not hash(): str hashing is per-process salted and
+            # would make the "deterministic" embedder machine-dependent.
+            bucket = zlib.crc32(token.encode()) % self.dims
             vector[bucket] += 1.0
         norm = sum(v * v for v in vector) ** 0.5 or 1.0
         return [v / norm for v in vector]
@@ -83,9 +90,11 @@ class InMemoryChunkRepo:
             dot = sum(x * y for x, y in zip(a, b, strict=True))
             return dot  # vectors are normalized
 
+        # Total order (score, then content): cosine ties must not fall
+        # back to insertion order influenced by salted hash seeds.
         scored = sorted(
             ((cosine(query_embedding, e), c) for c, e in self.stored),
-            key=lambda pair: -pair[0],
+            key=lambda pair: (-pair[0], pair[1]["content"]),
         )
         return [
             {
@@ -133,6 +142,7 @@ async def test_offline_eval_vector_path_meets_recorded_gate():
     report = await _run("vector", fixtures, HashEmbedder(), chunk_repo)
 
     assert report.mean_recall >= 0.95, f"vector recall regressed: {report.mean_recall}"
+    assert report.mean_mrr >= 0.80, f"vector MRR regressed: {report.mean_mrr}"
     assert all(r.vector_retrieval for r in report.results), (
         "vector config silently fell back to in-memory ranking"
     )
