@@ -102,6 +102,7 @@ class AskToolbox:
         scope: str = "global",
         recency_bias: float = 0.0,
         now: datetime | None = None,
+        source_types: list[str] | None = None,
     ):
         self.searching = searching
         self.scraper = scraper
@@ -128,6 +129,9 @@ class AskToolbox:
             0.0, min(recency_bias, settings.RECENCY_BIAS_MAX)
         )
         self.now = now or datetime.now(UTC)
+        # Source types (PR 11): converted to per-call search categories and
+        # engine additions; None/empty = the provider's own defaults.
+        self.source_types = source_types or None
 
         self.raw_results: list = []
         self.ranked_sources: list[dict[str, Any]] = []
@@ -138,6 +142,20 @@ class AskToolbox:
         # Hygiene stats surfaced in the debug SSE event (WU-3).
         self.search_stats: dict[str, int] = {}
 
+    def _search_categories(self) -> str | None:
+        from ...modules.search_engine.source_types import categories_for
+
+        return categories_for(self.source_types)
+
+    def _search_engines(self) -> list[str] | None:
+        from ...modules.search_engine.source_types import extra_engines_for
+
+        engines = list(self.allowed_engines or [])
+        engines.extend(
+            e for e in extra_engines_for(self.source_types) if e not in engines
+        )
+        return engines or None
+
     async def web_search(self, query: str) -> str:
         """Search the web and rank the results; returns JSON for the LLM.
 
@@ -147,7 +165,7 @@ class AskToolbox:
         cross-encoder rank to the URL cap with fusion as the tie-breaker.
         """
         self.raw_results = await self.searching.search(
-            query, engines=self.allowed_engines
+            query, engines=self._search_engines(), categories=self._search_categories()
         )
         return await self._rank_results(query)
 
@@ -161,7 +179,11 @@ class AskToolbox:
         results: list = []
         for query in queries:
             results.extend(
-                await self.searching.search(query, engines=self.allowed_engines)
+                await self.searching.search(
+                    query,
+                    engines=self._search_engines(),
+                    categories=self._search_categories(),
+                )
             )
         self.raw_results = results
         return await self._rank_results(queries[0])

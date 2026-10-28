@@ -16,7 +16,7 @@ class CountingProvider(ISearchProvider):
         )
         self.calls: list[tuple[str, list[str] | None]] = []
 
-    async def search(self, query, engines=None):
+    async def search(self, query, engines=None, categories=None):
         self.calls.append((query, engines))
         return list(self.results)
 

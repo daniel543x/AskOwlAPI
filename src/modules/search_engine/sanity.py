@@ -55,9 +55,14 @@ class SanityFilteringProvider(ISearchProvider):
         self.stats: dict[str, dict[str, int]] = {}
 
     async def search(
-        self, query: str, engines: list[str] | None = None
+        self,
+        query: str,
+        engines: list[str] | None = None,
+        categories: str | None = None,
     ) -> list[SearchResult]:
-        results = await self.inner.search(query, engines=engines)
+        results = await self.inner.search(
+            query, engines=engines, categories=categories
+        )
         kept = [
             result
             for result in results

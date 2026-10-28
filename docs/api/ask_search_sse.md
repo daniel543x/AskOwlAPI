@@ -19,6 +19,10 @@ the `thinking` capability is a 422 (`model_lacks_thinking`).
 reasoning-effort control (decision 11); requires the `effort`
 capability and a supported level (422 `model_lacks_effort` /
 `unsupported_effort_level`).
+`source_types` (array of strings, default `[]`) — narrows the search
+slice for this turn (PR 11 / decision 13). Empty = the provider's own
+defaults; validated against the provider's declared set
+(`GET /search/sources`) — unknown values are a 422.
 `scope` (`"global"` | `"conversation"` | `"request"`, default `"global"`) —
 retrieval scope (WU-5): `"global"` (today's behavior) retrieves from the
 whole chunk store; `"conversation"` restricts vector candidates to this
@@ -156,6 +160,12 @@ The LLM is never used without a tool call:
   (HTTP 422 with an explanation).
 
 ## Changelog
+
+### v2.9 (2026-10-28, PR 11 — additive)
+
+- Added: request field `source_types` (array; default `[]` = provider
+  default) on ask routes, and `GET /search/sources` returning the
+  provider's declared set (decision 13). Unknown values are a 422.
 
 ### v2.8 (2026-10-28, PR 9 — additive)
 

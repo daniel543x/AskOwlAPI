@@ -76,6 +76,7 @@ async def search_logic(
     recency_bias: float = 0.0,
     conversation_id=None,
     today: str | None = None,
+    source_types: list[str] | None = None,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the search pipeline, yielding (event, payload) pairs.
 
@@ -95,6 +96,7 @@ async def search_logic(
             conversation_id=conversation_id if scope == "conversation" else None,
             scope=scope,
             recency_bias=recency_bias,
+            source_types=source_types,
         )
 
         # <----- Query rewriting (native tool call) ----->
@@ -248,6 +250,7 @@ async def search_sse_adapter(
     scope: str = "global",
     recency_bias: float = 0.0,
     today: str | None = None,
+    source_types: list[str] | None = None,
 ) -> AsyncGenerator[str]:
     """Translate pipeline events into an SSE stream (protocol v2).
 
@@ -287,6 +290,7 @@ async def search_sse_adapter(
             scope=scope, recency_bias=recency_bias,
             conversation_id=conversation.id if conversation is not None else None,
             today=today,
+            source_types=source_types,
         ):
             if event == "answer_ready":
                 yield frame("status", {"step": "Generating answer..."})
@@ -347,6 +351,7 @@ async def search_json_adapter(
     scope: str = "global",
     recency_bias: float = 0.0,
     today: str | None = None,
+    source_types: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run the pipeline and return the full result as one JSON-ready dict.
 
@@ -371,6 +376,7 @@ async def search_json_adapter(
             scope=scope, recency_bias=recency_bias,
             conversation_id=conversation.id if conversation is not None else None,
             today=today,
+            source_types=source_types,
         )
         async for event, data in pipeline:
             if event == "error":

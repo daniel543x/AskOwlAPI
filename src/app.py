@@ -21,6 +21,7 @@ from .modules.llm_provider.router import router as ModelRouter
 from .modules.owl_reranker.factory import init_ranker
 from .modules.personas.router import router as PersonasRouter
 from .modules.profile.router import router as ProfileRouter
+from .modules.search_engine.router import router as SearchEngineRouter
 from .tools.db import engine
 from .tools.logging import configure_logging
 from .tools.settings import settings
@@ -96,6 +97,7 @@ app.include_router(ModelHealthRouter)
 app.include_router(AskRouter)
 app.include_router(ResearchRouter)
 app.include_router(ProfileRouter)
+app.include_router(SearchEngineRouter)
 
 
 @app.get("/healthy")

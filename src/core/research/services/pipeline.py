@@ -81,6 +81,7 @@ async def research_logic(
     embedder: IEmbedder | None = None,
     session=None,
     today: str | None = None,
+    source_types: list[str] | None = None,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the research pipeline, yielding (event, payload) pairs.
 
@@ -94,7 +95,10 @@ async def research_logic(
     budget = make_budget()
     try:
         chunk_repo = ChunkRepository(session) if session is not None else None
-        toolbox = AskToolbox(searching, scraper, ranker, embedder, chunk_repo)
+        toolbox = AskToolbox(
+            searching, scraper, ranker, embedder, chunk_repo,
+            source_types=source_types,
+        )
 
         # <----- Planning (native tool call) ----->
         yield "status", {"step": "Planning sub-questions..."}
@@ -191,6 +195,7 @@ async def research_sse_adapter(
     embedder: IEmbedder | None = None,
     session=None,
     today: str | None = None,
+    source_types: list[str] | None = None,
 ) -> AsyncGenerator[str]:
     """Translate research events into an SSE stream.
 
@@ -206,7 +211,7 @@ async def research_sse_adapter(
 
     pipeline = research_logic(
         query, searching, model, scraper, ranker, embedder=embedder, session=session,
-        today=today,
+        today=today, source_types=source_types,
     )
     async for event, data in pipeline:
         if event == "answer_ready":
@@ -262,6 +267,7 @@ async def research_json_adapter(
     embedder: IEmbedder | None = None,
     session=None,
     today: str | None = None,
+    source_types: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run the research pipeline and return the full result as one dict."""
     answer_data: dict[str, Any] | None = None
@@ -269,7 +275,7 @@ async def research_json_adapter(
 
     pipeline = research_logic(
         query, searching, model, scraper, ranker, embedder=embedder, session=session,
-        today=today,
+        today=today, source_types=source_types,
     )
     async for event, data in pipeline:
         if event == "error":

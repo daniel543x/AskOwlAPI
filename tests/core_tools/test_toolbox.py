@@ -185,7 +185,7 @@ class PerQuerySearchProvider(FakeSearchProvider):
         self.by_query = by_query
         self.queries: list[str] = []
 
-    async def search(self, query, engines=None):
+    async def search(self, query, engines=None, categories=None):
         self.queries.append(query)
         return self.by_query.get(query, [])
 
@@ -226,7 +226,7 @@ class BypassAwareProvider(FakeSearchProvider):
         super().__init__()
         self.bypass_seen: list[bool] = []
 
-    async def search(self, query, engines=None):
+    async def search(self, query, engines=None, categories=None):
         self.bypass_seen.append(CACHE_BYPASS.get())
         return self.results
 
