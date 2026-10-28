@@ -180,6 +180,9 @@ async def agent_logic(
 
             if toolbox.ranked_sources:
                 yield "sources", {"sources": toolbox.ranked_sources}
+            new_offers = toolbox.take_new_offers()
+            if new_offers:
+                yield "offers", {"offers": new_offers}
             if settings.DEBUG:
                 yield "debug", {
                     "iterations_left": budget.iterations_left,

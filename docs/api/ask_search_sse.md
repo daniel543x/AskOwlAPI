@@ -165,6 +165,13 @@ The LLM is never used without a tool call:
 
 ## Changelog
 
+### v2.12 (2026-10-28, PR 14 — additive)
+
+- Added: `offers` event on agent-mode streams when the optional,
+  feature-flagged gg.deals tool is used:
+  `{"offers": [{title, current_best, historical_low, stores}, ...]}` —
+  the client renders a banner; prices never appear in answer text.
+
 ### v2.11 (2026-10-28, PR 13 — additive)
 
 - Added: Inbox routes — `GET /jobs[?seen=]`, `POST /jobs/{id}/seen`,

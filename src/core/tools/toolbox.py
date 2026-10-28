@@ -135,6 +135,9 @@ class AskToolbox:
 
         self.raw_results: list = []
         self.ranked_sources: list[dict[str, Any]] = []
+        # Structured offers (PR 14): the gg.deals tool records payloads the
+        # SSE layer renders as an `offers` banner (never answer text).
+        self.structured_offers: list[dict[str, Any]] = []
         self.pages: list[dict[str, Any]] = []
         self.chunks: list[dict[str, Any]] = []
         self.selected_chunks: list[dict[str, Any]] = []
@@ -155,6 +158,20 @@ class AskToolbox:
             e for e in extra_engines_for(self.source_types) if e not in engines
         )
         return engines or None
+
+    def record_offers(self, offers: list[dict[str, Any]]) -> None:
+        """Accumulate structured offers from the gg.deals tool (PR 14)."""
+        known = {str(o.get("title", "")) for o in self.structured_offers}
+        for offer in offers:
+            if str(offer.get("title", "")) not in known:
+                self.structured_offers.append(offer)
+                known.add(str(offer.get("title", "")))
+
+    def take_new_offers(self) -> list[dict[str, Any]]:
+        """Offers not yet surfaced; drains the accumulator."""
+        offers = list(self.structured_offers)
+        self.structured_offers.clear()
+        return offers
 
     async def web_search(self, query: str) -> str:
         """Search the web and rank the results; returns JSON for the LLM.
@@ -429,6 +446,21 @@ class PreScoreArgs(BaseModel):
     text: str = Field(description="Text the question refers to.")
 
 
+class GameOffersArgs(BaseModel):
+    game_name: str = Field(description="Video game title to price-check.")
+
+
+async def _game_offers(toolbox: AskToolbox, game_name: str) -> str:
+    """Structured game offers; the payload also surfaces as an SSE event."""
+    from ...modules.ggdeals.factory import get_client
+
+    offers = await get_client().game_offers(game_name)
+    toolbox.record_offers(offers)
+    if not offers:
+        return json.dumps({"offers": [], "note": "No offers found."})
+    return json.dumps({"offers": offers, "count": len(offers)})
+
+
 async def _pre_score(toolbox: AskToolbox, question: str, text: str) -> str:
     """Typed yes/no decision with a calibrated probability (JSON)."""
     if toolbox.decision_maker is None:
@@ -447,9 +479,31 @@ async def _pre_score(toolbox: AskToolbox, question: str, text: str) -> str:
 def build_tools(toolbox: AskToolbox) -> list[StructuredTool]:
     """Bindable tool schemas for agentic use (Phase 5+).
 
-    `pre_score` appears only when a decision model is configured.
+    `pre_score` appears only when a decision model is configured;
+    `game_offers` (PR 14) only when gg.deals is enabled and configured.
     """
     tools: list[StructuredTool] = []
+    if settings.GGDEALS_ENABLED:
+        from ...modules.ggdeals.factory import get_client
+
+        client = get_client()
+        if client.configured():
+            tools.append(
+                StructuredTool.from_function(
+                    coroutine=lambda **kwargs: _game_offers(
+                        toolbox, kwargs["game_name"]
+                    ),
+                    name="game_offers",
+                    description=(
+                        "Look up current and historical price offers for a "
+                        "video game by title. Returns structured offers "
+                        "(current best, historical low, stores) for the "
+                        "client to render as a banner — quote the title, "
+                        "never the prices, in the answer text."
+                    ),
+                    args_schema=GameOffersArgs,
+                )
+            )
     if toolbox.decision_maker is not None:
         tools.append(
             StructuredTool.from_function(

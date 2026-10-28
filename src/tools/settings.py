@@ -176,6 +176,18 @@ class Settings(BaseSettings):
     JOB_RETRY_DELAY_S: float = 5.0
     JOB_MAX_RETRIES: int = 3
 
+    # <----- gg.deals offers tool (PR 14 / decision 18; optional) ----->
+    # Off by default: a paid API key is required and the exact endpoint
+    # shape is verified at enablement time. With the path unset the tool
+    # degrades to a clear error instead of guessing URLs.
+    GGDEALS_ENABLED: bool = False
+    GGDEALS_API_KEY: str = ""
+    GGDEALS_API_BASE_URL: str = "https://api.gg.deals"
+    GGDEALS_PRICES_PATH: str = ""
+    GGDEALS_OFFERS_CACHE_TTL_S: float = 3600.0
+    GGDEALS_MAX_CONCURRENCY: int = 1
+    GGDEALS_TIMEOUT_S: float = 10.0
+
     # <----- Capability probe (PR 9 / decisions 11 + 20) ----->
     # Provider capability probes (e.g. Ollama /api/show) are cached via the
     # ICache with this TTL. A probe may only prune seeded values, never add,
