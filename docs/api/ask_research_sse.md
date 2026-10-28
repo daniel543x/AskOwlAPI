@@ -11,6 +11,8 @@ only lists the extensions over protocol v2.
 | Route           | Parameters                                    |
 |-----------------|-----------------------------------------------|
 | `/ask/research` | `query` (required), `stream` (default `true`), `model_id`, `embedder_id`, `reranker_id`, `search_provider`, `source_types` (repeated, optional) |
+| `/ask/deep_research` | `query` (required), `stream` (default `true`), `source_types`, plus the shared parameters — the deep preset (PR 19): scout, reflect via `revise_plan`, notes, high budget. |
+| `/ask/agent`    | (deprecated, PR 19) — the free agent loop; use `/ask/deep_research`. |
 | `/ask/agent`    | `goal` (required), `persona_id` (optional), `model_id`, `embedder_id`, `reranker_id`, `decision_model_id`, `search_provider`, `source_types` (repeated, optional) |
 
 Model-selection parameters are optional UUIDs (see

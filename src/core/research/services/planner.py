@@ -58,3 +58,50 @@ async def plan_subquestions(
         "raw query as the only sub-question (tool-protocol error path)."
     )
     return [query], False
+
+
+REFLECT_SYSTEM = """You are reviewing a research run's material so far.
+Given the query and a digest of what was gathered, decide whether any
+gaps remain. Call `RevisePlan` exactly once: add ONLY standalone search
+sub-questions for material the digest does not cover. If the material is
+sufficient, add an empty list. You MUST respond with the RevisePlan tool
+call; prose is a protocol violation."""
+
+
+async def revise_research_plan(
+    model: BaseChatModel,
+    query: str,
+    digest: str,
+    today: str | None = None,
+) -> tuple[list[str], str]:
+    """One reflection round (PR 19): returns (added, rationale).
+
+    A missing or prose response means "no additions" — reflection is
+    optional and must never fail the run.
+    """
+    from ..services.contracts import RevisePlan
+
+    bound = model.bind_tools([RevisePlan])
+    try:
+        response = await bound.ainvoke(
+            [
+                SystemMessage(
+                    content=f"{current_date_line(today)}\n{REFLECT_SYSTEM}"
+                ),
+                HumanMessage(
+                    content=f"Query: {query}\n\nGathered so far:\n{digest}"
+                ),
+            ]
+        )
+        for tool_call in response.tool_calls or []:
+            if tool_call.get("name") == "RevisePlan":
+                plan = RevisePlan.model_validate(tool_call.get("args", {}))
+                seen: dict[str, None] = {}
+                for q in plan.add:
+                    cleaned_q = q.strip()
+                    if cleaned_q:
+                        seen.setdefault(cleaned_q, None)
+                return list(seen), plan.rationale
+    except Exception:
+        logger.debug("RevisePlan reflection failed; treating as no-op.")
+    return [], ""

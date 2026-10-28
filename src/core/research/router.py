@@ -102,6 +102,70 @@ async def ask_research(
     attachment_ids: list[uuid.UUID] = Query(default=[]),
     note_store: NoteStore = Depends(get_note_store),
 ):
+    return await _research_turn(
+        query, stream, searching, declared_source_types, model, scraper,
+        ranker, embedder, session, source_types, turn, background, user,
+        attachment_ids, note_store, scout=False, reflect=False,
+    )
+
+
+@router.get(
+    "/deep_research",
+    dependencies=[
+        Depends(get_current_elevated_user),
+        Depends(require_scope("research")),
+    ],
+)
+async def ask_deep_research(
+    query: str = Query(..., description="Research goal (v1 name: agent)."),
+    stream: bool = Query(
+        True, description="Enable/Disable streaming response. Default True."
+    ),
+    searching: ISearchProvider = Depends(get_search_provider),
+    declared_source_types: list[str] = Depends(get_declared_source_types),
+    model: BaseChatModel = Depends(get_llm_client),
+    scraper: IScraper = Depends(get_scraper),
+    ranker: IRanker = Depends(get_ranker),
+    embedder: IEmbedder | None = Depends(get_optional_embedder),
+    session: AsyncSession = Depends(get_session),
+    source_types: list[str] = Query(default=[]),
+    turn: TurnResources = Depends(get_turn_resources),
+    background: bool = Query(default=False),
+    user: User = Depends(get_current_elevated_user),
+    attachment_ids: list[uuid.UUID] = Query(default=[]),
+    note_store: NoteStore = Depends(get_note_store),
+):
+    """The deep-research preset (PR 19): scout + reflect + notes.
+
+    High budget via the shared Budget; renamed from `agent` in v3
+    (PR 21). The old `/ask/agent` loop stays as a deprecated alias.
+    """
+    return await _research_turn(
+        query, stream, searching, declared_source_types, model, scraper,
+        ranker, embedder, session, source_types, turn, background, user,
+        attachment_ids, note_store, scout=True, reflect=True,
+    )
+
+
+async def _research_turn(
+    query: str,
+    stream: bool,
+    searching: ISearchProvider,
+    declared_source_types: list[str],
+    model: BaseChatModel,
+    scraper: IScraper,
+    ranker: IRanker,
+    embedder: IEmbedder | None,
+    session: AsyncSession,
+    source_types: list[str],
+    turn: TurnResources,
+    background: bool,
+    user: User,
+    attachment_ids: list[uuid.UUID],
+    note_store: NoteStore,
+    scout: bool,
+    reflect: bool,
+):
     ensure_source_types(source_types, declared_source_types)
     attachments = await resolve_for_ask(
         session, user.id, None, attachment_ids,
@@ -119,6 +183,7 @@ async def ask_research(
         return await _enqueue_research_turn(
             query, searching, model, scraper, ranker, embedder,
             session, user, source_types, turn, att_dicts, images,
+            scout=scout, reflect=reflect,
         )
     if settings.BUSY_POLICY == "reject":
         try:
@@ -143,6 +208,8 @@ async def ask_research(
                 attachments=att_dicts,
                 images=images,
                 note_store=note_store,
+                scout=scout,
+                reflect=reflect,
                 turn=turn,
             ),
             media_type="text/event-stream",
@@ -160,6 +227,8 @@ async def ask_research(
         attachments=att_dicts,
         images=images,
         note_store=note_store,
+        scout=scout,
+        reflect=reflect,
         turn=turn,
     )
 
@@ -170,6 +239,12 @@ async def ask_research(
         Depends(get_current_elevated_user),
         Depends(require_scope("agent")),
     ],
+    deprecated=True,
+    description=(
+        "Deprecated: use /ask/deep_research (the deep-research preset). "
+        "This free agent loop is kept temporarily and removed at protocol "
+        "v3."
+    ),
 )
 async def ask_agent(
     goal: str = Query(..., description="Goal the agent should accomplish."),
@@ -249,6 +324,8 @@ async def _enqueue_research_turn(
     turn: TurnResources,
     attachments: list[dict],
     images: list[bytes] | None,
+    scout: bool = False,
+    reflect: bool = False,
 ) -> JSONResponse:
     """Auto-convert a busy foreground research run into a job (PR 12)."""
     job = Job(user_id=user.id, kind="research", payload={"query": query})
@@ -268,6 +345,8 @@ async def _enqueue_research_turn(
                 attachments=attachments,
                 images=images,
                 note_store=job_notes,
+                scout=scout,
+                reflect=reflect,
                 turn=turn,
             )
         return (result.get("report") or "")[:4000]

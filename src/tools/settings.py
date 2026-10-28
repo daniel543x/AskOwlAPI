@@ -131,6 +131,9 @@ class Settings(BaseSettings):
 
     # <----- Research mode / agent loop ----->
     RESEARCH_MAX_SUBQUESTIONS: int = 5
+    # Reflect ceiling slack (PR 19): revise_plan may add sub-questions up
+    # to RESEARCH_MAX_SUBQUESTIONS + this slack in total.
+    RESEARCH_REFLECT_SLACK: int = 2
     AGENT_MAX_ITERATIONS: int = 8
     AGENT_TIME_BUDGET_SECONDS: float = 300.0
     # Estimated tokens (chars/4) across all LLM calls of one research/agent run.

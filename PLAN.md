@@ -335,7 +335,7 @@ Preset table over the shared loop (toolbox + conversation history + degrade path
       TOC: `{idx, task, one_line_summary, sources_count}`) + `SubmitReport` deterministic
       assembly + SSE `note` event; `research` re-based on the core; degrade →
       gathered→generate_report (decision 9).
-- [ ] **PR 19 `rebuild/deep`** — `agent` → `deep_research` (alias `/ask/agent` kept
+- [x] **PR 19 `rebuild/deep`** — `agent` → `deep_research` (alias `/ask/agent` kept
       temporarily, deprecated); scout step (one forced web_search+fetch+get_context before
       the planner); reflect via `revise_plan(add, rationale)` with ceiling
       `RESEARCH_MAX_SUBQUESTIONS` + slack; high preset budget.
