@@ -82,6 +82,7 @@ async def search_logic(
     conversation_id=None,
     today: str | None = None,
     source_types: list[str] | None = None,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the search pipeline, yielding (event, payload) pairs.
 
@@ -155,6 +156,22 @@ async def search_logic(
         yield "status", {"step": "Selecting context..."}
         async with _stage("get_context"):
             context = await toolbox.get_context(query)
+
+        if attachments:
+            from sqlalchemy.ext.asyncio import AsyncSession as _AS
+
+            from ....modules.attachments.service import attachment_context
+            from ....tools.db import engine as _engine
+
+            # Deterministic injection (PR 15): uploaded files join the
+            # context directly — the search mode has no tool loop.
+            async with _AS(_engine, expire_on_commit=False) as att_session:
+                file_context = await attachment_context(att_session, attachments)
+            if file_context:
+                context = (
+                    f"{file_context}\n\n{context}" if context else file_context
+                )
+                yield "status", {"step": "Added uploaded files to context."}
 
         yield "context", {
             "context": context,
@@ -256,6 +273,7 @@ async def search_sse_adapter(
     recency_bias: float = 0.0,
     today: str | None = None,
     source_types: list[str] | None = None,
+    attachments: list[dict[str, Any]] | None = None,
     turn: TurnResources | None = None,
 ) -> AsyncGenerator[str]:
     """Translate pipeline events into an SSE stream (protocol v2).
@@ -303,6 +321,7 @@ async def search_sse_adapter(
                 conversation_id=conversation.id if conversation is not None else None,
                 today=today,
                 source_types=source_types,
+                attachments=attachments,
             ):
                 if event == "answer_ready":
                     yield frame("status", {"step": "Generating answer..."})
@@ -382,6 +401,7 @@ async def search_json_adapter(
     recency_bias: float = 0.0,
     today: str | None = None,
     source_types: list[str] | None = None,
+    attachments: list[dict[str, Any]] | None = None,
     turn: TurnResources | None = None,
 ) -> dict[str, Any]:
     """Run the pipeline and return the full result as one JSON-ready dict.
@@ -412,6 +432,7 @@ async def search_json_adapter(
                     ),
                     today=today,
                     source_types=source_types,
+                    attachments=attachments,
                 )
                 async for event, data in pipeline:
                     if event == "error":

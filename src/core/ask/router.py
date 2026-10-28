@@ -16,6 +16,7 @@ from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...modules.attachments.service import resolve_for_ask
 from ...modules.decision.base import IDecisionMaker
 from ...modules.decision.factory import get_optional_decision_maker
 from ...modules.embedding.base import IEmbedder
@@ -110,6 +111,14 @@ class SearchRequest(BaseModel):
             "own defaults; validated against GET /search/sources."
         ),
     )
+    attachment_ids: list[uuid.UUID] = Field(
+        default=[],
+        description=(
+            "Uploaded files for this turn (PR 15). Must belong to the "
+            "continued conversation; see POST /conversations/{id}/"
+            "attachments."
+        ),
+    )
     background: bool = Field(
         default=False,
         description=(
@@ -149,6 +158,9 @@ async def ask_search(
     turn: TurnResources = Depends(get_turn_resources),
 ):
     ensure_source_types(request.source_types, declared_source_types)
+    attachments = await resolve_for_ask(
+        session, user.id, request.conversation_id, request.attachment_ids
+    )
     if request.background:
         return await _enqueue_search_turn(
             request, model, searching, scraper, ranker, embedder,
@@ -183,6 +195,11 @@ async def ask_search(
                 recency_bias=request.recency_bias,
                 source_types=request.source_types,
                 turn=turn,
+                attachments=[
+                    {"id": a.id, "filename": a.filename,
+                     "conversation_id": a.conversation_id}
+                    for a in attachments
+                ],
             ),
             media_type="text/event-stream",
         )
@@ -205,6 +222,11 @@ async def ask_search(
         recency_bias=request.recency_bias,
         source_types=request.source_types,
         turn=turn,
+        attachments=[
+            {"id": a.id, "filename": a.filename,
+             "conversation_id": a.conversation_id}
+            for a in attachments
+        ],
     )
     return {"answer": answer}
 

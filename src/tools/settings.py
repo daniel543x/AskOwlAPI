@@ -176,6 +176,15 @@ class Settings(BaseSettings):
     JOB_RETRY_DELAY_S: float = 5.0
     JOB_MAX_RETRIES: int = 3
 
+    # <----- Attachments (PR 15 / decision 14) ----->
+    # Text files upload into conversation-scoped chunks; images (PR 16)
+    # will gate on the vision capability. Extraction is capped per file.
+    ATTACHMENT_MAX_FILES: int = 5
+    ATTACHMENT_MAX_FILE_MB: int = 10
+    ATTACHMENT_MAX_CHARS: int = 50_000
+    ATTACHMENT_CONTEXT_MAX_CHARS: int = 8_000
+    ATTACHMENT_SEARCH_K: int = 6
+
     # <----- gg.deals offers tool (PR 14 / decision 18; optional) ----->
     # Off by default: a paid API key is required and the exact endpoint
     # shape is verified at enablement time. With the path unset the tool

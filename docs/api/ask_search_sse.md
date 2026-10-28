@@ -16,6 +16,10 @@ otherwise invisible except latency.
 job (PR 12): responds `202` with `{job_id, kind, status, queue_position}`;
 the answer is never streamed. Jobs run FIFO with per-user fairness
 (decision 19); the InBox routes arrive in PR 13.
+`attachment_ids` (array of UUIDs, default `[]`) — uploaded files for
+this turn (PR 15); must belong to the continued conversation. Files are
+uploaded to `POST /conversations/{id}/attachments` and reach retrieval
+via context injection and the agent's `search_files` tool.
 `thinking` (`bool | null`, default `null`) — reasoning-mode control
 (decision 11): `null` = model default; requesting it on a model without
 the `thinking` capability is a 422 (`model_lacks_thinking`).
@@ -164,6 +168,16 @@ The LLM is never used without a tool call:
   (HTTP 422 with an explanation).
 
 ## Changelog
+
+### v2.13 (2026-10-28, PR 15 — additive)
+
+- Added: `POST /conversations/{id}/attachments` (multipart; txt, md,
+  csv, pdf, docx, html) — files are parsed server-side into
+  conversation-scoped chunks (decision 21; no `scope` default flip).
+- Added: `attachment_ids` request field on ask routes — validated
+  against the conversation (search mode) or referenced directly
+  (research/agent); retrieval surfaces via deterministic context
+  injection (search) and the `search_files` agent tool (agent modes).
 
 ### v2.12 (2026-10-28, PR 14 — additive)
 

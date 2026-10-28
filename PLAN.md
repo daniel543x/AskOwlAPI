@@ -290,7 +290,7 @@ the same ask-router / SSE-doc files — rebase before merging.
     event → the client renders the banner — never inside answer text. Calls pass the
     `ggdeals` gate (PR 12); exact endpoint shapes, quota and ToS verified at
     implementation.
-- [ ] **PR 15 `client/uploads`** — text files (doubt 4; client decision 2026-10-28: files
+- [x] **PR 15 `client/uploads`** — text files (doubt 4; client decision 2026-10-28: files
       ship last; depends on PR 6).
   - `POST /conversations/{id}/attachments` (multipart): txt/md/csv (stdlib), pdf (`pypdf`),
     docx (`python-docx`), html (trafilatura). Limits: 10 MB/file, 5 files/request,

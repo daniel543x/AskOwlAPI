@@ -22,7 +22,7 @@ class ChunkRepository:
     async def store_chunks(
         self,
         chunks: list[dict[str, Any]],
-        embeddings: list[list[float]],
+        embeddings: list[list[float] | None],
         conversation_id: uuid.UUID | None = None,
     ) -> int:
         """Insert chunks with their embeddings; duplicates are skipped.
@@ -62,6 +62,70 @@ class ChunkRepository:
 
         await self.session.commit()
         return inserted
+
+    async def conversation_chunks_strict(
+        self,
+        conversation_id: uuid.UUID,
+        query_embedding: list[float],
+        k: int,
+    ) -> list[dict[str, Any]]:
+        """Top-k chunks scoped STRICTLY to one conversation (PR 15).
+
+        Unlike `vector_candidates` (which includes legacy NULL-scoped web
+        chunks), this only ever returns the conversation's own uploads —
+        the `search_files` tool must not surface web content.
+        """
+        vector_literal = "[" + ",".join(repr(float(v)) for v in query_embedding) + "]"
+        statement = text(
+            "SELECT id, content, metadata, source_url, "
+            "(embedding <=> CAST(:query_vector AS vector)) AS distance "
+            "FROM chunk WHERE conversation_id = :cid "
+            "ORDER BY distance ASC LIMIT :k"
+        )
+        try:
+            result = await self.session.execute(
+                statement,
+                {"query_vector": vector_literal, "cid": conversation_id, "k": k},
+            )
+        except SQLAlchemyError:
+            await self.session.rollback()
+            raise
+        return [
+            {
+                "content": row.content,
+                "metadata": dict(row.metadata or {}),
+                "source_url": row.source_url,
+            }
+            for row in result
+        ]
+
+    async def chunks_by_attachment_ids(
+        self, attachment_ids: list[uuid.UUID], limit: int
+    ) -> list[dict[str, Any]]:
+        """Stored chunk texts for the given uploads (metadata-scoped)."""
+        if not attachment_ids:
+            return []
+        ids = [str(a) for a in attachment_ids]
+        statement = text(
+            "SELECT content, metadata, source_url FROM chunk "
+            "WHERE metadata->>'attachment_id' = ANY(:ids) "
+            "ORDER BY id LIMIT :limit"
+        )
+        try:
+            result = await self.session.execute(
+                statement, {"ids": ids, "limit": limit}
+            )
+        except SQLAlchemyError:
+            await self.session.rollback()
+            raise
+        return [
+            {
+                "content": row.content,
+                "metadata": dict(row.metadata or {}),
+                "source_url": row.source_url,
+            }
+            for row in result
+        ]
 
     async def existing_hashes(self, hashes: list[str]) -> set[str]:
         """Which of the given content hashes are already stored (embed-skip)."""

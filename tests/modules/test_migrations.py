@@ -23,6 +23,7 @@ ALEMBIC_INI = "alembic.ini"
 EXPECTED_TABLES = {
     "alembic_version",
     "apikey",
+    "attachment",
     "chunk",
     "conversation",
     "defaultsettings",

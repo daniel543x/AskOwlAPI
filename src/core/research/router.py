@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from ...modules.attachments.service import resolve_for_ask
 from ...modules.chunk_store.repository import ChunkRepository
 from ...modules.decision.base import IDecisionMaker
 from ...modules.decision.factory import get_optional_decision_maker
@@ -82,8 +83,17 @@ async def ask_research(
     turn: TurnResources = Depends(get_turn_resources),
     background: bool = Query(default=False),
     user: User = Depends(get_current_elevated_user),
+    attachment_ids: list[uuid.UUID] = Query(default=[]),
 ):
     ensure_source_types(source_types, declared_source_types)
+    attachments = await resolve_for_ask(
+        session, user.id, None, attachment_ids,
+        require_same_conversation=False,
+    )
+    att_dicts = [
+        {"id": a.id, "filename": a.filename, "conversation_id": a.conversation_id}
+        for a in attachments
+    ]
     if background:
         return await _enqueue_research_turn(
             query, searching, model, scraper, ranker, embedder,
@@ -109,6 +119,7 @@ async def ask_research(
                 embedder=embedder,
                 session=session,
                 source_types=source_types,
+                attachments=att_dicts,
                 turn=turn,
             ),
             media_type="text/event-stream",
@@ -123,6 +134,7 @@ async def ask_research(
         embedder=embedder,
         session=session,
         source_types=source_types,
+        attachments=att_dicts,
         turn=turn,
     )
 
@@ -150,6 +162,7 @@ async def ask_agent(
     declared_source_types: list[str] = Depends(get_declared_source_types),
     source_types: list[str] = Query(default=[]),
     turn: TurnResources = Depends(get_turn_resources),
+    attachment_ids: list[uuid.UUID] = Query(default=[]),
 ):
     ensure_source_types(source_types, declared_source_types)
     persona = None
@@ -169,6 +182,14 @@ async def ask_agent(
         allowed_engines=persona.allowed_engines if persona else None,
         decision_maker=decision_maker,
         source_types=source_types,
+        attachments=[
+            {"id": a.id, "filename": a.filename,
+             "conversation_id": a.conversation_id}
+            for a in await resolve_for_ask(
+                session, user.id, None, attachment_ids,
+                require_same_conversation=False,
+            )
+        ],
     )
 
     return StreamingResponse(
