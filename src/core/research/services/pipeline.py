@@ -99,6 +99,7 @@ async def research_logic(
     note_store=None,
     scout: bool = False,
     reflect: bool = False,
+    persona=None,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the research pipeline, yielding (event, payload) pairs.
 
@@ -114,6 +115,8 @@ async def research_logic(
         chunk_repo = ChunkRepository(session) if session is not None else None
         toolbox = AskToolbox(
             searching, scraper, ranker, embedder, chunk_repo,
+            allowed_domains=persona.allowed_domains if persona else None,
+            allowed_engines=persona.allowed_engines if persona else None,
             source_types=source_types,
             attachments=attachments,
             note_store=note_store,
@@ -299,6 +302,7 @@ async def research_sse_adapter(
     note_store=None,
     scout: bool = False,
     reflect: bool = False,
+    persona=None,
     turn: TurnResources | None = None,
 ) -> AsyncGenerator[str]:
     """Translate research events into an SSE stream.
@@ -319,7 +323,7 @@ async def research_sse_adapter(
                 query, searching, model, scraper, ranker, embedder=embedder,
                 session=session, today=today, source_types=source_types,
                 attachments=attachments, note_store=note_store,
-                scout=scout, reflect=reflect,
+                scout=scout, reflect=reflect, persona=persona,
             )
             async for event, data in pipeline:
                 if event == "answer_ready":
@@ -436,6 +440,7 @@ async def research_json_adapter(
     note_store=None,
     scout: bool = False,
     reflect: bool = False,
+    persona=None,
     turn: TurnResources | None = None,
 ) -> dict[str, Any]:
     """Run the research pipeline and return the full result as one dict."""
@@ -448,7 +453,7 @@ async def research_json_adapter(
                 query, searching, model, scraper, ranker, embedder=embedder,
                 session=session, today=today, source_types=source_types,
                 attachments=attachments, note_store=note_store,
-                scout=scout, reflect=reflect,
+                scout=scout, reflect=reflect, persona=persona,
             )
             async for event, data in pipeline:
                 if event == "error":
