@@ -280,7 +280,7 @@ the same ask-router / SSE-doc files — rebase before merging.
     startup sweep `running → failed`.
   - Inbox view = queue view: pending list (positions), running (progress), done/failed
     (notification, seen flag).
-- [ ] **PR 14 `client/ggdeals`** — optional, feature-flagged game-offers module (doubt 8;
+- [x] **PR 14 `client/ggdeals`** — optional, feature-flagged game-offers module (doubt 8;
       official API confirmed 2026-10-28).
   - `src/modules/ggdeals/`: HTTP client (API key in settings, provider-credential
     precedent) + offers TTL cache via ICache; conditional tool attach (`pre_score`
