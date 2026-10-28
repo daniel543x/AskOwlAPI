@@ -10,7 +10,7 @@
 
 import uuid
 
-from fastapi import Depends, HTTPException, Query, status
+from fastapi import Depends, HTTPException, Query, Request, status
 from langchain_core.language_models import BaseChatModel
 
 from ..identity.auth.security import get_current_user
@@ -99,6 +99,7 @@ async def build_chat_model(
 
 
 async def get_llm_client(
+    http_request: Request,
     repo: ModelRepository = Depends(get_repository),
     factory: ChatModelFactory = Depends(get_llm_factory),
     user: User = Depends(get_current_user),
@@ -106,12 +107,24 @@ async def get_llm_client(
     thinking: bool | None = Query(default=None),
     effort: str | None = Query(default=None),
 ) -> BaseChatModel:
-    """Chat model for GET ask routes; `thinking`/`effort` are query params.
+    """Chat model for every ask route — the single override seam.
 
-    The ask pipeline talks to the LLM exclusively through native tool calls,
-    so models without tool support are rejected up front with a 4xx. POST
-    ask routes call `build_chat_model` directly with their body fields.
+    GET ask routes carry `thinking`/`effort` as query params; POST routes
+    carry them in the body, read here from the raw JSON (FastAPI caches
+    the body, so the route's own typed parsing is unaffected). The ask
+    pipeline talks to the LLM exclusively through native tool calls, so
+    models without tool support are rejected up front with a 4xx.
     """
+    if http_request.method == "POST":
+        try:
+            body = await http_request.json()
+        except Exception:
+            body = None
+        if isinstance(body, dict):
+            if thinking is None:
+                thinking = body.get("thinking")
+            if effort is None:
+                effort = body.get("effort")
     return await build_chat_model(
         repo, factory, user, request_model_id, thinking=thinking, effort=effort
     )
