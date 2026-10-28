@@ -27,8 +27,12 @@ from ...modules.owl_reranker.base import IRanker
 from ...modules.owl_reranker.factory import get_ranker
 from ...modules.scrapy.factory import get_scraper
 from ...modules.scrapy.providers.base import IScraper
-from ...modules.search_engine.factory import get_search_provider
+from ...modules.search_engine.factory import (
+    get_declared_source_types,
+    get_search_provider,
+)
 from ...modules.search_engine.providers.base import ISearchProvider
+from ...modules.search_engine.source_types import ensure_source_types
 from ...tools.db import get_session
 from .services.search import search_json_adapter, search_sse_adapter
 
@@ -89,6 +93,13 @@ class SearchRequest(BaseModel):
             "strongest. Clamped server-side to RECENCY_BIAS_MAX."
         ),
     )
+    source_types: list[str] = Field(
+        default=[],
+        description=(
+            "Source types for this turn (PR 11). Empty = the provider's "
+            "own defaults; validated against GET /search/sources."
+        ),
+    )
     thinking: bool | None = Field(
         default=None,
         description=(
@@ -110,6 +121,7 @@ class SearchRequest(BaseModel):
 async def ask_search(
     request: SearchRequest,
     searching: ISearchProvider = Depends(get_search_provider),
+    declared_source_types: list[str] = Depends(get_declared_source_types),
     scraper: IScraper = Depends(get_scraper),
     ranker: IRanker = Depends(get_ranker),
     embedder: IEmbedder | None = Depends(get_optional_embedder),
@@ -118,6 +130,7 @@ async def ask_search(
     session: AsyncSession = Depends(get_session),
     model: BaseChatModel = Depends(get_llm_client),
 ):
+    ensure_source_types(request.source_types, declared_source_types)
     if request.stream:
         return StreamingResponse(
             search_sse_adapter(
@@ -136,6 +149,7 @@ async def ask_search(
                 cache=request.cache,
                 scope=request.scope,
                 recency_bias=request.recency_bias,
+                source_types=request.source_types,
             ),
             media_type="text/event-stream",
         )
@@ -156,5 +170,6 @@ async def ask_search(
         cache=request.cache,
         scope=request.scope,
         recency_bias=request.recency_bias,
+        source_types=request.source_types,
     )
     return {"answer": answer}

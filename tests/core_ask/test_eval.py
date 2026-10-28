@@ -80,7 +80,7 @@ class CountingSearch(FakeSearchProvider):
         super().__init__()
         self.calls = 0
 
-    async def search(self, query, engines=None):
+    async def search(self, query, engines=None, categories=None):
         self.calls += 1
         return await super().search(query)
 

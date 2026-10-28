@@ -29,13 +29,16 @@ class SearXNGProvider(ISearchProvider):
         self.timeout = timeout if timeout is not None else settings.SEARXNG_TIMEOUT
 
     async def search(
-        self, query: str, engines: list[str] | None = None
+        self,
+        query: str,
+        engines: list[str] | None = None,
+        categories: str | None = None,
     ) -> list[SearchResult]:
         params = {
             "q": query,
             "format": "json",
             "engines": ",".join(engines) if engines else self.engines,
-            "categories": self.categories,
+            "categories": categories or self.categories,
         }
         try:
             async with make_client(timeout=self.timeout) as client:

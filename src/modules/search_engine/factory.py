@@ -14,6 +14,7 @@ from .caching import CachedSearchProvider
 from .model import SearchProviderConfig
 from .providers.base import ISearchProvider
 from .providers.searxng import SearXNGProvider
+from .source_types import KNOWN_SOURCE_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -152,3 +153,32 @@ async def get_search_provider(
     search_provider: str | None = Query(None, alias="search_provider"),
 ):
     return await SearchProviderFactory.create_provider(session, search_provider)
+
+
+async def declared_source_types(
+    session: AsyncSession,
+    provider_type: str | None = None,
+) -> list[str]:
+    """Source types the active/selected provider declares (PR 11).
+
+    No database configuration degrades to the full v1 set (the built-in
+    SearXNG default): a missing config row must not make every request
+    fail validation.
+    """
+    statement = select(SearchProviderConfig).where(SearchProviderConfig.is_active)
+    if provider_type:
+        statement = statement.where(
+            SearchProviderConfig.provider_type == provider_type
+        )
+    result = await session.execute(statement)
+    config = result.scalar_one_or_none()
+    if config and config.supported_source_types:
+        return list(config.supported_source_types)
+    return list(KNOWN_SOURCE_TYPES)
+
+
+async def get_declared_source_types(
+    session: AsyncSession = Depends(get_session),
+    search_provider: str | None = Query(None, alias="search_provider"),
+) -> list[str]:
+    return await declared_source_types(session, search_provider)

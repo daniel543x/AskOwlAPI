@@ -10,11 +10,15 @@ only lists the extensions over protocol v2.
 
 | Route           | Parameters                                    |
 |-----------------|-----------------------------------------------|
-| `/ask/research` | `query` (required), `stream` (default `true`), `model_id`, `embedder_id`, `reranker_id`, `search_provider` |
-| `/ask/agent`    | `goal` (required), `persona_id` (optional), `model_id`, `embedder_id`, `reranker_id`, `decision_model_id`, `search_provider` |
+| `/ask/research` | `query` (required), `stream` (default `true`), `model_id`, `embedder_id`, `reranker_id`, `search_provider`, `source_types` (repeated, optional) |
+| `/ask/agent`    | `goal` (required), `persona_id` (optional), `model_id`, `embedder_id`, `reranker_id`, `decision_model_id`, `search_provider`, `source_types` (repeated, optional) |
 
 Model-selection parameters are optional UUIDs (see
 [models.md](models.md)); `search_provider` selects a search provider by name.
+`source_types` narrows the search slice for the run (PR 11 / decision 13):
+repeat the parameter (`source_types=web&source_types=news`); empty =
+provider default. Values are validated against the active provider's
+declared set (`GET /search/sources`) — unknown values are a 422.
 
 `persona_id` selects one of the caller's personas (`POST/GET/PATCH/DELETE /personas`):
 its system context and keywords bias the agent's queries, its domain allowlist filters

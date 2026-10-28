@@ -188,7 +188,12 @@ async def test_report_without_tool_call_is_error_event():
 @pytest.mark.asyncio
 async def test_pipeline_exception_becomes_error_event():
     class ExplodingSearch(FakeSearchProvider):
-        async def search(self, query: str, engines: list[str] | None = None):
+        async def search(
+            self,
+            query: str,
+            engines: list[str] | None = None,
+            categories: str | None = None,
+        ):
             raise RuntimeError("boom")
 
     deps = make_deps()

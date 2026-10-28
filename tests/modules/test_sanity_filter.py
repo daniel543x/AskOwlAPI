@@ -46,7 +46,7 @@ def test_empty_query_is_never_filtered():
 @pytest.mark.asyncio
 async def test_filtering_provider_drops_and_counts():
     class Fixed(ISearchProvider):
-        async def search(self, query, engines=None):
+        async def search(self, query, engines=None, categories=None):
             return [
                 SearchResult("Rust book", "ownership in rust", "https://a.dev"),
                 SearchResult("Peptides", "amino acids", "https://b.dev"),
@@ -68,7 +68,7 @@ async def test_filtering_provider_drops_and_counts():
 @pytest.mark.asyncio
 async def test_poisoned_query_detected_when_all_dropped():
     class Fixed(ISearchProvider):
-        async def search(self, query, engines=None):
+        async def search(self, query, engines=None, categories=None):
             return [SearchResult("Off-topic", "nothing shared", "https://x.dev")]
 
 
@@ -82,7 +82,7 @@ async def test_poisoned_query_detected_when_all_dropped():
 @pytest.mark.asyncio
 async def test_zero_results_is_not_reported_as_poisoning():
     class Empty(ISearchProvider):
-        async def search(self, query, engines=None):
+        async def search(self, query, engines=None, categories=None):
             return []
 
 

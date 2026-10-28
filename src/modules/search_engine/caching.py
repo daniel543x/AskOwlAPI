@@ -36,17 +36,28 @@ class CachedSearchProvider(ISearchProvider):
         self.hits = 0
         self.misses = 0
 
-    def _key(self, query: str, engines: list[str] | None) -> str:
-        raw = json.dumps([query, sorted(engines or [])], sort_keys=True)
+    def _key(
+        self, query: str, engines: list[str] | None, categories: str | None
+    ) -> str:
+        raw = json.dumps(
+            [query, sorted(engines or []), categories], sort_keys=True
+        )
         return hashlib.sha256(raw.encode()).hexdigest()
 
     async def search(
-        self, query: str, engines: list[str] | None = None
+        self,
+        query: str,
+        engines: list[str] | None = None,
+        categories: str | None = None,
     ) -> list[SearchResult]:
         if CACHE_BYPASS.get():
-            return list(await self.inner.search(query, engines=engines))
+            return list(
+                await self.inner.search(
+                    query, engines=engines, categories=categories
+                )
+            )
 
-        key = self._key(query, engines)
+        key = self._key(query, engines, categories)
         now = time.monotonic()
         hit = self._store.get(key)
         if hit is not None and now - hit[0] < self.ttl:
@@ -55,7 +66,9 @@ class CachedSearchProvider(ISearchProvider):
             logger.debug("Search cache hit for %r.", query)
             return list(hit[1])
 
-        results = await self.inner.search(query, engines=engines)
+        results = await self.inner.search(
+            query, engines=engines, categories=categories
+        )
         self.misses += 1
         if results:
             self._store[key] = (now, list(results))

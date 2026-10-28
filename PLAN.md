@@ -251,7 +251,7 @@ the same ask-router / SSE-doc files — rebase before merging.
     "model switch resets to defaults" contract, decision 12).
   - Ask routes resolve: request > profile > model default; explicit request fields still
     validated (422 on impossible combos).
-- [ ] **PR 11 `client/sources`** — source types (doubt 3).
+- [x] **PR 11 `client/sources`** — source types (doubt 3).
   - `ISearchProvider.search(query, engines, categories)`; SearXNG category map
     (web→general, news→news, academic→science, social→engine list); provider config
     declares `supported_source_types` (DB + type registry, SearchProviderConfig precedent).
