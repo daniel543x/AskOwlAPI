@@ -176,6 +176,9 @@ class FakeChunkRepo:
         self.stored.extend(zip(chunks, embeddings, strict=True))
         return len(chunks)
 
+    async def existing_hashes(self, hashes):
+        return set()  # nothing pre-stored: everything is embedded anew
+
     async def vector_candidates(self, query_embedding, k):
         def cosine(a, b):
             dot = sum(x * y for x, y in zip(a, b, strict=True))

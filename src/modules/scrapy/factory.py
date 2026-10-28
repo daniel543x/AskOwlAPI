@@ -4,7 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from ...tools.db import get_session
+from ...tools.settings import settings
 from .model import ScrapySettings
+from .page_cache import PageCacheRepository, PageCachingScraper
 from .providers.base import IScraper
 from .providers.trafilatura import TrafilturaScraper
 
@@ -44,6 +46,11 @@ class ScraperFactory:
             raise ValueError(f"Scraper '{config.name}' not implemented in code")
 
         instance = scraper_class(api_key=config.api_key, config=config.settings)
+
+        if settings.PAGE_CACHE:
+            # Per-URL content cache (WU-10): shares the request session, so
+            # its failures degrade to a full fetch without breaking the turn.
+            instance = PageCachingScraper(instance, PageCacheRepository(session))
 
         return instance
 

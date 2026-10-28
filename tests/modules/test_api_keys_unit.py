@@ -14,6 +14,7 @@ from src.modules.api_keys.model import (
     validate_scopes,
 )
 from src.modules.api_keys.rate_limit import RateLimiter
+from src.tools.cache import MemoryCache
 
 
 def test_generate_api_key_shape():
@@ -64,29 +65,32 @@ def test_is_expired_handles_naive_and_aware_datetimes():
     assert is_expired(_key(expires_at=naive_past))
 
 
-def test_rate_limiter_fixed_window():
-    limiter = RateLimiter(limit_per_minute=2)
-    limiter.check("k")
-    limiter.check("k")
+async def test_rate_limiter_fixed_window():
+    limiter = RateLimiter(limit_per_minute=2, cache=MemoryCache())
+    await limiter.check("k")
+    await limiter.check("k")
     with pytest.raises(HTTPException) as exc_info:
-        limiter.check("k")
+        await limiter.check("k")
     assert exc_info.value.status_code == 429
+    # The client learns when the window resets.
+    assert exc_info.value.headers is not None
+    assert int(exc_info.value.headers["Retry-After"]) > 0
     # Other keys unaffected.
-    limiter.check("other")
+    await limiter.check("other")
 
 
-def test_rate_limiter_window_reset(monkeypatch):
+async def test_rate_limiter_window_reset(monkeypatch):
     import time
 
-    limiter = RateLimiter(limit_per_minute=1)
-    limiter.check("k")
+    limiter = RateLimiter(limit_per_minute=1, cache=MemoryCache())
+    await limiter.check("k")
     with pytest.raises(HTTPException):
-        limiter.check("k")
+        await limiter.check("k")
 
     # Jump past the window: allowed again.
     real_monotonic = time.monotonic
     monkeypatch.setattr(
-        "src.modules.api_keys.rate_limit.time.monotonic",
+        "src.tools.cache.time.monotonic",
         lambda: real_monotonic() + 61,
     )
-    limiter.check("k")
+    await limiter.check("k")

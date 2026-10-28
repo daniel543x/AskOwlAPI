@@ -32,6 +32,7 @@ EXPECTED_TABLES = {
     "persona",
     "refreshtoken",
     "role",
+    "scraped_page",
     "scrapysettings",
     "searchproviderconfig",
     "user",

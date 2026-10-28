@@ -37,7 +37,7 @@ from src.modules.llm_provider.model import (  # noqa: E402, F401
     UserModelPreference,
 )
 from src.modules.personas.model import Persona  # noqa: E402, F401
-from src.modules.scrapy.model import ScrapySettings  # noqa: E402, F401
+from src.modules.scrapy.model import ScrapedPage, ScrapySettings  # noqa: E402, F401
 from src.modules.search_engine.model import SearchProviderConfig  # noqa: E402, F401
 from src.tools.db import get_session, init_db  # noqa: E402
 

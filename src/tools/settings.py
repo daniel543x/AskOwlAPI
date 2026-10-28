@@ -131,6 +131,28 @@ class Settings(BaseSettings):
     # Per-key fixed-window limit for X-API-Key traffic (requests/minute).
     API_KEY_RATE_LIMIT_PER_MINUTE: int = 60
 
+    # <----- Hot-path caches (WU-10 / AR-1) ----->
+    # Search-result memoization (per provider config, in-process). A cache
+    # hit is invisible except latency; empty results are never cached, so a
+    # transient upstream failure is never frozen in.
+    SEARCH_CACHE: bool = True
+    SEARCH_CACHE_TTL_S: float = 3600.0
+    SEARCH_CACHE_MAX_ENTRIES: int = 512
+    # Per-URL scraped-content cache, Postgres-backed (survives restarts).
+    # A hit skips both the HTTP fetch and the extraction. The `cache:
+    # "bypass"` request parameter forces fresh fetches for one turn.
+    PAGE_CACHE: bool = True
+    PAGE_CACHE_TTL_S: float = 86400.0
+    # Rule-based query fan-out ceiling (WU-2; request values clamp to this).
+    QUERY_VARIATIONS_MAX: int = 4
+
+    # <----- Shared small-state cache (ICache) ----->
+    # In-process memory is the default backend. Setting a Redis URL switches
+    # the backend for small TTL state (rate-limit windows; capability probes
+    # later). The `redis` package is an optional extra (`uv sync
+    # --all-extras`); Redis failures degrade to memory, never crash.
+    REDIS_URL: str = ""
+
     # <----- Decision layer (Phase 7 pre-scores; off by default until eval'd) ----->
     PRE_SCORE_SEARCH_FILTER: bool = False
     PRE_SCORE_CHUNK_FILTER: bool = False

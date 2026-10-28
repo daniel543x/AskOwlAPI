@@ -1,7 +1,9 @@
 import json
 
 from src.core.tools.toolbox import AskToolbox, build_tools
+from src.modules.chunk_store.model import chunk_hash
 from src.modules.search_engine.providers.base import SearchResult
+from src.tools.cache_flags import CACHE_BYPASS, cache_bypass
 from src.tools.settings import settings
 from tests.core_ask.fakes import (
     FakeRanker,
@@ -168,6 +170,144 @@ async def test_web_search_fusion_floor_never_empties(monkeypatch):
     # Unreachable floor still keeps the three best-scoring results.
     assert len(toolbox.ranked_sources) == 3
     assert toolbox.search_stats["dropped_results"] == 3
+
+
+# <----- Query fan-out (WU-2) and hot-path caches (WU-10) ----->
+
+
+class PerQuerySearchProvider(FakeSearchProvider):
+    """Returns different results per query, recording every call."""
+
+    def __init__(self, by_query: dict[str, list[SearchResult]]):
+        super().__init__(results=[])
+        self.by_query = by_query
+        self.queries: list[str] = []
+
+    async def search(self, query, engines=None):
+        self.queries.append(query)
+        return self.by_query.get(query, [])
+
+
+async def test_web_search_many_fans_out_and_merges_through_dedup():
+    provider = PerQuerySearchProvider(
+        {
+            "rust ownership": [
+                SearchResult("Book", "rust book", "https://doc.rust-lang.org/book")
+            ],
+            "rust ownership explained": [
+                SearchResult(
+                    "Book (mirror)",
+                    "the rust book page",
+                    "https://www.doc.rust-lang.org/book?utm_source=x",
+                ),
+                SearchResult(
+                    "Borrow checker", "rust borrow checker", "https://b.dev/borrow"
+                ),
+            ],
+        }
+    )
+    toolbox = AskToolbox(provider, make_scraper(), FakeRanker())
+
+    await toolbox.web_search_many(["rust ownership", "rust ownership explained"])
+
+    assert provider.queries == ["rust ownership", "rust ownership explained"]
+    # Both variants' URLs survive, the duplicate page merged into one entry.
+    urls = sorted(s["url"] for s in toolbox.ranked_sources)
+    assert urls == ["https://b.dev/borrow", "https://doc.rust-lang.org/book"]
+    assert toolbox.search_stats["merged_results"] == 1
+
+
+class BypassAwareProvider(FakeSearchProvider):
+    """Records whether the cache-bypass flag was set during search."""
+
+    def __init__(self):
+        super().__init__()
+        self.bypass_seen: list[bool] = []
+
+    async def search(self, query, engines=None):
+        self.bypass_seen.append(CACHE_BYPASS.get())
+        return self.results
+
+
+async def test_cache_bypass_flag_reaches_the_search_provider():
+    provider = BypassAwareProvider()
+    toolbox = AskToolbox(provider, make_scraper(), FakeRanker())
+
+    await toolbox.web_search("rust")
+    with cache_bypass():
+        await toolbox.web_search("rust")
+
+    assert provider.bypass_seen == [False, True]
+
+
+# <----- Embed-skip (WU-10 / AR-1) ----->
+
+
+class RecordingEmbedder:
+    def __init__(self):
+        self.embedded: list[str] = []
+
+    @property
+    def dims(self) -> int:
+        return 2
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        self.embedded.extend(texts)
+        return [[1.0, 0.0] for _ in texts]
+
+
+class PreStoredChunkRepo:
+    """Chunk store that reports pre-computed hashes as already stored."""
+
+    def __init__(self, known_hashes: set[str]):
+        self.known_hashes = known_hashes
+        self.stored_chunks: list[dict] = []
+
+    async def existing_hashes(self, hashes: list[str]) -> set[str]:
+        return {h for h in hashes if h in self.known_hashes}
+
+    async def store_chunks(self, chunks, embeddings) -> int:
+        self.stored_chunks.extend(chunks)
+        return len(chunks)
+
+    async def vector_candidates(self, query_embedding, k):
+        return []
+
+
+async def test_embed_skip_skips_already_stored_chunks():
+    from src.core.tools.chunking import chunk_markdown_data
+
+    embedder = RecordingEmbedder()
+    # Compute the real chunk pieces for page a exactly like the pipeline,
+    # then report their hashes as already stored.
+    page_a_chunks = chunk_markdown_data(
+        [{"url": "http://example.com/a", "content": sample_markdown()}]
+    )
+    known = {
+        chunk_hash(
+            (c.get("metadata") or {}).get("url", "") or c.get("url", ""),
+            c["content"],
+        )
+        for c in page_a_chunks
+    }
+    repo = PreStoredChunkRepo(known_hashes=known)
+    toolbox = AskToolbox(
+        FakeSearchProvider(),
+        make_scraper(),
+        FakeRanker(),
+        embedder=embedder,
+        chunk_repo=repo,
+    )
+    await toolbox.web_search("rust")
+
+    await toolbox.fetch_pages()
+
+    # Page a is already stored: only page b's chunks get embedded.
+    assert len(embedder.embedded) == 2
+    assert repo.stored_chunks and all(
+        (c.get("metadata") or {}).get("url") == "http://example.com/b"
+        for c in repo.stored_chunks
+    )
 
 
 async def test_web_search_returns_ranked_json_and_stores_state():

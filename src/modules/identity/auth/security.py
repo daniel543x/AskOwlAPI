@@ -8,6 +8,7 @@ from fastapi.security import (
 )
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from ....tools.cache import build_cache
 from ....tools.db import get_session
 from ....tools.settings import settings
 from ...api_keys.rate_limit import RateLimiter
@@ -18,7 +19,9 @@ from .service import verify_token
 bearer_scheme = HTTPBearer(auto_error=False)
 api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-_rate_limiter = RateLimiter(settings.API_KEY_RATE_LIMIT_PER_MINUTE)
+_rate_limiter = RateLimiter(
+    settings.API_KEY_RATE_LIMIT_PER_MINUTE, cache=build_cache()
+)
 
 credentials_exception = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -64,7 +67,7 @@ async def get_current_user(
             raise credentials_exception
         api_key, user = resolved
 
-        _rate_limiter.check(api_key.id)
+        await _rate_limiter.check(api_key.id)
         request.state.api_key_scopes = list(api_key.scopes)
         return user
 
