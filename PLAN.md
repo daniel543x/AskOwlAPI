@@ -219,7 +219,7 @@ the same ask-router / SSE-doc files — rebase before merging.
 
 ### 2.2 Phase 10 — Webapp client track (PRs 9–16)
 
-- [ ] **PR 9 `client/capabilities`** — thinking/effort end-to-end (doubt 2).
+- [x] **PR 9 `client/capabilities`** — thinking/effort end-to-end (doubt 2).
   - Version probe per provider: Ollama `/api/show` + `/api/ps` capabilities
     (`completion`, `tools`, `vision`, `thinking`) plus the `think`-levels 400-fallback;
     z.ai effort-level probe (one synthetic call per level, decision 20); cached via

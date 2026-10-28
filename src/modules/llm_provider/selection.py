@@ -40,6 +40,7 @@ class ResolvedModel:
     api_key: str | None = None
     default_params: dict[str, Any] = field(default_factory=dict)
     capabilities: list[str] = field(default_factory=list)
+    effort_levels: list[str] = field(default_factory=list)
     vector_dims: int | None = None
     entry_id: uuid.UUID | None = None
     source: str = TIER_DEFAULT

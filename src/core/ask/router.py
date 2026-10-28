@@ -10,9 +10,8 @@ over POST.
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
-from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +21,9 @@ from ...modules.embedding.base import IEmbedder
 from ...modules.embedding.factory import get_optional_embedder
 from ...modules.identity.auth.security import require_scope
 from ...modules.identity.user.model import User
-from ...modules.llm_provider.dependency import get_llm_client
+from ...modules.llm_provider.dependency import build_chat_model
+from ...modules.llm_provider.factory import ChatModelFactory, get_llm_factory
+from ...modules.llm_provider.repository import ModelRepository, get_repository
 from ...modules.owl_reranker.base import IRanker
 from ...modules.owl_reranker.factory import get_ranker
 from ...modules.scrapy.factory import get_scraper
@@ -89,20 +90,47 @@ class SearchRequest(BaseModel):
             "strongest. Clamped server-side to RECENCY_BIAS_MAX."
         ),
     )
+    thinking: bool | None = Field(
+        default=None,
+        description=(
+            "Reasoning-mode control (decision 11). null = model default; "
+            "requires the model's 'thinking' capability (422 otherwise)."
+        ),
+    )
+    effort: Literal["low", "medium", "high", "max"] | None = Field(
+        default=None,
+        description=(
+            "Reasoning-effort control (decision 11). null = model default; "
+            "requires the 'effort' capability and a supported level "
+            "(422 with a coded error otherwise)."
+        ),
+    )
 
 
 @router.post("/search", dependencies=[Depends(require_scope("search"))])
 async def ask_search(
     request: SearchRequest,
     searching: ISearchProvider = Depends(get_search_provider),
-    model: BaseChatModel = Depends(get_llm_client),
     scraper: IScraper = Depends(get_scraper),
     ranker: IRanker = Depends(get_ranker),
     embedder: IEmbedder | None = Depends(get_optional_embedder),
     decision_maker: IDecisionMaker | None = Depends(get_optional_decision_maker),
     user: User = Depends(_search_scope),
     session: AsyncSession = Depends(get_session),
+    repo: ModelRepository = Depends(get_repository),
+    factory: ChatModelFactory = Depends(get_llm_factory),
+    request_model_id: uuid.UUID | None = Query(default=None, alias="model_id"),
 ):
+    # The reasoning controls live in the POST body, so the model is built
+    # here instead of via the query-param dependency.
+    model = await build_chat_model(
+        repo,
+        factory,
+        user,
+        request_model_id,
+        thinking=request.thinking,
+        effort=request.effort,
+    )
     if request.stream:
         return StreamingResponse(
             search_sse_adapter(

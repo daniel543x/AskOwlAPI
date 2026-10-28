@@ -17,6 +17,13 @@ class ModelKind(StrEnum):
     DECISION = "decision"
 
 
+# Capability strings the ask layer reasons about (decision 11 + 14).
+# Provider-native names from probes (e.g. Ollama's "completion") are
+# stored as-is; this set is what gating checks against.
+KNOWN_CAPABILITIES = ("tools", "vision", "thinking", "effort", "streaming")
+EFFORT_LEVELS = ("low", "medium", "high", "max")
+
+
 class ProviderHealth(StrEnum):
     UP = "up"
     DOWN = "down"
@@ -84,6 +91,10 @@ class ModelCatalogEntry(SQLModel, table=True):
     is_active: bool = Field(default=False)
     required_role: str = Field(default="user")
     capabilities: list[str] = Field(default=[], sa_column=Column(JSON))
+    # Admin-curated effort levels ("low"/"medium"/"high"/"max") for entries
+    # with the "effort" capability. Non-empty = admin override; when empty,
+    # the probe (cached) or the provider seed table answers.
+    effort_levels: list[str] = Field(default=[], sa_column=Column(JSON))
     # Embeddings only: vector dimensions, so multiple embedders can coexist.
     vector_dims: int | None = Field(default=None)
 
@@ -145,12 +156,24 @@ class ModelEntryCreate(SQLModel):
     is_active: bool = False
     required_role: str = "user"
     capabilities: list[str] = []
+    effort_levels: list[str] = []
     vector_dims: int | None = None
 
     @field_validator("required_role")
     @classmethod
     def _validate_required_role(cls, role: str) -> str:
         return validate_role_name(role)
+
+    @field_validator("effort_levels")
+    @classmethod
+    def _validate_effort_levels(cls, levels: list[str]) -> list[str]:
+        invalid = [level for level in levels if level not in EFFORT_LEVELS]
+        if invalid:
+            raise ValueError(
+                f"Unknown effort levels {invalid}; "
+                f"valid values: {list(EFFORT_LEVELS)}."
+            )
+        return levels
 
 
 class ModelEntryUpdate(SQLModel):
@@ -160,6 +183,7 @@ class ModelEntryUpdate(SQLModel):
     is_active: bool | None = None
     required_role: str | None = None
     capabilities: list[str] | None = None
+    effort_levels: list[str] | None = None
     vector_dims: int | None = None
 
     @field_validator("required_role")
@@ -168,6 +192,21 @@ class ModelEntryUpdate(SQLModel):
         if role is None:
             return role
         return validate_role_name(role)
+
+    @field_validator("effort_levels")
+    @classmethod
+    def _validate_effort_levels(
+        cls, levels: list[str] | None
+    ) -> list[str] | None:
+        if levels is None:
+            return levels
+        invalid = [level for level in levels if level not in EFFORT_LEVELS]
+        if invalid:
+            raise ValueError(
+                f"Unknown effort levels {invalid}; "
+                f"valid values: {list(EFFORT_LEVELS)}."
+            )
+        return levels
 
 
 class ModelEntryRead(SQLModel):
@@ -179,6 +218,7 @@ class ModelEntryRead(SQLModel):
     is_active: bool
     required_role: str
     capabilities: list[str]
+    effort_levels: list[str]
     vector_dims: int | None
 
 

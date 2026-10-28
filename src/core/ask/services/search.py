@@ -182,13 +182,16 @@ async def _stream_answer_frames(
     history: list[tuple[str, str]] | None = None,
     today: str | None = None,
 ):
-    """Yield answer text deltas; deterministic text when context is empty."""
+    """Yield ("answer"|"thinking", text) deltas; deterministic text when
+    context is empty."""
     if not context.strip():
-        yield NO_CONTEXT_ANSWER
+        yield "answer", NO_CONTEXT_ANSWER
         return
 
-    async for delta in stream_cited_answer(model, query, context, history, today):
-        yield delta
+    async for kind, delta in stream_cited_answer(
+        model, query, context, history, today
+    ):
+        yield kind, delta
 
 
 async def _resolve_conversation(
@@ -290,9 +293,12 @@ async def search_sse_adapter(
 
                 answer_parts: list[str] = []
                 try:
-                    async for delta in _stream_answer_frames(
+                    async for kind, delta in _stream_answer_frames(
                         data["query"], data["context"], model, history, today
                     ):
+                        if kind == "thinking":
+                            yield frame("thinking", {"text": delta})
+                            continue
                         answer_parts.append(delta)
                         yield frame("message", {"text": delta})
 

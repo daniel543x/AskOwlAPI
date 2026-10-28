@@ -130,6 +130,7 @@ class ModelRepository:
             api_key=api_key,
             default_params=dict(entry.default_params or {}),
             capabilities=list(entry.capabilities or []),
+            effort_levels=list(entry.effort_levels or []),
             vector_dims=entry.vector_dims,
             entry_id=entry.id,
             source=tier,
@@ -320,6 +321,7 @@ class ModelRepository:
             is_active=data.is_active,
             required_role=data.required_role,
             capabilities=list(data.capabilities or []),
+            effort_levels=list(data.effort_levels or []),
             vector_dims=data.vector_dims,
         )
         self.session.add(entry)

@@ -18,6 +18,7 @@ from langchain_core.messages import (
     SystemMessage,
 )
 
+from ....modules.llm_provider.reasoning import extract_reasoning_delta
 from ....tools.dates import current_date_line
 from ...tools.arg_stream import ToolArgStream
 from ...tools.errors import ToolProtocolError
@@ -147,11 +148,14 @@ async def stream_cited_answer(
     context: str,
     history: list[tuple[str, str]] | None = None,
     today: str | None = None,
-) -> AsyncGenerator[str]:
-    """Stream the `answer` argument of the CitedAnswer tool call.
+) -> AsyncGenerator[tuple[str, str]]:
+    """Stream the answer as ("answer"|"thinking", text) deltas.
 
     Providers stream tool-call arguments as JSON fragments; ToolArgStream
     decodes the target string incrementally so SSE consumers get text deltas.
+    Reasoning-trace chunks (model-dependent, `additional_kwargs[
+    'reasoning_content']`) are tagged "thinking" so the SSE layer can emit
+    them as a separate event the UI may hide (protocol v2.8).
     """
     bound = model.bind_tools([CitedAnswer])
     extractor = ToolArgStream(key="answer")
@@ -159,6 +163,9 @@ async def stream_cited_answer(
     async for chunk in bound.astream(
         _answer_messages(query, context, history, today)
     ):
+        reasoning = extract_reasoning_delta(chunk)
+        if reasoning:
+            yield "thinking", reasoning
         if not isinstance(chunk, AIMessageChunk):
             continue
         for tool_chunk in chunk.tool_call_chunks or []:
@@ -167,11 +174,11 @@ async def stream_cited_answer(
                 continue
             delta = extractor.feed(tool_chunk.get("args") or "")
             if delta:
-                yield delta
+                yield "answer", delta
 
     tail = extractor.finish()
     if tail:
-        yield tail
+        yield "answer", tail
 
     if not extractor.saw_value:
         raise ToolProtocolError(

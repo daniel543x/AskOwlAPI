@@ -161,6 +161,12 @@ class Settings(BaseSettings):
     # --all-extras`); Redis failures degrade to memory, never crash.
     REDIS_URL: str = ""
 
+    # <----- Capability probe (PR 9 / decisions 11 + 20) ----->
+    # Provider capability probes (e.g. Ollama /api/show) are cached via the
+    # ICache with this TTL. A probe may only prune seeded values, never add,
+    # and a failed probe keeps the seed (degrade, never crash).
+    CAPABILITY_PROBE_TTL_S: float = 300.0
+
     # <----- Decision layer (Phase 7 pre-scores; off by default until eval'd) ----->
     PRE_SCORE_SEARCH_FILTER: bool = False
     PRE_SCORE_CHUNK_FILTER: bool = False
