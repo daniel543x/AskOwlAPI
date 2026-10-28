@@ -104,6 +104,7 @@ class AskToolbox:
         now: datetime | None = None,
         source_types: list[str] | None = None,
         attachments: list[dict[str, Any]] | None = None,
+        note_store=None,
     ):
         self.searching = searching
         self.scraper = scraper
@@ -136,6 +137,9 @@ class AskToolbox:
         # Attachments (PR 15): validated refs for this turn; the
         # `search_files` tool retrieves strictly inside their conversation.
         self.attachments = attachments or None
+        # Research notes (PR 18): when set, the `note_write` tool is
+        # attached and the DB is the source of truth (decision 9).
+        self.note_store = note_store
 
         self.raw_results: list = []
         self.ranked_sources: list[dict[str, Any]] = []
@@ -450,6 +454,42 @@ class PreScoreArgs(BaseModel):
     text: str = Field(description="Text the question refers to.")
 
 
+class NoteWriteArgs(BaseModel):
+    task: str = Field(
+        description="Short section title for this note (a few words)."
+    )
+    content: str = Field(
+        description=(
+            "The note body: the gathered facts, in your own words, with "
+            "every claim grounded in the sources you used."
+        )
+    )
+    sources_used: list[str] = Field(
+        description="URLs of the sources this note's claims came from."
+    )
+
+
+async def _note_write(toolbox: AskToolbox, task: str, content: str,
+                      sources_used: list[str]) -> str:
+    """Persist one research note; always returns the updated TOC."""
+    import json as _json
+
+    if toolbox.note_store is None:
+        return _json.dumps({"error": "Notes are not available in this turn."})
+    entry = await toolbox.note_store.write(task, content, sources_used)
+    toc = [
+        {k: v for k, v in _toc_entry_dict(n).items()}
+        for n in toolbox.note_store.notes
+    ]
+    return _json.dumps({"wrote": entry, "toc": toc})
+
+
+def _toc_entry_dict(note) -> dict:
+    from ...modules.notes.model import toc_entry
+
+    return toc_entry(note)
+
+
 class SearchFilesArgs(BaseModel):
     query: str = Field(description="What to look for inside uploaded files.")
 
@@ -520,6 +560,25 @@ def build_tools(toolbox: AskToolbox) -> list[StructuredTool]:
     `game_offers` (PR 14) only when gg.deals is enabled and configured.
     """
     tools: list[StructuredTool] = []
+    if toolbox.note_store is not None:
+        tools.append(
+            StructuredTool.from_function(
+                coroutine=lambda **kwargs: _note_write(
+                    toolbox,
+                    kwargs["task"],
+                    kwargs["content"],
+                    kwargs.get("sources_used") or [],
+                ),
+                name="note_write",
+                description=(
+                    "Save a research note (task title, grounded content, "
+                    "sources used) into the database. Returns the table of "
+                    "contents of all notes so far. Write one note per "
+                    "answered question before final reporting."
+                ),
+                args_schema=NoteWriteArgs,
+            )
+        )
     if toolbox.attachments:
         tools.append(
             StructuredTool.from_function(

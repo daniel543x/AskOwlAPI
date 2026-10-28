@@ -169,6 +169,17 @@ The LLM is never used without a tool call:
 
 ## Changelog
 
+### v2.16 (2026-10-28, PR 18 — additive)
+
+- Added: research notes (decision 9) — research runs persist
+  `note_write` rows (DB as source of truth) and emit a `note` event per
+  written note (`{idx, task, one_line_summary, sources_count, id}`).
+- Behavior: the research synthesis becomes an editorial call over the
+  notes' TOC only (`SubmitReport(sections, intro)`), then a
+  deterministic assembly streams intro + ordered sections with
+  per-section citations and a global Sources section. Editorial
+  contract violations degrade to the gathered→generate_report path.
+
 ### v2.15 (2026-10-28, PR 17 — additive)
 
 - Added: `degraded` event on search streams

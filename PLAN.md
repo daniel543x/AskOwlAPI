@@ -331,7 +331,7 @@ Preset table over the shared loop (toolbox + conversation history + degrade path
   - **Eval gate for the flip:** golden set of 30–50 queries; citation fidelity ≥
     deterministic baseline; recall/MRR within −5% relative; p50 latency ≤ 1.5×; token cost
     measured (no gate yet). Flip after 2 consecutive green runs.
-- [ ] **PR 18 `rebuild/note`** — `research_note` table + `note_write` (always returns the
+- [x] **PR 18 `rebuild/note`** — `research_note` table + `note_write` (always returns the
       TOC: `{idx, task, one_line_summary, sources_count}`) + `SubmitReport` deterministic
       assembly + SSE `note` event; `research` re-based on the core; degrade →
       gathered→generate_report (decision 9).

@@ -33,6 +33,7 @@ EXPECTED_TABLES = {
     "modelprovider",
     "persona",
     "refreshtoken",
+    "researchnote",
     "role",
     "scraped_page",
     "scrapysettings",

@@ -37,6 +37,16 @@ def research_llm() -> ScriptedToolModel:
         responses=[
             tool_call("ResearchPlan", {"subquestions": ["rust subquestion"]}),
             tool_call(
+                "SubmitReport",
+                {
+                    "sections": [
+                        {"idx": 1, "include": True, "order": 1,
+                         "lead_in": "Rust findings:"}
+                    ],
+                    "intro": "## Findings",
+                },
+            ),
+            tool_call(
                 "ResearchReport", {"report": "## Section\nFindings. [Source](u)"}
             ),
         ]
