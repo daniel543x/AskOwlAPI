@@ -46,3 +46,33 @@ class SubmitOutcome(BaseModel):
             "answered; say what could not be established instead of guessing."
         )
     )
+
+
+class ReportSection(BaseModel):
+    """One planned section of the note-assembled report (PR 18)."""
+
+    idx: int = Field(description="The note's idx from the TOC.")
+    include: bool = Field(default=True, description="Include this section.")
+    order: int = Field(description="Position of this section in the report.")
+    lead_in: str = Field(
+        default="",
+        description=(
+            "One sentence connecting this section to the query (optional)."
+        ),
+    )
+
+
+class SubmitReport(BaseModel):
+    """Editorial contract: assemble the report from the notes' TOC only.
+
+    The model sees the TOC (never the full note contents) and plans the
+    report; the backend streams the sections deterministically.
+    """
+
+    sections: list[ReportSection] = Field(
+        description="Sections to include, each referencing a note idx."
+    )
+    intro: str = Field(
+        default="",
+        description="A short intro paragraph for the report (optional).",
+    )

@@ -41,6 +41,7 @@ from src.modules.llm_provider.model import (  # noqa: E402, F401
     ModelProvider,
     UserModelPreference,
 )
+from src.modules.notes.model import ResearchNote  # noqa: E402, F401
 from src.modules.personas.model import Persona  # noqa: E402, F401
 from src.modules.profile.model import UserPreferences  # noqa: E402, F401
 from src.modules.scrapy.model import ScrapedPage, ScrapySettings  # noqa: E402, F401

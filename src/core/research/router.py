@@ -40,6 +40,8 @@ from ...modules.jobs.gates import (
 )
 from ...modules.jobs.model import Job
 from ...modules.llm_provider.dependency import get_llm_client, get_turn_resources
+from ...modules.notes.repository import NoteRepository
+from ...modules.notes.store import NoteStore
 from ...modules.owl_reranker.base import IRanker
 from ...modules.owl_reranker.factory import get_ranker
 from ...modules.personas.repository import PersonaRepository
@@ -62,6 +64,16 @@ from .services.pipeline import (
 )
 
 router = APIRouter(prefix="/ask", tags=["Research"])
+
+
+def get_note_store(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_elevated_user),
+) -> NoteStore:
+    """Run-scoped note writer for research-grade turns (PR 18)."""
+    return NoteStore(
+        NoteRepository(session), user.id
+    )
 
 
 @router.get(
@@ -88,6 +100,7 @@ async def ask_research(
     background: bool = Query(default=False),
     user: User = Depends(get_current_elevated_user),
     attachment_ids: list[uuid.UUID] = Query(default=[]),
+    note_store: NoteStore = Depends(get_note_store),
 ):
     ensure_source_types(source_types, declared_source_types)
     attachments = await resolve_for_ask(
@@ -105,7 +118,7 @@ async def ask_research(
     if background:
         return await _enqueue_research_turn(
             query, searching, model, scraper, ranker, embedder,
-            session, user, source_types, turn,
+            session, user, source_types, turn, att_dicts, images,
         )
     if settings.BUSY_POLICY == "reject":
         try:
@@ -129,6 +142,7 @@ async def ask_research(
                 source_types=source_types,
                 attachments=att_dicts,
                 images=images,
+                note_store=note_store,
                 turn=turn,
             ),
             media_type="text/event-stream",
@@ -145,6 +159,7 @@ async def ask_research(
         source_types=source_types,
         attachments=att_dicts,
         images=images,
+        note_store=note_store,
         turn=turn,
     )
 
@@ -232,14 +247,15 @@ async def _enqueue_research_turn(
     user: User,
     source_types: list[str],
     turn: TurnResources,
+    attachments: list[dict],
+    images: list[bytes] | None,
 ) -> JSONResponse:
     """Auto-convert a busy foreground research run into a job (PR 12)."""
-    from sqlalchemy.ext.asyncio import AsyncSession
-
     job = Job(user_id=user.id, kind="research", payload={"query": query})
 
     async def runner() -> str:
         async with AsyncSession(engine, expire_on_commit=False) as job_session:
+            job_notes = NoteStore(NoteRepository(job_session), user.id)
             result = await research_json_adapter(
                 query,
                 searching,
@@ -249,6 +265,9 @@ async def _enqueue_research_turn(
                 embedder=embedder,
                 session=job_session,
                 source_types=source_types,
+                attachments=attachments,
+                images=images,
+                note_store=job_notes,
                 turn=turn,
             )
         return (result.get("report") or "")[:4000]
@@ -263,3 +282,5 @@ async def _enqueue_research_turn(
             "queue_position": saved.queue_position,
         },
     )
+
+
