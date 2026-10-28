@@ -360,9 +360,9 @@ Preset table over the shared loop (toolbox + conversation history + degrade path
 
 - [ ] PR 3 `wu/citations` — numbered `[n]` citations + validator + offline fixture eval
       (feeds the Note assembler's Sources section).
-- [ ] PR 4 `wu/rewrite` — history-aware standalone rewriting (default flip:
+- [x] PR 4 `wu/rewrite` — history-aware standalone rewriting (default flip:
       `"standalone"`).
-- [ ] PR 7 `wu/hybrid` — lexical + vector RRF fusion behind `hybrid_alpha` (default 1.0
+- [x] PR 7 `wu/hybrid` — lexical + vector RRF fusion behind `hybrid_alpha` (default 1.0
       until measured).
 
 ---

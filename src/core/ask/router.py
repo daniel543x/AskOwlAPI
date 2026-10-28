@@ -60,6 +60,27 @@ _search_scope = require_scope("search")
 class SearchRequest(AskBody):
     """Body of POST /ask/search: the v3 base plus retrieval extras."""
 
+    hybrid_alpha: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Hybrid retrieval blend (WU-4): 1.0 = pure vector (default, "
+            "today's behavior), 0.0 = pure lexical full-text. In between, "
+            "both legs fuse by alpha-weighted reciprocal rank fusion "
+            "before the cross-encoder rerank."
+        ),
+    )
+    rewrite: Literal["standalone", "simple", "none"] = Field(
+        default="standalone",
+        description=(
+            "Query rewriting mode (WU-1, default flipped in PR 4): "
+            "'standalone' resolves pronouns and omissions against the "
+            "conversation history; 'simple' is history-free rewriting "
+            "(the permanent escape hatch); 'none' skips the rewriting "
+            "LLM call entirely (eval/tool callers)."
+        ),
+    )
     max_urls: int | None = Field(
         default=None,
         ge=1,
@@ -190,6 +211,8 @@ async def ask_search(
                     for a in attachments
                 ],
                 images=images,
+                rewrite=request.rewrite,
+                hybrid_alpha=request.hybrid_alpha,
             ),
             media_type="text/event-stream",
         )
@@ -218,6 +241,8 @@ async def ask_search(
             for a in attachments
         ],
         images=images,
+        rewrite=request.rewrite,
+        hybrid_alpha=request.hybrid_alpha,
     )
     return {"answer": answer}
 

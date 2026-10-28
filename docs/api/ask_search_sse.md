@@ -169,6 +169,25 @@ The LLM is never used without a tool call:
 
 ## Changelog
 
+### v3.2 (2026-10-28, PR 7 — additive)
+
+- Added: `hybrid_alpha` request field on the search route (0.0-1.0,
+  default **1.0** = pure vector, byte-identical pipeline): below 1.0 a
+  lexical full-text leg (Postgres FTS, 'simple' config) joins the
+  candidate pool via alpha-weighted reciprocal rank fusion before the
+  unchanged cross-encoder rerank; 0.0 = pure lexical. Either leg
+  failing alone degrades to the other. The default flips only after the
+  live golden-set alpha A/B ({1.0, 0.7, 0.5}) passes.
+
+### v3.1 (2026-10-28, PR 4 — additive)
+
+- Added: `rewrite` request field on the search route
+  (`"standalone" | "simple" | "none"`, default **`"standalone"`** — the
+  deliberate default flip from WU-1): standalone resolves pronouns and
+  omissions against the conversation history; `simple` is history-free;
+  `none` skips the rewriting LLM call entirely. The `query` event gains
+  `standalone` (whether history shaped the rewrite).
+
 ### v3 (2026-10-28, PR 21 — breaking)
 
 - Breaking: research/deep_research/persona routes are **POST-only** with
