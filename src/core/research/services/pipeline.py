@@ -30,7 +30,7 @@ from ...tools.errors import ToolProtocolError
 from ...tools.toolbox import AskToolbox
 from .agent import agent_logic
 from .budgets import Budget
-from .planner import plan_subquestions
+from .planner import plan_subquestions, revise_research_plan
 from .synthesis import (
     NO_CONTEXT_REPORT,
     assemble_note_report,
@@ -97,6 +97,8 @@ async def research_logic(
     source_types: list[str] | None = None,
     attachments: list[dict[str, Any]] | None = None,
     note_store=None,
+    scout: bool = False,
+    reflect: bool = False,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the research pipeline, yielding (event, payload) pairs.
 
@@ -116,6 +118,18 @@ async def research_logic(
             attachments=attachments,
             note_store=note_store,
         )
+
+        # <----- Scout (deep preset, PR 19): one forced pass before the
+        # planner so sub-questions are biased by real material. ----->
+        if scout:
+            yield "status", {"step": "Scouting the landscape..."}
+            await toolbox.web_search(query)
+            if toolbox.ranked_sources:
+                yield "sources", {"sources": toolbox.ranked_sources,
+                                  "subquery": query}
+            await toolbox.fetch_pages()
+            scout_context = await toolbox.get_context(query)
+            budget.spend_tokens(scout_context)
 
         # <----- Planning (native tool call) ----->
         yield "status", {"step": "Planning sub-questions..."}
@@ -197,6 +211,64 @@ async def research_logic(
             )
             return
 
+        # <----- Reflect (deep preset, PR 19): one revise_plan round that
+        # may add sub-questions for gaps, clamped to the ceiling + slack.
+        if reflect:
+            digest = "\n".join(
+                f"- {item['subquestion']}: {item['context'][:160]}..."
+                for item in gathered
+            )
+            added, rationale = await revise_research_plan(
+                model, query, digest, today=today
+            )
+            ceiling = (
+                settings.RESEARCH_MAX_SUBQUESTIONS
+                + settings.RESEARCH_REFLECT_SLACK
+            )
+            added = [q for q in added if q not in subquestions][
+                : max(0, ceiling - len(subquestions))
+            ]
+            if added:
+                yield "reflect", {
+                    "added": added,
+                    "rationale": rationale,
+                    "subquestions": subquestions + added,
+                }
+                for subquestion in added:
+                    if budget.exhausted:
+                        break
+                    yield "status", {
+                        "step": f"Researching (reflect): {subquestion}"
+                    }
+                    await toolbox.web_search(subquestion)
+                    if toolbox.ranked_sources:
+                        yield "sources", {
+                            "sources": toolbox.ranked_sources,
+                            "subquery": subquestion,
+                        }
+                    await toolbox.fetch_pages()
+                    context = await toolbox.get_context(subquestion)
+                    budget.spend_tokens(context)
+                    if context.strip():
+                        if note_store is not None:
+                            entry = await note_store.write(
+                                subquestion,
+                                context,
+                                [
+                                    s.get("url", "")
+                                    for s in (toolbox.ranked_sources or [])[:8]
+                                ],
+                            )
+                            yield "note", entry
+                        gathered.append(
+                            {
+                                "subquestion": subquestion,
+                                "sources": list(toolbox.ranked_sources),
+                                "context": context,
+                            }
+                        )
+                subquestions = subquestions + added
+
         yield (
             "answer_ready",
             {
@@ -225,6 +297,8 @@ async def research_sse_adapter(
     attachments: list[dict[str, Any]] | None = None,
     images: list[bytes] | None = None,
     note_store=None,
+    scout: bool = False,
+    reflect: bool = False,
     turn: TurnResources | None = None,
 ) -> AsyncGenerator[str]:
     """Translate research events into an SSE stream.
@@ -245,6 +319,7 @@ async def research_sse_adapter(
                 query, searching, model, scraper, ranker, embedder=embedder,
                 session=session, today=today, source_types=source_types,
                 attachments=attachments, note_store=note_store,
+                scout=scout, reflect=reflect,
             )
             async for event, data in pipeline:
                 if event == "answer_ready":
@@ -359,6 +434,8 @@ async def research_json_adapter(
     attachments: list[dict[str, Any]] | None = None,
     images: list[bytes] | None = None,
     note_store=None,
+    scout: bool = False,
+    reflect: bool = False,
     turn: TurnResources | None = None,
 ) -> dict[str, Any]:
     """Run the research pipeline and return the full result as one dict."""
@@ -371,6 +448,7 @@ async def research_json_adapter(
                 query, searching, model, scraper, ranker, embedder=embedder,
                 session=session, today=today, source_types=source_types,
                 attachments=attachments, note_store=note_store,
+                scout=scout, reflect=reflect,
             )
             async for event, data in pipeline:
                 if event == "error":

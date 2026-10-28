@@ -48,6 +48,26 @@ class SubmitOutcome(BaseModel):
     )
 
 
+class RevisePlan(BaseModel):
+    """Reflect contract (PR 19): add sub-questions with a rationale.
+
+    Offered once after the first gathering round on the deep-research
+    preset; the backend clamps additions to
+    RESEARCH_MAX_SUBQUESTIONS + RESEARCH_REFLECT_SLACK in total.
+    """
+
+    add: list[str] = Field(
+        description=(
+            "New standalone search sub-questions for gaps in the gathered "
+            "material. Only add what the notes do not already cover."
+        )
+    )
+    rationale: str = Field(
+        default="",
+        description="One sentence on why these additions are needed.",
+    )
+
+
 class ReportSection(BaseModel):
     """One planned section of the note-assembled report (PR 18)."""
 

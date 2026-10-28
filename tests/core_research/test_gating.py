@@ -126,6 +126,54 @@ async def test_research_allowed_for_pro_role(auth_client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_deep_research_route_runs_scout_reflect_notes(auth_client, db_session):
+    """The deep preset (PR 19): scout + reflect + notes on one route."""
+    _, token = await make_user_with_role(db_session, role_name="research")
+
+    original = app.dependency_overrides[get_llm_client]
+
+    def deep_llm():
+        model = original()
+        model.responses.insert(
+            1,
+            tool_call(
+                "RevisePlan",
+                {
+                    "add": ["rust async runtime"],
+                    "rationale": "The digest lacks async coverage.",
+                },
+            ),
+        )
+        return model
+
+    app.dependency_overrides[get_llm_client] = deep_llm
+
+    response = await auth_client.get(
+        "/ask/deep_research",
+        params={"query": "rust", "stream": False},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert "rust async runtime" in body["subquestions"]
+    assert "rust" in body["report"].lower()
+
+    app.dependency_overrides[get_llm_client] = original
+
+
+@pytest.mark.asyncio
+async def test_deep_research_forbidden_for_plain_user_role(auth_client, db_session):
+    _, token = await make_user_with_role(db_session, role_name=None)
+
+    response = await auth_client.get(
+        "/ask/deep_research",
+        params={"query": "rust", "stream": False},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_research_allowed_for_admin_role(auth_client, db_session):
     _, token = await make_user_with_role(db_session, role_name="admin")
 

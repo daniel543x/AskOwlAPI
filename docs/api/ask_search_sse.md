@@ -169,6 +169,16 @@ The LLM is never used without a tool call:
 
 ## Changelog
 
+### v2.17 (2026-10-28, PR 19 — additive)
+
+- Added: `GET /ask/deep_research` — the deep-research preset (decision
+  8): scout pass before the planner, one `revise_plan` reflection round
+  (additions clamped to `RESEARCH_MAX_SUBQUESTIONS` +
+  `RESEARCH_REFLECT_SLACK`), the note flow from v2.16, and the high
+  shared budget. Elevated role.
+- Deprecated: `GET /ask/agent` (the free agent loop) — kept
+  temporarily, removed at protocol v3.
+
 ### v2.16 (2026-10-28, PR 18 — additive)
 
 - Added: research notes (decision 9) — research runs persist
