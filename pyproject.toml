@@ -28,6 +28,11 @@ dependencies = [
     "uvicorn[standard]>=0.38.0",
 ]
 
+[project.optional-dependencies]
+# Pure-Python client for the optional Redis ICache backend (REDIS_URL);
+# imported lazily, the app runs without it.
+redis = ["redis>=6.0.0"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.1",

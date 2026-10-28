@@ -146,6 +146,13 @@ class Settings(BaseSettings):
     # Rule-based query fan-out ceiling (WU-2; request values clamp to this).
     QUERY_VARIATIONS_MAX: int = 4
 
+    # <----- Shared small-state cache (ICache) ----->
+    # In-process memory is the default backend. Setting a Redis URL switches
+    # the backend for small TTL state (rate-limit windows; capability probes
+    # later). The `redis` package is an optional extra (`uv sync
+    # --all-extras`); Redis failures degrade to memory, never crash.
+    REDIS_URL: str = ""
+
     # <----- Decision layer (Phase 7 pre-scores; off by default until eval'd) ----->
     PRE_SCORE_SEARCH_FILTER: bool = False
     PRE_SCORE_CHUNK_FILTER: bool = False

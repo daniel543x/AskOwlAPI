@@ -272,7 +272,6 @@ async def test_api_key_rate_limit(auth_client, db_session):
 
     original_limit = auth_security._rate_limiter.limit
     auth_security._rate_limiter.limit = 2
-    auth_security._rate_limiter._windows.clear()
     try:
         statuses = [
             (
@@ -286,7 +285,6 @@ async def test_api_key_rate_limit(auth_client, db_session):
         ]
     finally:
         auth_security._rate_limiter.limit = original_limit
-        auth_security._rate_limiter._windows.clear()
 
     assert statuses == [200, 200, 429]
 
