@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...tools.settings import settings
+from .events import JobEventBus
 from .model import Job, JobStatus
 
 logger = logging.getLogger(__name__)
@@ -48,13 +49,30 @@ class JobQueue:
         self,
         per_user_running_cap: int | None = None,
         session_factory: Callable[[], AsyncSession] | None = None,
+        event_bus: JobEventBus | None = None,
     ):
         self.per_user_cap = per_user_running_cap or settings.JOB_PER_USER_RUNNING_CAP
         self._session_factory = session_factory
+        self.event_bus = event_bus
         self._pending: list[tuple[Job, Runner]] = []
         self._running_per_user: dict[uuid.UUID, int] = {}
         self._worker: asyncio.Task | None = None
         self._wake: asyncio.Event = asyncio.Event()
+
+    def _notify(self, job: Job) -> None:
+        if self.event_bus is None:
+            return
+        self.event_bus.publish(
+            job.user_id,
+            {
+                "job_id": str(job.id),
+                "kind": job.kind,
+                "status": job.status,
+                "queue_position": job.queue_position,
+                "result_summary": job.result_summary,
+                "error": job.error,
+            },
+        )
 
     async def _persist(self, job: Job) -> None:
         if self._session_factory is None:
@@ -73,6 +91,7 @@ class JobQueue:
         self._pending.append((job, runner))
         self._wake.set()
         await self._persist(job)
+        self._notify(job)
         return job
 
     # <----- Worker ----->
@@ -137,11 +156,13 @@ class JobQueue:
             job.started_at = datetime.now(UTC)
             job.queue_position = None
             await self._persist(job)
+            self._notify(job)
             summary = await runner()
             job.status = JobStatus.SUCCEEDED
             job.result_summary = summary
             job.finished_at = datetime.now(UTC)
             await self._persist(job)
+            self._notify(job)
         except Exception as exc:  # noqa: BLE001 — the queue is the boundary
             retry_after = _retry_after_of(exc)
             if (
@@ -159,12 +180,14 @@ class JobQueue:
                 self._resequence()
                 self._wake.set()
                 await self._persist(job)
+                self._notify(job)
             else:
                 job.status = JobStatus.FAILED
                 job.error = str(exc)
                 job.finished_at = datetime.now(UTC)
                 logger.exception("Job %s failed.", job.id)
                 await self._persist(job)
+                self._notify(job)
         finally:
             remaining = self._running_per_user.get(job.user_id, 1) - 1
             if remaining <= 0:
@@ -180,6 +203,21 @@ class JobQueue:
 
     def queued_jobs(self) -> list[Job]:
         return [job for job, _ in self._pending]
+
+    async def cancel(self, job_id: uuid.UUID) -> Job | None:
+        """Cancel a still-queued job; None when it is running or unknown."""
+        for index, (job, _) in enumerate(self._pending):
+            if job.id == job_id:
+                self._pending.pop(index)
+                self._resequence()
+                self._wake.set()
+                job.status = JobStatus.CANCELLED
+                job.finished_at = datetime.now(UTC)
+                job.queue_position = None
+                await self._persist(job)
+                self._notify(job)
+                return job
+        return None
 
 
 def _is_rate_limited(exc: BaseException) -> bool:

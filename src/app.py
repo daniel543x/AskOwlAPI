@@ -16,6 +16,8 @@ from .modules.identity.auth.repository import RefreshTokenRepository
 from .modules.identity.router import router as IdentityRouter
 from .modules.identity.user.router import admin_router as UserAdminRouter
 from .modules.jobs.factory import get_job_queue
+from .modules.jobs.repository import JobRepository
+from .modules.jobs.router import router as JobsRouter
 from .modules.llm_provider.router import admin_router as ModelAdminRouter
 from .modules.llm_provider.router import health_router as ModelHealthRouter
 from .modules.llm_provider.router import router as ModelRouter
@@ -73,6 +75,12 @@ async def lifespan(app: FastAPI):
     await init_ranker()
     purge_task = asyncio.create_task(_purge_refresh_tokens_loop())
     job_queue = get_job_queue()
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        swept = await JobRepository(session).sweep_orphans()
+        if swept:
+            logging.getLogger(__name__).warning(
+                "Startup sweep: marked %d interrupted job(s) as failed.", swept
+            )
     job_queue.start()
     yield
     purge_task.cancel()
@@ -102,6 +110,7 @@ app.include_router(AskRouter)
 app.include_router(ResearchRouter)
 app.include_router(ProfileRouter)
 app.include_router(SearchEngineRouter)
+app.include_router(JobsRouter)
 
 
 @app.get("/healthy")

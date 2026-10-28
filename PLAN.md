@@ -271,7 +271,7 @@ the same ask-router / SSE-doc files — rebase before merging.
     backoff honoring `Retry-After`; queue state persisted in the `job` table.
   - Backends: in-process asyncio (default, single-node) or Redis (`REDIS_URL`, optional —
     multi-node, crash-resilient), same lazy pattern as ICache (decision 19).
-- [ ] **PR 13 `client/inbox`** — jobs layer + Inbox UX (doubt 5; builds on PR 12).
+- [x] **PR 13 `client/inbox`** — jobs layer + Inbox UX (doubt 5; builds on PR 12).
   - `job` table (id, user_id, kind, status queued|running|succeeded|failed|cancelled,
     queue_position, conversation_id, request payload ref, result_summary, error, seen,
     timestamps); `background: true` on research-grade ask routes → `202 {job_id}`;

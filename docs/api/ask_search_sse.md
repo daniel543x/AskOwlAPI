@@ -165,6 +165,15 @@ The LLM is never used without a tool call:
 
 ## Changelog
 
+### v2.11 (2026-10-28, PR 13 — additive)
+
+- Added: Inbox routes — `GET /jobs[?seen=]`, `POST /jobs/{id}/seen`,
+  `POST /jobs/{id}/cancel` (queued only; running answers 409), and a
+  per-user SSE stream `GET /jobs/events` emitting `job_update` events
+  `{job_id, kind, status, queue_position, result_summary, error}`.
+- Behavior: startup sweep marks jobs left `running` by a restart as
+  failed.
+
 ### v2.10 (2026-10-28, PR 12 — additive)
 
 - Added: `background` request parameter on ask routes — busy foreground
