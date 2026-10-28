@@ -20,6 +20,7 @@ _LEGACY_ROLE_ALIASES = {"pro": "research"}
 
 # Tiers in resolution order, used for error reporting.
 TIER_REQUEST = "request"
+TIER_PROFILE = "profile"
 TIER_PREFERENCE = "preference"
 TIER_DEFAULT = "default"
 TIER_BUILTIN = "builtin"
@@ -40,6 +41,7 @@ class ResolvedModel:
     api_key: str | None = None
     default_params: dict[str, Any] = field(default_factory=dict)
     capabilities: list[str] = field(default_factory=list)
+    effort_levels: list[str] = field(default_factory=list)
     vector_dims: int | None = None
     entry_id: uuid.UUID | None = None
     source: str = TIER_DEFAULT
@@ -128,10 +130,14 @@ def resolve_model_id(
     requested_model_id: uuid.UUID | None,
     view: CatalogView,
     user_roles: list[str],
+    profile_model_id: uuid.UUID | None = None,
 ) -> tuple[uuid.UUID, str]:
     """Return (model_id, tier) following the resolution order.
 
-    Raises SelectionError with the tier that failed, or KeyError when a
+    The profile default (decision 12) sits between the explicit request
+    and the per-kind user preference. A stale profile reference (model
+    gone from the catalog) degrades to the next tier. Raises
+    SelectionError with the tier that failed, or KeyError when a
     requested/preferred/default model id does not exist in the catalog.
     """
     if requested_model_id is not None:
@@ -143,6 +149,14 @@ def resolve_model_id(
                 tier=TIER_REQUEST,
             )
         return requested_model_id, TIER_REQUEST
+
+    if profile_model_id is not None:
+        try:
+            info = _check_model(view, profile_model_id, user_roles)
+            if _model_of_kind(info, kind):
+                return profile_model_id, TIER_PROFILE
+        except KeyError:
+            pass  # stale profile reference; keep resolving down the chain
 
     preference_id = view.user_preferences.get(kind)
     if preference_id is not None:

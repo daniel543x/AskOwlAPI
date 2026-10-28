@@ -53,12 +53,17 @@ class ModelRepository:
         user_id: uuid.UUID,
         user_roles: list[str],
         requested_model_id: uuid.UUID | None = None,
+        profile_model_id: uuid.UUID | None = None,
     ) -> ResolvedModel:
         view = await self._catalog_view(user_id)
 
         try:
             model_id, tier = resolve_model_id(
-                kind, requested_model_id, view, user_roles
+                kind,
+                requested_model_id,
+                view,
+                user_roles,
+                profile_model_id=profile_model_id,
             )
         except SelectionError:
             builtin = self._builtin_model(kind)
@@ -130,6 +135,7 @@ class ModelRepository:
             api_key=api_key,
             default_params=dict(entry.default_params or {}),
             capabilities=list(entry.capabilities or []),
+            effort_levels=list(entry.effort_levels or []),
             vector_dims=entry.vector_dims,
             entry_id=entry.id,
             source=tier,
@@ -320,6 +326,7 @@ class ModelRepository:
             is_active=data.is_active,
             required_role=data.required_role,
             capabilities=list(data.capabilities or []),
+            effort_levels=list(data.effort_levels or []),
             vector_dims=data.vector_dims,
         )
         self.session.add(entry)

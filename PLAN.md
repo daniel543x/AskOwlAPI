@@ -219,7 +219,7 @@ the same ask-router / SSE-doc files — rebase before merging.
 
 ### 2.2 Phase 10 — Webapp client track (PRs 9–16)
 
-- [ ] **PR 9 `client/capabilities`** — thinking/effort end-to-end (doubt 2).
+- [x] **PR 9 `client/capabilities`** — thinking/effort end-to-end (doubt 2).
   - Version probe per provider: Ollama `/api/show` + `/api/ps` capabilities
     (`completion`, `tools`, `vision`, `thinking`) plus the `think`-levels 400-fallback;
     z.ai effort-level probe (one synthetic call per level, decision 20); cached via
@@ -243,7 +243,7 @@ the same ask-router / SSE-doc files — rebase before merging.
     `default_params < adapter(request)`.
   - SSE v2.4 (additive): `thinking` event (reasoning-trace passthrough; UI may hide it).
   - Version bump: **0.15.0** (the reset from `1.0.0rc1` happens in this PR's branch, decision 16).
-- [ ] **PR 10 `client/profile`** — profile preferences (UX round 3).
+- [x] **PR 10 `client/profile`** — profile preferences (UX round 3).
   - `user_preferences` table (user_id PK, default_model_id, default_mode, thinking,
     effort, source_types, updated_at). `GET/PUT /profile/preferences`;
     `GET /profile/preferences?model_id=X` returns `{stored, resolved, warnings}` —
@@ -251,7 +251,7 @@ the same ask-router / SSE-doc files — rebase before merging.
     "model switch resets to defaults" contract, decision 12).
   - Ask routes resolve: request > profile > model default; explicit request fields still
     validated (422 on impossible combos).
-- [ ] **PR 11 `client/sources`** — source types (doubt 3).
+- [x] **PR 11 `client/sources`** — source types (doubt 3).
   - `ISearchProvider.search(query, engines, categories)`; SearXNG category map
     (web→general, news→news, academic→science, social→engine list); provider config
     declares `supported_source_types` (DB + type registry, SearchProviderConfig precedent).

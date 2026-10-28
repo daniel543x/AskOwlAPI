@@ -39,16 +39,22 @@ class CachedSearchProvider(ISearchProvider):
 
     def __init__(self, inner: ISearchProvider):
         self.inner = inner
-        self._cache: dict[str, list[SearchResult]] = {}
+        self._cache: dict[tuple, list[SearchResult]] = {}
         self.query_count = 0
 
     async def search(
-        self, query: str, engines: list[str] | None = None
+        self,
+        query: str,
+        engines: list[str] | None = None,
+        categories: str | None = None,
     ) -> list[SearchResult]:
-        if query not in self._cache:
-            self._cache[query] = list(await self.inner.search(query))
+        key = (query, tuple(engines or ()), categories)
+        if key not in self._cache:
+            self._cache[key] = list(
+                await self.inner.search(query, engines=engines, categories=categories)
+            )
             self.query_count += 1
-        return list(self._cache[query])
+        return list(self._cache[key])
 
 
 class CachedScraper(IScraper):

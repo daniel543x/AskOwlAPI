@@ -3,11 +3,13 @@ from typing import cast
 
 import pytest
 from fastapi import HTTPException
+from fastapi import Request as HttpRequest
 from langchain_core.language_models import BaseChatModel
 
 from src.modules.identity.user.model import User
 from src.modules.llm_provider.dependency import (
     MissingCapabilityError,
+    build_chat_model,
     ensure_capability,
     get_llm_client,
 )
@@ -19,6 +21,11 @@ from tests.modules.llm_provider.test_router import FakeUser
 
 def _as_user(user: FakeUser) -> User:
     return cast(User, cast(object, user))
+
+
+def _get_request() -> HttpRequest:
+    """Minimal GET request; direct calls skip the POST body read."""
+    return HttpRequest(scope={"type": "http", "method": "GET"})
 
 
 def resolved_with_capabilities(capabilities: list[str]) -> ResolvedModel:
@@ -45,7 +52,9 @@ class FakeRepo(ModelRepository):
         self.resolved = resolved
         self.resolved_with = None
 
-    async def resolve_model(self, kind, user_id, user_roles, requested_model_id=None):
+    async def resolve_model(
+        self, kind, user_id, user_roles, requested_model_id=None, **kwargs
+    ):
         self.resolved_with = (kind, requested_model_id)
         return self.resolved
 
@@ -55,8 +64,8 @@ class RecordingFactory(ChatModelFactory):
         self.created = []
         self.sentinel = object()
 
-    def create_chat_model(self, resolved) -> BaseChatModel:
-        self.created.append(resolved)
+    def create_chat_model(self, resolved, reasoning_params=None) -> BaseChatModel:
+        self.created.append((resolved, reasoning_params))
         return cast(BaseChatModel, self.sentinel)
 
 
@@ -66,7 +75,13 @@ async def test_get_llm_client_gates_on_tools_capability():
     user = FakeUser(id=uuid.uuid4(), roles=[])
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_llm_client(repo=repo, factory=factory, user=_as_user(user))
+        await get_llm_client(
+            http_request=_get_request(),
+            repo=repo,
+            factory=factory,
+            user=_as_user(user),
+            profile=None,
+        )
 
     assert exc_info.value.status_code == 422
     assert "tools" in exc_info.value.detail
@@ -79,9 +94,64 @@ async def test_get_llm_client_builds_model_when_capable():
     user = FakeUser(id=uuid.uuid4(), roles=[])
 
     model = await get_llm_client(
-        repo=repo, factory=factory, user=_as_user(user), request_model_id=None
+        http_request=_get_request(),
+        repo=repo,
+        factory=factory,
+        user=_as_user(user),
+        request_model_id=None,
+        thinking=None,
+        effort=None,
+        profile=None,
     )
 
     assert model is factory.sentinel
     assert repo.resolved_with is not None
     assert repo.resolved_with[0] == "chat"
+    assert factory.created[0][1] == {}
+
+
+# <----- Reasoning gating through build_chat_model (PR 9) ----->
+
+
+async def test_thinking_without_capability_is_a_coded_422():
+    repo = FakeRepo(resolved_with_capabilities(["tools"]))
+    factory = RecordingFactory()
+    user = FakeUser(id=uuid.uuid4(), roles=[])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await build_chat_model(
+            repo, factory, _as_user(user), None, thinking=True
+        )
+
+    assert exc_info.value.status_code == 422
+    detail = cast(dict, exc_info.value.detail)
+    assert detail["code"] == "model_lacks_thinking"
+    assert factory.created == []
+
+
+async def test_unsupported_effort_level_is_a_coded_422():
+    entry = resolved_with_capabilities(["tools", "effort"])
+    entry.effort_levels = ["low"]
+    repo = FakeRepo(entry)
+    factory = RecordingFactory()
+    user = FakeUser(id=uuid.uuid4(), roles=[])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await build_chat_model(repo, factory, _as_user(user), None, effort="max")
+
+    assert exc_info.value.status_code == 422
+    detail = cast(dict, exc_info.value.detail)
+    assert detail["code"] == "unsupported_effort_level"
+
+
+async def test_supported_effort_reaches_the_factory_wire_params():
+    entry = resolved_with_capabilities(["tools", "effort"])
+    entry.effort_levels = ["low", "high"]
+    repo = FakeRepo(entry)
+    factory = RecordingFactory()
+    user = FakeUser(id=uuid.uuid4(), roles=[])
+
+    await build_chat_model(repo, factory, _as_user(user), None, effort="high")
+
+    # Ollama adapter: the effort level rides the `reasoning` param.
+    assert factory.created[0][1] == {"reasoning": "high"}

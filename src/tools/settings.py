@@ -120,6 +120,14 @@ class Settings(BaseSettings):
     # reranking. Chunks are embedded at scrape time when an embedder resolves.
     VECTOR_CANDIDATES_K: int = 25
 
+    # <----- Recency (WU-11) ----->
+    # Operator ceiling for the per-request recency_bias (0 = neutral).
+    RECENCY_BIAS_MAX: float = 1.0
+
+    # <----- Chunk-store hygiene (AR-8) ----->
+    # Chunks older than this are purged at boot (0 disables eviction).
+    CHUNK_TTL_DAYS: int = 30
+
     # <----- Research mode / agent loop ----->
     RESEARCH_MAX_SUBQUESTIONS: int = 5
     AGENT_MAX_ITERATIONS: int = 8
@@ -152,6 +160,12 @@ class Settings(BaseSettings):
     # later). The `redis` package is an optional extra (`uv sync
     # --all-extras`); Redis failures degrade to memory, never crash.
     REDIS_URL: str = ""
+
+    # <----- Capability probe (PR 9 / decisions 11 + 20) ----->
+    # Provider capability probes (e.g. Ollama /api/show) are cached via the
+    # ICache with this TTL. A probe may only prune seeded values, never add,
+    # and a failed probe keeps the seed (degrade, never crash).
+    CAPABILITY_PROBE_TTL_S: float = 300.0
 
     # <----- Decision layer (Phase 7 pre-scores; off by default until eval'd) ----->
     PRE_SCORE_SEARCH_FILTER: bool = False

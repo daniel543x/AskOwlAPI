@@ -27,8 +27,12 @@ from ...modules.owl_reranker.base import IRanker
 from ...modules.owl_reranker.factory import get_ranker
 from ...modules.scrapy.factory import get_scraper
 from ...modules.scrapy.providers.base import IScraper
-from ...modules.search_engine.factory import get_search_provider
+from ...modules.search_engine.factory import (
+    get_declared_source_types,
+    get_search_provider,
+)
 from ...modules.search_engine.providers.base import ISearchProvider
+from ...modules.search_engine.source_types import ensure_source_types
 from ...tools.db import get_session
 from .services.search import search_json_adapter, search_sse_adapter
 
@@ -71,20 +75,62 @@ class SearchRequest(BaseModel):
             "e.g. for evals or admin debugging."
         ),
     )
+    scope: Literal["global", "conversation", "request"] = Field(
+        default="global",
+        description=(
+            "Retrieval scope (WU-5). \"global\" (default, today's behavior) "
+            'retrieves from the whole chunk store; "conversation" restricts '
+            'vector candidates to this conversation (+ legacy unscoped '
+            'rows); "request" restricts retrieval to this turn\'s fetched '
+            "pages."
+        ),
+    )
+    recency_bias: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Recency boost for chunk ranking (WU-11): 0 = neutral, 1 = "
+            "strongest. Clamped server-side to RECENCY_BIAS_MAX."
+        ),
+    )
+    source_types: list[str] = Field(
+        default=[],
+        description=(
+            "Source types for this turn (PR 11). Empty = the provider's "
+            "own defaults; validated against GET /search/sources."
+        ),
+    )
+    thinking: bool | None = Field(
+        default=None,
+        description=(
+            "Reasoning-mode control (decision 11). null = model default; "
+            "requires the model's 'thinking' capability (422 otherwise)."
+        ),
+    )
+    effort: Literal["low", "medium", "high", "max"] | None = Field(
+        default=None,
+        description=(
+            "Reasoning-effort control (decision 11). null = model default; "
+            "requires the 'effort' capability and a supported level "
+            "(422 with a coded error otherwise)."
+        ),
+    )
 
 
 @router.post("/search", dependencies=[Depends(require_scope("search"))])
 async def ask_search(
     request: SearchRequest,
     searching: ISearchProvider = Depends(get_search_provider),
-    model: BaseChatModel = Depends(get_llm_client),
+    declared_source_types: list[str] = Depends(get_declared_source_types),
     scraper: IScraper = Depends(get_scraper),
     ranker: IRanker = Depends(get_ranker),
     embedder: IEmbedder | None = Depends(get_optional_embedder),
     decision_maker: IDecisionMaker | None = Depends(get_optional_decision_maker),
     user: User = Depends(_search_scope),
     session: AsyncSession = Depends(get_session),
+    model: BaseChatModel = Depends(get_llm_client),
 ):
+    ensure_source_types(request.source_types, declared_source_types)
     if request.stream:
         return StreamingResponse(
             search_sse_adapter(
@@ -101,6 +147,9 @@ async def ask_search(
                 max_urls=request.max_urls,
                 query_variations=request.query_variations,
                 cache=request.cache,
+                scope=request.scope,
+                recency_bias=request.recency_bias,
+                source_types=request.source_types,
             ),
             media_type="text/event-stream",
         )
@@ -119,5 +168,8 @@ async def ask_search(
         max_urls=request.max_urls,
         query_variations=request.query_variations,
         cache=request.cache,
+        scope=request.scope,
+        recency_bias=request.recency_bias,
+        source_types=request.source_types,
     )
     return {"answer": answer}

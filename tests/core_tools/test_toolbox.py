@@ -1,4 +1,6 @@
 import json
+import uuid
+from datetime import UTC, datetime
 
 from src.core.tools.toolbox import AskToolbox, build_tools
 from src.modules.chunk_store.model import chunk_hash
@@ -183,7 +185,7 @@ class PerQuerySearchProvider(FakeSearchProvider):
         self.by_query = by_query
         self.queries: list[str] = []
 
-    async def search(self, query, engines=None):
+    async def search(self, query, engines=None, categories=None):
         self.queries.append(query)
         return self.by_query.get(query, [])
 
@@ -224,7 +226,7 @@ class BypassAwareProvider(FakeSearchProvider):
         super().__init__()
         self.bypass_seen: list[bool] = []
 
-    async def search(self, query, engines=None):
+    async def search(self, query, engines=None, categories=None):
         self.bypass_seen.append(CACHE_BYPASS.get())
         return self.results
 
@@ -266,11 +268,11 @@ class PreStoredChunkRepo:
     async def existing_hashes(self, hashes: list[str]) -> set[str]:
         return {h for h in hashes if h in self.known_hashes}
 
-    async def store_chunks(self, chunks, embeddings) -> int:
+    async def store_chunks(self, chunks, embeddings, conversation_id=None) -> int:
         self.stored_chunks.extend(chunks)
         return len(chunks)
 
-    async def vector_candidates(self, query_embedding, k):
+    async def vector_candidates(self, query_embedding, k, conversation_id=None):
         return []
 
 
@@ -420,3 +422,131 @@ def test_build_tools_exposes_three_named_tools():
 
     assert [tool.name for tool in tools] == ["web_search", "fetch_pages", "get_context"]
     assert all(tool.coroutine is not None for tool in tools)
+
+
+# <----- Retrieval scope (WU-5) and recency (WU-11) ----->
+
+
+class RecordingVectorRepo:
+    """Vector-store fake that records the scoping arguments."""
+
+    def __init__(self):
+        self.stored_conversation_id = "unset"
+        self.query_conversation_id = "unset"
+
+    async def store_chunks(self, chunks, embeddings, conversation_id=None):
+        self.stored_conversation_id = conversation_id
+        return len(chunks)
+
+    async def existing_hashes(self, hashes):
+        return set()
+
+    async def vector_candidates(self, query_embedding, k, conversation_id=None):
+        self.query_conversation_id = conversation_id
+        return []
+
+
+async def test_scope_request_skips_vector_retrieval():
+    repo = RecordingVectorRepo()
+    embedder = RecordingEmbedder()
+    toolbox = AskToolbox(
+        FakeSearchProvider(),
+        make_scraper(),
+        FakeRanker(),
+        embedder=embedder,
+        chunk_repo=repo,
+        scope="request",
+        conversation_id=uuid.uuid4(),
+    )
+    await toolbox.web_search("rust")
+    await toolbox.fetch_pages()
+    await toolbox.get_context("rust")
+
+    assert toolbox.used_vector_retrieval is False
+    assert repo.query_conversation_id == "unset"  # never queried
+    # But chunks are still embedded + scoped when stored.
+    assert repo.stored_conversation_id is not None
+
+
+async def test_scope_conversation_passes_conversation_id_to_candidates():
+    conversation_id = uuid.uuid4()
+    repo = RecordingVectorRepo()
+    toolbox = AskToolbox(
+        FakeSearchProvider(),
+        make_scraper(),
+        FakeRanker(),
+        embedder=RecordingEmbedder(),
+        chunk_repo=repo,
+        scope="conversation",
+        conversation_id=conversation_id,
+    )
+    await toolbox.web_search("rust")
+    await toolbox.fetch_pages()
+    await toolbox.get_context("rust")
+
+    assert toolbox.used_vector_retrieval is True
+    assert repo.query_conversation_id == conversation_id
+
+
+async def test_scope_global_never_filters():
+    repo = RecordingVectorRepo()
+    toolbox = AskToolbox(
+        FakeSearchProvider(),
+        make_scraper(),
+        FakeRanker(),
+        embedder=RecordingEmbedder(),
+        chunk_repo=repo,
+        scope="global",
+        conversation_id=uuid.uuid4(),
+    )
+    await toolbox.web_search("rust")
+    await toolbox.fetch_pages()
+    await toolbox.get_context("rust")
+
+    assert repo.query_conversation_id is None
+
+
+async def test_recency_bias_reorders_selected_chunks():
+    now = datetime(2026, 10, 26, tzinfo=UTC)
+
+    def make_pool():
+        return [
+            {
+                "content": "old and strong",
+                "metadata": {
+                    "relevance_score": 0.9,
+                    "published_at": "2023-01-01T00:00:00+00:00",
+                },
+            },
+            {
+                "content": "fresh and weak",
+                "metadata": {
+                    "relevance_score": 0.95,
+                    "published_at": "2026-10-20T00:00:00+00:00",
+                },
+            },
+        ]
+
+    toolbox = AskToolbox(
+        FakeSearchProvider(), make_scraper(), FakeRanker(), recency_bias=1.0, now=now
+    )
+    toolbox.chunks = make_pool()
+
+    await toolbox.get_context("q")
+
+    # fresh: 0.95 * 2.0 = 1.9 beats old: 0.9 * 1.3 = 1.17
+    assert toolbox.selected_chunks[0]["content"] == "fresh and weak"
+
+    neutral = AskToolbox(
+        FakeSearchProvider(), make_scraper(), FakeRanker()
+    )
+    neutral.chunks = make_pool()
+    await neutral.get_context("q")
+    assert neutral.selected_chunks[0]["content"] == "old and strong"
+
+
+async def test_recency_bias_clamped_to_ceiling():
+    toolbox = AskToolbox(
+        FakeSearchProvider(), make_scraper(), FakeRanker(), recency_bias=99.0
+    )
+    assert toolbox.recency_bias == settings.RECENCY_BIAS_MAX

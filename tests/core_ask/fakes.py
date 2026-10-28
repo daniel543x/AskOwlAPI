@@ -31,9 +31,13 @@ class FakeSearchProvider(ISearchProvider):
         self.last_engines: list[str] | None = None
 
     async def search(
-        self, query: str, engines: list[str] | None = None
+        self,
+        query: str,
+        engines: list[str] | None = None,
+        categories: str | None = None,
     ) -> list[SearchResult]:
         self.last_engines = engines
+        self.last_categories = categories
         return self.results
 
 
@@ -111,6 +115,9 @@ class ScriptedToolModel(BaseChatModel):
     calls: list = Field(default_factory=list)
     bindings: list = Field(default_factory=list)
     stream_piece_size: int = 7
+    # When set, streams one reasoning-trace chunk first (tests for the SSE
+    # `thinking` passthrough).
+    reasoning_prefix: str = ""
 
     @property
     def _llm_type(self) -> str:
@@ -135,6 +142,13 @@ class ScriptedToolModel(BaseChatModel):
 
     async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
         self.calls.append([m.content for m in messages])
+        if self.reasoning_prefix:
+            yield ChatGenerationChunk(
+                message=AIMessageChunk(
+                    content="",
+                    additional_kwargs={"reasoning_content": self.reasoning_prefix},
+                )
+            )
         response = self._next_response()
 
         if response.tool_calls:

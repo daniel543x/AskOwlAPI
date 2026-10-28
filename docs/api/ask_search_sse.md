@@ -12,6 +12,26 @@ to `QUERY_VARIATIONS_MAX`.
 `cache` (`"on"` | `"bypass"`, default `"on"`) — `"bypass"` forces fresh
 search + scrape for this turn (evals, admin debugging); a cache hit is
 otherwise invisible except latency.
+`thinking` (`bool | null`, default `null`) — reasoning-mode control
+(decision 11): `null` = model default; requesting it on a model without
+the `thinking` capability is a 422 (`model_lacks_thinking`).
+`effort` (`"low"|"medium"|"high"|"max" | null`, default `null`) —
+reasoning-effort control (decision 11); requires the `effort`
+capability and a supported level (422 `model_lacks_effort` /
+`unsupported_effort_level`).
+`source_types` (array of strings, default `[]`) — narrows the search
+slice for this turn (PR 11 / decision 13). Empty = the provider's own
+defaults; validated against the provider's declared set
+(`GET /search/sources`) — unknown values are a 422.
+`scope` (`"global"` | `"conversation"` | `"request"`, default `"global"`) —
+retrieval scope (WU-5): `"global"` (today's behavior) retrieves from the
+whole chunk store; `"conversation"` restricts vector candidates to this
+conversation (+ legacy unscoped rows); `"request"` restricts retrieval to
+this turn's fetched pages.
+`recency_bias` (float, `>= 0`, default `0`) — recency boost for chunk
+ranking (WU-11): 0 = neutral; publication-fresh chunks (<30 days) get the
+largest boost, unknown dates are never penalized; clamped server-side to
+`RECENCY_BIAS_MAX`.
 
 Current protocol version: **v2** (breaking; there are no external consumers yet).
 Changelog at the bottom.
@@ -41,6 +61,7 @@ and can be used for reassembly/debugging.
 | `sources`      | `{"sources": [{"url": str, "title": str, "score": float (0..1, higher = more relevant), "fusion_score": float or null}, ...]}` | After web search + ranking (top-N URLs, capped by `max_urls` when given). Results are deduped by normalized URL (tracking params and `www.` do not create duplicates), and topically unrelated results are dropped by the sanity filter (`RESULT_SANITY_FILTER`). `fusion_score` is the deterministic engine-agreement/domain-authority/position score used as the cross-encoder tie-breaker. |
 | `context`      | `{"context": "...", "chunks": int, "vector_retrieval": bool}` | After fetch + chunk ranking; the exact context given to the answer step. `vector_retrieval: true` when candidates came from the pgvector store (hybrid retrieval) instead of the reranker alone. |
 | `message`      | `{"text": "..."}`                                    | One per streamed answer delta; concatenate for the full answer. |
+| `thinking`     | `{"text": "..."}`                                    | Reasoning-trace deltas from the synthesis model (v2.8), interleaved before/alongside `message`. Optional — the UI may hide them; concatenate for the full trace. Only models surfacing a reasoning stream produce them. |
 | `grounding`    | `{"supported": float (0..1)}`                        | After the last `message`, only when the decision layer (Jev/Laya) is configured and `PRE_SCORE_GROUNDING_CHECK=true`: confidence that the answer is grounded in the context. |
 | `done`         | `{"status": "completed"}` or `{"status": "no_context"}` | Terminal success. `no_context`: nothing could be extracted; a deterministic notice was emitted as the only `message`. |
 | `error`        | `{"error": "..."}`                                   | Terminal failure (no `done` follows).                     |
@@ -139,6 +160,31 @@ The LLM is never used without a tool call:
   (HTTP 422 with an explanation).
 
 ## Changelog
+
+### v2.9 (2026-10-28, PR 11 — additive)
+
+- Added: request field `source_types` (array; default `[]` = provider
+  default) on ask routes, and `GET /search/sources` returning the
+  provider's declared set (decision 13). Unknown values are a 422.
+
+### v2.8 (2026-10-28, PR 9 — additive)
+
+- Added: request controls `thinking` (`bool | null`) and `effort`
+  (`"low"|"medium"|"high"|"max" | null`) on ask routes — neutral fields;
+  provider spellings (`reasoning_effort`, `reasoning`, z.ai `thinking`)
+  stay inside the server's adapters. Unsupported combinations are 422s
+  with a coded body: `{"code": "model_lacks_thinking" |
+  "model_lacks_effort" | "unsupported_effort_level", "message": ...}`.
+- Added: SSE `thinking` event (`{"text": "..."}`) — reasoning-trace
+  passthrough from the synthesis stream, emitted before/alongside
+  `message` events; the UI may hide it. JSON mode does not surface it.
+
+### v2.7 (2026-10-26, WU-11 + WU-5 — additive)
+
+- Added: request body fields `scope` (`"global"` default) and
+  `recency_bias` (default 0). Prompts now carry the current date, chunks
+  carry `title`/`site`/`published_at`/`fetched_at` metadata, and old
+  chunks are purged at boot (`CHUNK_TTL_DAYS`).
 
 ### v2.4 (2026-10-26, WU-10 + WU-2 — additive)
 

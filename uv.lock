@@ -68,7 +68,7 @@ wheels = [
 
 [[package]]
 name = "askowlapi"
-version = "1.0.0rc1"
+version = "0.15.0"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },

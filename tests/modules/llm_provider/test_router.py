@@ -35,6 +35,7 @@ class FakeEntry:
     is_active: bool = True
     required_role: str = "user"
     capabilities: list = field(default_factory=list)
+    effort_levels: list = field(default_factory=list)
     vector_dims: int | None = None
 
 

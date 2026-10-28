@@ -13,6 +13,8 @@ gracefully to in-memory ranking when embedding is unavailable.
 import asyncio
 import json
 import logging
+import uuid
+from datetime import UTC, datetime
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
@@ -29,6 +31,7 @@ from ...modules.search_engine.sanity import is_sane_result
 from ...tools.settings import settings
 from .chunking import chunk_markdown_data
 from .pre_scores import filter_chunks, filter_search_results
+from .recency import apply_recency_bias
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +49,19 @@ class ChunkStoreLike(Protocol):
     """Chunk-store surface the toolbox needs; ChunkRepository satisfies it."""
 
     async def store_chunks(
-        self, chunks: list[dict[str, Any]], embeddings: list[list[float]]
+        self,
+        chunks: list[dict[str, Any]],
+        embeddings: list[list[float]],
+        conversation_id: uuid.UUID | None = None,
     ) -> int: ...
 
     async def existing_hashes(self, hashes: list[str]) -> set[str]: ...
 
     async def vector_candidates(
-        self, query_embedding: list[float], k: int
+        self,
+        query_embedding: list[float],
+        k: int,
+        conversation_id: uuid.UUID | None = None,
     ) -> list[dict[str, Any]]: ...
 
 
@@ -89,6 +98,11 @@ class AskToolbox:
         allowed_engines: list[str] | None = None,
         decision_maker: IDecisionMaker | None = None,
         max_urls: int | None = None,
+        conversation_id: uuid.UUID | None = None,
+        scope: str = "global",
+        recency_bias: float = 0.0,
+        now: datetime | None = None,
+        source_types: list[str] | None = None,
     ):
         self.searching = searching
         self.scraper = scraper
@@ -104,6 +118,20 @@ class AskToolbox:
         self.max_urls = max(
             1, min(max_urls or settings.TOP_N_URLS, settings.TOP_N_URLS_MAX)
         )
+        # Retrieval scope (WU-5): "global" = today's behavior; "conversation"
+        # filters vector candidates to this conversation (+ legacy NULL
+        # rows); "request" restricts retrieval to this turn's fetched pages.
+        self.conversation_id = conversation_id
+        self.scope = scope
+        # Recency boost (WU-11): clamped to the operator ceiling; `now` is
+        # injectable so tests can freeze the clock.
+        self.recency_bias = max(
+            0.0, min(recency_bias, settings.RECENCY_BIAS_MAX)
+        )
+        self.now = now or datetime.now(UTC)
+        # Source types (PR 11): converted to per-call search categories and
+        # engine additions; None/empty = the provider's own defaults.
+        self.source_types = source_types or None
 
         self.raw_results: list = []
         self.ranked_sources: list[dict[str, Any]] = []
@@ -114,6 +142,20 @@ class AskToolbox:
         # Hygiene stats surfaced in the debug SSE event (WU-3).
         self.search_stats: dict[str, int] = {}
 
+    def _search_categories(self) -> str | None:
+        from ...modules.search_engine.source_types import categories_for
+
+        return categories_for(self.source_types)
+
+    def _search_engines(self) -> list[str] | None:
+        from ...modules.search_engine.source_types import extra_engines_for
+
+        engines = list(self.allowed_engines or [])
+        engines.extend(
+            e for e in extra_engines_for(self.source_types) if e not in engines
+        )
+        return engines or None
+
     async def web_search(self, query: str) -> str:
         """Search the web and rank the results; returns JSON for the LLM.
 
@@ -123,7 +165,7 @@ class AskToolbox:
         cross-encoder rank to the URL cap with fusion as the tie-breaker.
         """
         self.raw_results = await self.searching.search(
-            query, engines=self.allowed_engines
+            query, engines=self._search_engines(), categories=self._search_categories()
         )
         return await self._rank_results(query)
 
@@ -137,7 +179,11 @@ class AskToolbox:
         results: list = []
         for query in queries:
             results.extend(
-                await self.searching.search(query, engines=self.allowed_engines)
+                await self.searching.search(
+                    query,
+                    engines=self._search_engines(),
+                    categories=self._search_categories(),
+                )
             )
         self.raw_results = results
         return await self._rank_results(queries[0])
@@ -314,7 +360,11 @@ class AskToolbox:
         embeddings = await self.embedder.embed_texts(
             [chunk["content"] for chunk in todo]
         )
-        inserted = await self.chunk_repo.store_chunks(todo, embeddings)
+        inserted = await self.chunk_repo.store_chunks(
+            todo,
+            embeddings,
+            conversation_id=self.conversation_id,
+        )
         logger.debug(
             "Stored %d new chunks in the vector store (%d skipped).",
             inserted,
@@ -331,7 +381,7 @@ class AskToolbox:
         """
         candidates: list[dict[str, Any]] | None = None
 
-        if self.embedder and self.chunk_repo:
+        if self.scope != "request" and self.embedder and self.chunk_repo:
             try:
                 candidates = await self._vector_candidates(query)
             except Exception:
@@ -354,6 +404,10 @@ class AskToolbox:
             self.selected_chunks = await filter_chunks(
                 self.decision_maker, query, self.selected_chunks
             )
+        if self.recency_bias > 0:
+            self.selected_chunks = apply_recency_bias(
+                self.selected_chunks, self.recency_bias, self.now
+            )
         return "\n\n---\n\n".join(
             chunk.get("content", "") for chunk in self.selected_chunks
         )
@@ -362,7 +416,11 @@ class AskToolbox:
         assert self.embedder and self.chunk_repo
         query_embedding = (await self.embedder.embed_texts([query]))[0]
         return await self.chunk_repo.vector_candidates(
-            query_embedding, settings.VECTOR_CANDIDATES_K
+            query_embedding,
+            settings.VECTOR_CANDIDATES_K,
+            conversation_id=(
+                self.conversation_id if self.scope == "conversation" else None
+            ),
         )
 
 

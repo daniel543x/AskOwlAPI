@@ -1,4 +1,5 @@
 import logging
+import uuid
 from typing import Any, cast
 
 from sqlalchemy import text
@@ -19,9 +20,17 @@ class ChunkRepository:
         self.session = session
 
     async def store_chunks(
-        self, chunks: list[dict[str, Any]], embeddings: list[list[float]]
+        self,
+        chunks: list[dict[str, Any]],
+        embeddings: list[list[float]],
+        conversation_id: uuid.UUID | None = None,
     ) -> int:
-        """Insert chunks with their embeddings; duplicates are skipped."""
+        """Insert chunks with their embeddings; duplicates are skipped.
+
+        `conversation_id` (WU-5) scopes the chunks to one conversation so
+        scoped retrieval can exclude other conversations; NULL keeps the
+        legacy global behavior.
+        """
         if not chunks:
             return 0
 
@@ -39,6 +48,7 @@ class ChunkRepository:
                         embedding=embedding,
                         source_url=url,
                         content_hash=chunk_hash(url, content),
+                        conversation_id=conversation_id,
                     )
                     .on_conflict_do_nothing(index_elements=["content_hash"])
                 )
@@ -70,7 +80,10 @@ class ChunkRepository:
         return {row.content_hash for row in result}
 
     async def vector_candidates(
-        self, query_embedding: list[float], k: int
+        self,
+        query_embedding: list[float],
+        k: int,
+        conversation_id: uuid.UUID | None = None,
     ) -> list[dict[str, Any]]:
         """Top-k chunks by cosine similarity, closest first.
 
@@ -78,17 +91,25 @@ class ChunkRepository:
         ``CAST(:query_vector AS vector)``: a ``::vector`` cast next to a
         bind parameter breaks ``text()`` parameter parsing and reaches the
         driver as literal SQL (asyncpg syntax error).
+
+        With `conversation_id` (WU-5), candidates come from that
+        conversation plus legacy NULL-scoped rows — foreign conversations
+        can no longer leak in while the intentional cross-query chunk
+        accumulation stays intact.
         """
         vector_literal = "[" + ",".join(repr(float(v)) for v in query_embedding) + "]"
+        scope_filter = ""
+        params: dict[str, Any] = {"query_vector": vector_literal, "k": k}
+        if conversation_id is not None:
+            scope_filter = "WHERE conversation_id = :cid OR conversation_id IS NULL"
+            params["cid"] = conversation_id
         statement = text(
             "SELECT id, content, metadata, source_url, "
             "(embedding <=> CAST(:query_vector AS vector)) AS distance "
-            "FROM chunk ORDER BY distance ASC LIMIT :k"
+            f"FROM chunk {scope_filter} ORDER BY distance ASC LIMIT :k"
         )
         try:
-            result = await self.session.execute(
-                statement, {"query_vector": vector_literal, "k": k}
-            )
+            result = await self.session.execute(statement, params)
         except SQLAlchemyError:
             # Roll back so the aborted transaction cannot fail every later
             # statement on this session (InFailedSQLTransaction cascade).

@@ -31,8 +31,12 @@ from ...modules.owl_reranker.factory import get_ranker
 from ...modules.personas.repository import PersonaRepository
 from ...modules.scrapy.factory import get_scraper
 from ...modules.scrapy.providers.base import IScraper
-from ...modules.search_engine.factory import get_search_provider
+from ...modules.search_engine.factory import (
+    get_declared_source_types,
+    get_search_provider,
+)
 from ...modules.search_engine.providers.base import ISearchProvider
+from ...modules.search_engine.source_types import ensure_source_types
 from ...tools.db import get_session
 from ..tools.toolbox import AskToolbox
 from .services.pipeline import (
@@ -58,12 +62,15 @@ async def ask_research(
         True, description="Enable/Disable streaming response. Default True."
     ),
     searching: ISearchProvider = Depends(get_search_provider),
+    declared_source_types: list[str] = Depends(get_declared_source_types),
     model: BaseChatModel = Depends(get_llm_client),
     scraper: IScraper = Depends(get_scraper),
     ranker: IRanker = Depends(get_ranker),
     embedder: IEmbedder | None = Depends(get_optional_embedder),
     session: AsyncSession = Depends(get_session),
+    source_types: list[str] = Query(default=[]),
 ):
+    ensure_source_types(source_types, declared_source_types)
     if stream:
         return StreamingResponse(
             research_sse_adapter(
@@ -74,6 +81,7 @@ async def ask_research(
                 ranker,
                 embedder=embedder,
                 session=session,
+                source_types=source_types,
             ),
             media_type="text/event-stream",
         )
@@ -86,6 +94,7 @@ async def ask_research(
         ranker,
         embedder=embedder,
         session=session,
+        source_types=source_types,
     )
 
 
@@ -109,7 +118,10 @@ async def ask_agent(
     decision_maker: IDecisionMaker | None = Depends(get_optional_decision_maker),
     user: User = Depends(get_current_elevated_user),
     session: AsyncSession = Depends(get_session),
+    declared_source_types: list[str] = Depends(get_declared_source_types),
+    source_types: list[str] = Query(default=[]),
 ):
+    ensure_source_types(source_types, declared_source_types)
     persona = None
     if persona_id is not None:
         persona = await PersonaRepository(session).get_for_user(user.id, persona_id)
@@ -126,6 +138,7 @@ async def ask_agent(
         allowed_domains=persona.allowed_domains if persona else None,
         allowed_engines=persona.allowed_engines if persona else None,
         decision_maker=decision_maker,
+        source_types=source_types,
     )
 
     return StreamingResponse(
