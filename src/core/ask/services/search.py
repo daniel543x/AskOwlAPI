@@ -205,6 +205,7 @@ async def _stream_answer_frames(
     model: BaseChatModel,
     history: list[tuple[str, str]] | None = None,
     today: str | None = None,
+    images: list[bytes] | None = None,
 ):
     """Yield ("answer"|"thinking", text) deltas; deterministic text when
     context is empty."""
@@ -213,7 +214,7 @@ async def _stream_answer_frames(
         return
 
     async for kind, delta in stream_cited_answer(
-        model, query, context, history, today
+        model, query, context, history, today, images
     ):
         yield kind, delta
 
@@ -274,6 +275,7 @@ async def search_sse_adapter(
     today: str | None = None,
     source_types: list[str] | None = None,
     attachments: list[dict[str, Any]] | None = None,
+    images: list[bytes] | None = None,
     turn: TurnResources | None = None,
 ) -> AsyncGenerator[str]:
     """Translate pipeline events into an SSE stream (protocol v2).
@@ -329,7 +331,8 @@ async def search_sse_adapter(
                     answer_parts: list[str] = []
                     try:
                         async for kind, delta in _stream_answer_frames(
-                            data["query"], data["context"], model, history, today
+                            data["query"], data["context"], model, history,
+                            today, images,
                         ):
                             if kind == "thinking":
                                 yield frame("thinking", {"text": delta})
@@ -402,6 +405,7 @@ async def search_json_adapter(
     today: str | None = None,
     source_types: list[str] | None = None,
     attachments: list[dict[str, Any]] | None = None,
+    images: list[bytes] | None = None,
     turn: TurnResources | None = None,
 ) -> dict[str, Any]:
     """Run the pipeline and return the full result as one JSON-ready dict.
@@ -465,7 +469,7 @@ async def search_json_adapter(
     else:
         try:
             answer = await generate_cited_answer(
-                model, answer_data["query"], context, history, today
+                model, answer_data["query"], context, history, today, images
             )
         except ToolProtocolError as e:
             raise HTTPException(

@@ -180,6 +180,7 @@ class Settings(BaseSettings):
     # Text files upload into conversation-scoped chunks; images (PR 16)
     # will gate on the vision capability. Extraction is capped per file.
     ATTACHMENT_MAX_FILES: int = 5
+    ATTACHMENT_MAX_IMAGES: int = 4
     ATTACHMENT_MAX_FILE_MB: int = 10
     ATTACHMENT_MAX_CHARS: int = 50_000
     ATTACHMENT_CONTEXT_MAX_CHARS: int = 8_000
