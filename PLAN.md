@@ -339,7 +339,7 @@ Preset table over the shared loop (toolbox + conversation history + degrade path
       temporarily, deprecated); scout step (one forced web_search+fetch+get_context before
       the planner); reflect via `revise_plan(add, rationale)` with ceiling
       `RESEARCH_MAX_SUBQUESTIONS` + slack; high preset budget.
-- [ ] **PR 20 `rebuild/persona-mode`** — `POST /ask/persona` (required `persona_id`:
+- [x] **PR 20 `rebuild/persona-mode`** — `POST /ask/persona` (required `persona_id`:
       missing → 422, foreign → 404); `depth: quick|research|deep` (default from persona,
       `_bounded()` clamp); persona-scoped conversations; elevated role gate.
 - [ ] **PR 21 `rebuild/protocol-v3`** — POST everywhere (research/agent GET → POST);

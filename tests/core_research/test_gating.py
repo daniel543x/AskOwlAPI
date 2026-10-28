@@ -174,6 +174,78 @@ async def test_deep_research_forbidden_for_plain_user_role(auth_client, db_sessi
 
 
 @pytest.mark.asyncio
+async def test_persona_route_requires_persona_and_scopes_to_it(
+    auth_client, db_session
+):
+    """POST /ask/persona (PR 20): missing persona_id 422, foreign 404,
+    own persona scoped into the conversation."""
+    from src.modules.personas.model import Persona
+    from src.modules.personas.repository import PersonaRepository
+
+    user_id, token = await make_user_with_role(db_session, role_name="research")
+    persona = await PersonaRepository(db_session).create(
+        Persona(user_id=user_id, name="rust expert")
+    )
+    app.dependency_overrides[get_llm_client] = lambda: ScriptedToolModel(
+        responses=[
+            tool_call("SubmitOutcome", {"answer": "Persona answer. [Source](u)"})
+        ]
+    )
+
+    missing = await auth_client.post(
+        "/ask/persona",
+        json={"query": "rust"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert missing.status_code == 422
+
+    foreign = await auth_client.post(
+        "/ask/persona",
+        json={"query": "rust", "persona_id": str(uuid.uuid4())},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert foreign.status_code == 404
+
+    response = await auth_client.post(
+        "/ask/persona",
+        json={
+            "query": "rust",
+            "persona_id": str(persona.id),
+            "depth": "quick",
+            "stream": True,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert "event: conversation" in response.text
+    assert "event: done" in response.text
+
+    # The conversation is persona-scoped.
+    import json as _json
+
+    for line in response.text.splitlines():
+        if line.startswith("data:") and "conversation_id" in line:
+            conversation_id = _json.loads(line[5:])["conversation_id"]
+    stored = await db_session.get(
+        __import__("src.modules.history.model", fromlist=["Conversation"]).Conversation,
+        uuid.UUID(conversation_id),
+    )
+    assert stored is not None and str(stored.persona_id) == str(persona.id)
+
+
+@pytest.mark.asyncio
+async def test_persona_route_forbidden_for_plain_user_role(auth_client, db_session):
+    _, token = await make_user_with_role(db_session, role_name=None)
+
+    response = await auth_client.post(
+        "/ask/persona",
+        json={"query": "rust", "persona_id": str(uuid.uuid4())},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_research_allowed_for_admin_role(auth_client, db_session):
     _, token = await make_user_with_role(db_session, role_name="admin")
 

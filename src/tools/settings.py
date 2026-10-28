@@ -189,6 +189,12 @@ class Settings(BaseSettings):
     AGENTIC_SEARCH_TOKEN_BUDGET: int = 20_000
     AGENTIC_REPAIR_ATTEMPTS: int = 1
 
+    # <----- Persona mode (PR 20 / decision 10) ----->
+    # Depth falls back to this when neither the request nor the persona's
+    # default_parameters name one; personas may override budgets via
+    # default_parameters (clamped by _bounded()).
+    PERSONA_DEFAULT_DEPTH: Literal["quick", "research", "deep"] = "quick"
+
     # <----- Attachments (PR 15 / decision 14) ----->
     # Text files upload into conversation-scoped chunks; images (PR 16)
     # will gate on the vision capability. Extraction is capped per file.

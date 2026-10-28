@@ -169,6 +169,17 @@ The LLM is never used without a tool call:
 
 ## Changelog
 
+### v2.18 (2026-10-28, PR 20 — additive)
+
+- Added: `POST /ask/persona` (decision 10) — required `persona_id`
+  (missing = 422 by schema, foreign = 404), `depth:
+  quick|research|deep` (request > persona.default_parameters > server
+  default, clamped), the whole mode elevated. quick = the free loop
+  over a persona-scoped conversation (the conversation carries
+  `persona_id`); research/deep = the research pipeline with persona
+  search constraints (deep adds scout + reflect). Background jobs
+  supported for research/deep depths.
+
 ### v2.17 (2026-10-28, PR 19 — additive)
 
 - Added: `GET /ask/deep_research` — the deep-research preset (decision

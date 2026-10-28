@@ -9,11 +9,16 @@ share the ask pipeline's dependency wiring.
 """
 
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
+from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
+
+from src.core.ask.services.search import _resolve_conversation, _save_turn
+from src.core.research.services.agent import agent_logic
 
 from ...modules.attachments.service import (
     ensure_vision,
@@ -145,6 +150,231 @@ async def ask_deep_research(
         ranker, embedder, session, source_types, turn, background, user,
         attachment_ids, note_store, scout=True, reflect=True,
     )
+
+
+class PersonaAskRequest(BaseModel):
+    """Body of POST /ask/persona (PR 20 / decision 10)."""
+
+    query: str
+    persona_id: uuid.UUID  # required: missing = 422 by schema
+    depth: Literal["quick", "research", "deep"] | None = None
+    stream: bool = True
+    background: bool = False
+    attachment_ids: list[uuid.UUID] = []
+    source_types: list[str] = []
+    conversation_id: uuid.UUID | None = None
+
+
+def _resolve_depth(request: PersonaAskRequest, persona) -> str:
+    """Request > persona.default_parameters > settings default (clamped)."""
+    if request.depth:
+        return request.depth
+    configured = (persona.default_parameters or {}).get("depth")
+    if configured in ("quick", "research", "deep"):
+        return configured
+    return settings.PERSONA_DEFAULT_DEPTH
+
+
+@router.post(
+    "/persona",
+    dependencies=[
+        Depends(get_current_elevated_user),
+        Depends(require_scope("agent")),
+    ],
+)
+async def ask_persona(
+    request: PersonaAskRequest,
+    searching: ISearchProvider = Depends(get_search_provider),
+    declared_source_types: list[str] = Depends(get_declared_source_types),
+    model: BaseChatModel = Depends(get_llm_client),
+    scraper: IScraper = Depends(get_scraper),
+    ranker: IRanker = Depends(get_ranker),
+    embedder: IEmbedder | None = Depends(get_optional_embedder),
+    decision_maker: IDecisionMaker | None = Depends(get_optional_decision_maker),
+    user: User = Depends(get_current_elevated_user),
+    session: AsyncSession = Depends(get_session),
+    source_types: list[str] = Query(default=[]),
+    turn: TurnResources = Depends(get_turn_resources),
+    note_store: NoteStore = Depends(get_note_store),
+):
+    """Run one persona turn at the chosen depth (decision 10).
+
+    `persona_id` is required (422 by schema); a foreign persona is a
+    404. The whole mode is elevated; depth is a budget choice, not a
+    role choice. quick = the free loop with persona persistence;
+    research/deep = the research pipeline (deep adds scout + reflect)
+    with persona search constraints.
+    """
+    persona = await PersonaRepository(session).get_for_user(
+        user.id, request.persona_id
+    )
+    if persona is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found."
+        )
+    depth = _resolve_depth(request, persona)
+    ensure_source_types(request.source_types, declared_source_types)
+    refs = await resolve_for_ask(
+        session, user.id, None, request.attachment_ids,
+        require_same_conversation=False,
+    )
+    ensure_vision(turn.model_capabilities, refs)
+    images = await fetch_image_blobs(
+        session, refs, settings.ATTACHMENT_MAX_IMAGES
+    )
+    att_dicts = [
+        {"id": a.id, "filename": a.filename, "conversation_id": a.conversation_id}
+        for a in refs
+    ]
+
+    budget = make_budget(persona.default_parameters)
+
+    if depth == "quick":
+        if request.background:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    "background is only supported for the research and "
+                    "deep depths; quick turns stream."
+                ),
+            )
+        return await _persona_quick_turn(
+            request, persona, model, searching, scraper, ranker,
+            decision_maker, user, session, turn, att_dicts, images, budget,
+        )
+
+    # research / deep: the shared pipeline with persona constraints.
+    if request.background:
+        return await _enqueue_research_turn(
+            request.query, searching, model, scraper, ranker, embedder,
+            session, user, request.source_types, turn, att_dicts, images,
+            scout=(depth == "deep"), reflect=(depth == "deep"), persona=persona,
+        )
+    if settings.BUSY_POLICY == "reject":
+        try:
+            await acquire_gates(turn.keys, timeout=0)
+        except GateBusy as e:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=provider_busy_detail(),
+            ) from e
+        release_gates(turn.keys)
+    if request.stream:
+        return StreamingResponse(
+            research_sse_adapter(
+                request.query,
+                searching,
+                model,
+                scraper,
+                ranker,
+                embedder=embedder,
+                session=session,
+                source_types=request.source_types,
+                attachments=att_dicts,
+                images=images,
+                note_store=note_store,
+                scout=(depth == "deep"),
+                reflect=(depth == "deep"),
+                persona=persona,
+                turn=turn,
+            ),
+            media_type="text/event-stream",
+        )
+    return await research_json_adapter(
+        request.query,
+        searching,
+        model,
+        scraper,
+        ranker,
+        embedder=embedder,
+        session=session,
+        source_types=request.source_types,
+        attachments=att_dicts,
+        images=images,
+        note_store=note_store,
+        scout=(depth == "deep"),
+        reflect=(depth == "deep"),
+        persona=persona,
+        turn=turn,
+    )
+
+
+async def _persona_quick_turn(
+    request: PersonaAskRequest,
+    persona,
+    model: BaseChatModel,
+    searching: ISearchProvider,
+    scraper: IScraper,
+    ranker: IRanker,
+    decision_maker: IDecisionMaker | None,
+    user: User,
+    session: AsyncSession,
+    turn: TurnResources,
+    attachments: list[dict],
+    images: list[bytes] | None,
+    budget,
+):
+    """Quick depth: the free loop over a persona-scoped conversation."""
+    from src.core.ask.services.search import _sse_frame
+
+    if settings.BUSY_POLICY == "reject":
+        try:
+            await acquire_gates(turn.keys, timeout=0)
+        except GateBusy as e:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=provider_busy_detail(),
+            ) from e
+        release_gates(turn.keys)
+
+    conversation, history, created = await _resolve_conversation(
+        session, user.id, request.conversation_id, request.query
+    )
+    conversation.persona_id = persona.id
+    session.add(conversation)
+    await session.commit()
+
+    toolbox = AskToolbox(
+        searching, scraper, ranker, None, None,
+        allowed_domains=persona.allowed_domains if persona else None,
+        allowed_engines=persona.allowed_engines if persona else None,
+        attachments=attachments,
+    )
+
+    async def stream():
+        event_id = 0
+
+        def frame(event: str, data: dict) -> str:
+            nonlocal event_id
+            event_id += 1
+            return _sse_frame(event_id, event, data)
+
+        try:
+            async with turn.gated():
+                yield frame(
+                    "conversation",
+                    {
+                        "conversation_id": str(conversation.id),
+                        "created": created,
+                    },
+                )
+                parts: list[str] = []
+                async for event, data in agent_logic(
+                    request.query, model, toolbox, budget, persona,
+                    images=images,
+                ):
+                    if event == "message":
+                        parts.append(data["text"])
+                    if event == "done":
+                        await _save_turn(
+                            session, conversation, request.query,
+                            "".join(parts),
+                        )
+                    yield frame(event, data)
+        except GateBusy:
+            yield frame("error", provider_busy_detail())
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 async def _research_turn(
