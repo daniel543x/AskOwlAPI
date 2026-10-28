@@ -323,7 +323,7 @@ Preset table over the shared loop (toolbox + conversation history + degrade path
 | `deep_research` | yes | yes | yes (`revise_plan`) | yes | high | elevated | yes |
 | `persona` | by depth | by depth | by depth | by depth | `persona.default_parameters` (clamped) | elevated | per-persona |
 
-- [ ] **PR 17 `rebuild/core`** — agentic search behind `AGENTIC_SEARCH` (default **off**;
+- [x] **PR 17 `rebuild/core`** — agentic search behind `AGENTIC_SEARCH` (default **off**;
       deliberate flip after eval).
   - Evolved `agent_logic` as the single loop; conversation history moves into the core;
     `POST /ask/search` runs the loop when the flag is on, the deterministic pipeline
