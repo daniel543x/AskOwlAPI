@@ -12,15 +12,28 @@ logger = logging.getLogger(__name__)
 class ChatModelFactory:
     """Builds chat models from registry-resolved configuration."""
 
-    def create_chat_model(self, resolved: ResolvedModel) -> BaseChatModel:
+    def create_chat_model(
+        self, resolved: ResolvedModel, reasoning_params: dict | None = None
+    ) -> BaseChatModel:
+        # Merge order (decision 11): catalog default_params < adapter output
+        # (the request wins).
         params = dict(resolved.default_params)
+        params.update(reasoning_params or {})
 
         if resolved.base_url:
             params["base_url"] = resolved.base_url
         if resolved.api_key:
             params["api_key"] = resolved.api_key
 
-        if resolved.provider_type.lower() == "ollama" and "num_ctx" not in params:
+        provider = resolved.provider_type.lower()
+        if provider == "zai":
+            # z.ai serves an OpenAI-compatible endpoint; the reasoning
+            # adapter already translated the controls into extra_body.
+            model_provider = "openai"
+        else:
+            model_provider = resolved.provider_type
+
+        if provider == "ollama" and "num_ctx" not in params:
             # Ollama's own default context window silently truncates large
             # prompts (e.g. research synthesis), which makes the model drop
             # the tool instruction and answer in prose. Admins can override
@@ -35,7 +48,7 @@ class ChatModelFactory:
         try:
             return init_chat_model(
                 model=resolved.model_name,
-                model_provider=resolved.provider_type,
+                model_provider=model_provider,
                 **params,
             )
         except Exception as e:

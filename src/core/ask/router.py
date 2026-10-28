@@ -89,19 +89,34 @@ class SearchRequest(BaseModel):
             "strongest. Clamped server-side to RECENCY_BIAS_MAX."
         ),
     )
+    thinking: bool | None = Field(
+        default=None,
+        description=(
+            "Reasoning-mode control (decision 11). null = model default; "
+            "requires the model's 'thinking' capability (422 otherwise)."
+        ),
+    )
+    effort: Literal["low", "medium", "high", "max"] | None = Field(
+        default=None,
+        description=(
+            "Reasoning-effort control (decision 11). null = model default; "
+            "requires the 'effort' capability and a supported level "
+            "(422 with a coded error otherwise)."
+        ),
+    )
 
 
 @router.post("/search", dependencies=[Depends(require_scope("search"))])
 async def ask_search(
     request: SearchRequest,
     searching: ISearchProvider = Depends(get_search_provider),
-    model: BaseChatModel = Depends(get_llm_client),
     scraper: IScraper = Depends(get_scraper),
     ranker: IRanker = Depends(get_ranker),
     embedder: IEmbedder | None = Depends(get_optional_embedder),
     decision_maker: IDecisionMaker | None = Depends(get_optional_decision_maker),
     user: User = Depends(_search_scope),
     session: AsyncSession = Depends(get_session),
+    model: BaseChatModel = Depends(get_llm_client),
 ):
     if request.stream:
         return StreamingResponse(

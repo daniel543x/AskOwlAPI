@@ -45,6 +45,7 @@ def _entry_read(entry, provider=None) -> ModelWithProviderRead:
         is_active=entry.is_active,
         required_role=entry.required_role,
         capabilities=list(entry.capabilities or []),
+        effort_levels=list(entry.effort_levels or []),
         vector_dims=entry.vector_dims,
         provider_name=provider.name if provider else None,
         provider_type=provider.provider_type if provider else None,

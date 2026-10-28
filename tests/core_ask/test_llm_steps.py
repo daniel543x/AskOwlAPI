@@ -81,7 +81,7 @@ async def test_stream_cited_answer_yields_answer_deltas():
         stream_piece_size=7,
     )
 
-    deltas = [delta async for delta in stream_cited_answer(model, "q", "ctx")]
+    deltas = [delta async for _, delta in stream_cited_answer(model, "q", "ctx")]
 
     assert model.bindings == [[CitedAnswer]]
     assert "".join(deltas) == answer_text
@@ -96,7 +96,7 @@ async def test_stream_cited_answer_decodes_escapes():
     )
 
     result = "".join(
-        [delta async for delta in stream_cited_answer(model, "q", "ctx")]
+        [delta async for _, delta in stream_cited_answer(model, "q", "ctx")]
     )
 
     assert result == answer_text
@@ -108,6 +108,23 @@ async def test_stream_cited_answer_rejects_content_without_tool_call():
     with pytest.raises(ToolProtocolError, match="CitedAnswer"):
         async for _ in stream_cited_answer(model, "q", "ctx"):
             pass
+
+
+async def test_stream_cited_answer_tags_reasoning_deltas():
+    answer_text = "Final answer."
+    model = ScriptedToolModel(
+        responses=[tool_call("CitedAnswer", {"answer": answer_text})],
+        stream_piece_size=4,
+        reasoning_prefix="thinking hard",
+    )
+
+    tagged = [
+        (kind, delta) async for kind, delta in stream_cited_answer(model, "q", "ctx")
+    ]
+
+    assert tagged[0] == ("thinking", "thinking hard")
+    assert "".join(delta for kind, delta in tagged if kind == "answer") == answer_text
+    assert all(kind == "answer" for kind, _ in tagged[1:])
 
 
 # <----- ToolArgStream ----->
