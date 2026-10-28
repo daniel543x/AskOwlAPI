@@ -16,7 +16,11 @@ from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...modules.attachments.service import resolve_for_ask
+from ...modules.attachments.service import (
+    ensure_vision,
+    fetch_image_blobs,
+    resolve_for_ask,
+)
 from ...modules.decision.base import IDecisionMaker
 from ...modules.decision.factory import get_optional_decision_maker
 from ...modules.embedding.base import IEmbedder
@@ -161,6 +165,10 @@ async def ask_search(
     attachments = await resolve_for_ask(
         session, user.id, request.conversation_id, request.attachment_ids
     )
+    ensure_vision(turn.model_capabilities, attachments)
+    images = await fetch_image_blobs(
+        session, attachments, settings.ATTACHMENT_MAX_IMAGES
+    )
     if request.background:
         return await _enqueue_search_turn(
             request, model, searching, scraper, ranker, embedder,
@@ -200,6 +208,7 @@ async def ask_search(
                      "conversation_id": a.conversation_id}
                     for a in attachments
                 ],
+                images=images,
             ),
             media_type="text/event-stream",
         )
@@ -227,6 +236,7 @@ async def ask_search(
              "conversation_id": a.conversation_id}
             for a in attachments
         ],
+        images=images,
     )
     return {"answer": answer}
 

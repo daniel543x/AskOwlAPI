@@ -11,6 +11,7 @@ from .core.ask.router import router as AskRouter
 from .core.research.router import router as ResearchRouter
 from .init import init
 from .modules.api_keys.router import router as ApiKeysRouter
+from .modules.attachments.repository import AttachmentRepository
 from .modules.attachments.router import router as AttachmentsRouter
 from .modules.history.router import router as HistoryRouter
 from .modules.identity.auth.repository import RefreshTokenRepository
@@ -81,6 +82,11 @@ async def lifespan(app: FastAPI):
         if swept:
             logging.getLogger(__name__).warning(
                 "Startup sweep: marked %d interrupted job(s) as failed.", swept
+            )
+        blobs = await AttachmentRepository(session).sweep_orphan_image_blobs()
+        if blobs:
+            logging.getLogger(__name__).warning(
+                "Startup sweep: deleted %d orphaned image blob(s).", blobs
             )
     job_queue.start()
     yield

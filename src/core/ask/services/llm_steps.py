@@ -97,13 +97,35 @@ async def rewrite_query(
 # <----- Answer synthesis ----->
 
 
+def _image_blocks(images: list[bytes] | None) -> list[dict]:
+    """LiteLLM/OpenAI image content blocks for the synthesis turn (PR 16)."""
+    import base64
+
+    blocks: list[dict] = []
+    for data in images or []:
+        encoded = base64.b64encode(data).decode("ascii")
+        blocks.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{encoded}"},
+            }
+        )
+    return blocks
+
+
 def _answer_messages(
     query: str,
     context: str,
     history: list[tuple[str, str]] | None = None,
     today: str | None = None,
+    images: list[bytes] | None = None,
 ) -> list:
-    """System (with current date) + prior turns + question."""
+    """System (with current date) + prior turns + question.
+
+    With `images` (PR 16), the question rides as multimodal content
+    blocks next to the retrieved context — images reach the synthesis
+    model only, never the search engine path.
+    """
     messages: list = [
         SystemMessage(
             content=ANSWER_SYSTEM_TEMPLATE.format(
@@ -116,7 +138,18 @@ def _answer_messages(
             messages.append(HumanMessage(content=content))
         elif role == "assistant":
             messages.append(AIMessage(content=content))
-    messages.append(HumanMessage(content=query))
+    image_blocks = _image_blocks(images)
+    if image_blocks:
+        messages.append(
+            HumanMessage(
+                content=[
+                    {"type": "text", "text": query},
+                    *image_blocks,
+                ]
+            )
+        )
+    else:
+        messages.append(HumanMessage(content=query))
     return messages
 
 
@@ -126,10 +159,13 @@ async def generate_cited_answer(
     context: str,
     history: list[tuple[str, str]] | None = None,
     today: str | None = None,
+    images: list[bytes] | None = None,
 ) -> str:
     """Non-streaming cited answer via the CitedAnswer tool call."""
     bound = model.bind_tools([CitedAnswer])
-    response = await bound.ainvoke(_answer_messages(query, context, history, today))
+    response = await bound.ainvoke(
+        _answer_messages(query, context, history, today, images)
+    )
 
     for tool_call in response.tool_calls or []:
         if tool_call.get("name") == "CitedAnswer":
@@ -148,6 +184,7 @@ async def stream_cited_answer(
     context: str,
     history: list[tuple[str, str]] | None = None,
     today: str | None = None,
+    images: list[bytes] | None = None,
 ) -> AsyncGenerator[tuple[str, str]]:
     """Stream the answer as ("answer"|"thinking", text) deltas.
 
@@ -161,7 +198,7 @@ async def stream_cited_answer(
     extractor = ToolArgStream(key="answer")
 
     async for chunk in bound.astream(
-        _answer_messages(query, context, history, today)
+        _answer_messages(query, context, history, today, images)
     ):
         reasoning = extract_reasoning_delta(chunk)
         if reasoning:

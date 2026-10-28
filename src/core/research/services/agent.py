@@ -111,6 +111,7 @@ async def agent_logic(
     toolbox: AskToolbox,
     budget: Budget,
     persona=None,
+    images: list[bytes] | None = None,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the agent loop, yielding (event, payload) pairs.
 
@@ -200,7 +201,9 @@ async def agent_logic(
             return
 
         try:
-            async for delta in _stream_forced_outcome(model, goal, toolbox, context):
+            async for delta in _stream_forced_outcome(
+            model, goal, toolbox, context, images
+        ):
                 yield "message", {"text": delta}
         except ToolProtocolError as e:
             logger.exception("Forced agent synthesis failed for goal: %s", goal)
@@ -213,8 +216,28 @@ async def agent_logic(
         yield "error", {"error": f"Critical error: {str(e)}"}
 
 
+def image_blocks_for(images: list[bytes] | None) -> list[dict]:
+    """LiteLLM/OpenAI image content blocks (PR 16)."""
+    import base64
+
+    return [
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/png;base64,"
+                + base64.b64encode(data).decode("ascii")
+            },
+        }
+        for data in images or []
+    ]
+
+
 async def _stream_forced_outcome(
-    model: BaseChatModel, goal: str, toolbox: AskToolbox, context: str
+    model: BaseChatModel,
+    goal: str,
+    toolbox: AskToolbox,
+    context: str,
+    images: list[bytes] | None = None,
 ) -> AsyncGenerator[str]:
     """One forced synthesis call over the gathered context (tool call only)."""
     sources = json.dumps(toolbox.ranked_sources)
@@ -230,7 +253,13 @@ async def _stream_forced_outcome(
                     f"Context chunks:\n{context}"
                 )
             ),
-            HumanMessage(content=goal),
+            HumanMessage(
+                content=(
+                    [{"type": "text", "text": goal}, *image_blocks_for(images)]
+                    if images
+                    else goal
+                )
+            ),
         ]
     ):
         if not isinstance(chunk, AIMessageChunk):

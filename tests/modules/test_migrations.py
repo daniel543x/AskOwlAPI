@@ -24,6 +24,7 @@ EXPECTED_TABLES = {
     "alembic_version",
     "apikey",
     "attachment",
+    "attachmentblob",
     "chunk",
     "conversation",
     "defaultsettings",

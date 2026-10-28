@@ -169,6 +169,16 @@ The LLM is never used without a tool call:
 
 ## Changelog
 
+### v2.14 (2026-10-28, PR 16 — additive)
+
+- Added: image attachments (png/jpeg/webp/gif, <= 10 MB each, <= 4 per
+  request) via the same upload route, stored as blobs with orphan TTL
+  cleanup. Ask-time gate: an image attachment with a model lacking
+  `vision` is a coded 422 `model_lacks_vision` — never a silent drop.
+  Images reach the synthesis LLM as content blocks next to the
+  retrieved context and never the search engine path; history persists
+  references, not base64.
+
 ### v2.13 (2026-10-28, PR 15 — additive)
 
 - Added: `POST /conversations/{id}/attachments` (multipart; txt, md,

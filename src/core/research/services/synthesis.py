@@ -56,17 +56,38 @@ def _format_gathered(gathered: list[dict[str, Any]]) -> str:
     return "\n\n".join(sections)
 
 
+def _image_blocks(images: list[bytes] | None) -> list[dict]:
+    """LiteLLM/OpenAI image content blocks (PR 16)."""
+    import base64
+
+    return [
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/png;base64,"
+                + base64.b64encode(data).decode("ascii")
+            },
+        }
+        for data in images or []
+    ]
+
+
 def _report_messages(
     query: str,
     gathered: list[dict[str, Any]],
     today: str | None = None,
+    images: list[bytes] | None = None,
 ) -> list[BaseMessage]:
+    image_blocks = _image_blocks(images)
+    question: str | list = query
+    if image_blocks:
+        question = [{"type": "text", "text": query}, *image_blocks]
     return [
         SystemMessage(
             content=f"{current_date_line(today)}\n"
             + REPORT_SYSTEM_TEMPLATE.format(context=_format_gathered(gathered))
         ),
-        HumanMessage(content=query),
+        HumanMessage(content=question),
     ]
 
 
@@ -75,10 +96,13 @@ async def generate_report(
     query: str,
     gathered: list[dict[str, Any]],
     today: str | None = None,
+    images: list[bytes] | None = None,
 ) -> str:
     """Non-streaming research report via the ResearchReport tool call."""
     bound = model.bind_tools([ResearchReport])
-    response = await bound.ainvoke(_report_messages(query, gathered, today))
+    response = await bound.ainvoke(
+        _report_messages(query, gathered, today, images)
+    )
 
     for tool_call in response.tool_calls or []:
         if tool_call.get("name") == "ResearchReport":
@@ -96,12 +120,15 @@ async def stream_report(
     query: str,
     gathered: list[dict[str, Any]],
     today: str | None = None,
+    images: list[bytes] | None = None,
 ) -> AsyncGenerator[str]:
     """Stream the `report` argument of the ResearchReport tool call."""
     bound = model.bind_tools([ResearchReport])
     extractor = ToolArgStream(key="report")
 
-    async for chunk in bound.astream(_report_messages(query, gathered, today)):
+    async for chunk in bound.astream(
+        _report_messages(query, gathered, today, images)
+    ):
         if not isinstance(chunk, AIMessageChunk):
             continue
         for tool_chunk in chunk.tool_call_chunks or []:

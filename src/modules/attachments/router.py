@@ -13,8 +13,12 @@ from ..embedding.factory import get_optional_embedder
 from ..history.repository import HistoryRepository
 from ..identity.auth.security import get_current_user
 from ..identity.user.model import User
-from .model import ALLOWED_SUFFIXES, AttachmentRead
-from .service import ingest_upload
+from .model import (
+    ALLOWED_SUFFIXES,
+    IMAGE_SUFFIXES,
+    AttachmentRead,
+)
+from .service import ingest_image, ingest_upload
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +55,18 @@ async def upload_attachments(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="No files uploaded.",
         )
+    image_count = sum(
+        1 for f in files
+        if Path(f.filename or "").suffix.lower() in IMAGE_SUFFIXES
+    )
+    if image_count > settings.ATTACHMENT_MAX_IMAGES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"At most {settings.ATTACHMENT_MAX_IMAGES} images per "
+                "request."
+            ),
+        )
     if len(files) > settings.ATTACHMENT_MAX_FILES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -72,6 +88,15 @@ async def upload_attachments(
                 ),
             )
         data = await upload.read()
+        if suffix in IMAGE_SUFFIXES:
+            created.append(
+                await ingest_image(
+                    session, conversation_id, user.id,
+                    upload.filename or "image.png",
+                    upload.content_type or "", data,
+                )
+            )
+            continue
         if len(data) > max_bytes:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
