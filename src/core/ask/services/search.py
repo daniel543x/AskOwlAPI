@@ -85,6 +85,7 @@ async def search_logic(
     attachments: list[dict[str, Any]] | None = None,
     history: list[tuple[str, str]] | None = None,
     rewrite: str = "standalone",
+    hybrid_alpha: float = 1.0,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the search pipeline, yielding (event, payload) pairs.
 
@@ -113,6 +114,7 @@ async def search_logic(
                 decision_maker=decision_maker,
                 max_urls=max_urls,
                 attachments=attachments,
+                hybrid_alpha=hybrid_alpha,
             )
             async for event, data in agentic_search_logic(
                 query, model, pre_toolbox, search_budget(), history
@@ -320,6 +322,7 @@ async def search_sse_adapter(
     attachments: list[dict[str, Any]] | None = None,
     images: list[bytes] | None = None,
     rewrite: str = "standalone",
+    hybrid_alpha: float = 1.0,
     turn: TurnResources | None = None,
 ) -> AsyncGenerator[str]:
     """Translate pipeline events into an SSE stream (protocol v2).
@@ -370,6 +373,7 @@ async def search_sse_adapter(
                 attachments=attachments,
                 history=history,
                 rewrite=rewrite,
+                hybrid_alpha=hybrid_alpha,
             ):
                 if event == "answer_ready":
                     yield frame("status", {"step": "Generating answer..."})
@@ -463,6 +467,7 @@ async def search_json_adapter(
     attachments: list[dict[str, Any]] | None = None,
     images: list[bytes] | None = None,
     rewrite: str = "standalone",
+    hybrid_alpha: float = 1.0,
     turn: TurnResources | None = None,
 ) -> dict[str, Any]:
     """Run the pipeline and return the full result as one JSON-ready dict.
@@ -496,6 +501,7 @@ async def search_json_adapter(
                     attachments=attachments,
                     history=history,
                     rewrite=rewrite,
+                    hybrid_alpha=hybrid_alpha,
                 )
                 async for event, data in pipeline:
                     if event == "error":

@@ -32,6 +32,7 @@ from ...tools.settings import settings
 from .chunking import chunk_markdown_data
 from .pre_scores import filter_chunks, filter_search_results
 from .recency import apply_recency_bias
+from .rrf import rrf_fuse
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,10 @@ class ChunkStoreLike(Protocol):
         embeddings: list[list[float]],
         conversation_id: uuid.UUID | None = None,
     ) -> int: ...
+
+    async def fts_candidates(
+        self, query: str, k: int
+    ) -> list[dict[str, Any]]: ...
 
     async def existing_hashes(self, hashes: list[str]) -> set[str]: ...
 
@@ -105,6 +110,7 @@ class AskToolbox:
         source_types: list[str] | None = None,
         attachments: list[dict[str, Any]] | None = None,
         note_store=None,
+        hybrid_alpha: float = 1.0,
     ):
         self.searching = searching
         self.scraper = scraper
@@ -140,6 +146,10 @@ class AskToolbox:
         # Research notes (PR 18): when set, the `note_write` tool is
         # attached and the DB is the source of truth (decision 9).
         self.note_store = note_store
+        # Hybrid retrieval blend (WU-4): 1.0 = pure vector (today), 0.0 =
+        # pure lexical. Below 1.0 the lexical FTS leg joins the pool via
+        # RRF; the default reproduces today's pipeline exactly.
+        self.hybrid_alpha = min(1.0, max(0.0, hybrid_alpha))
 
         self.raw_results: list = []
         self.ranked_sources: list[dict[str, Any]] = []
@@ -408,7 +418,10 @@ class AskToolbox:
 
         if self.scope != "request" and self.embedder and self.chunk_repo:
             try:
-                candidates = await self._vector_candidates(query)
+                if self.hybrid_alpha < 1.0:
+                    candidates = await self._hybrid_candidates(query)
+                else:
+                    candidates = await self._vector_candidates(query)
             except Exception:
                 logger.warning(
                     "Vector retrieval failed; falling back to in-memory "
@@ -436,6 +449,34 @@ class AskToolbox:
         return "\n\n---\n\n".join(
             chunk.get("content", "") for chunk in self.selected_chunks
         )
+
+    async def _hybrid_candidates(self, query: str) -> list[dict[str, Any]]:
+        """Vector + lexical legs fused by RRF (WU-4).
+
+        Either leg failing alone degrades to the other (log + continue);
+        both failing raises so the caller falls back to in-memory ranking.
+        """
+        assert self.embedder and self.chunk_repo
+        vector: list[dict[str, Any]] | None = None
+        lexical: list[dict[str, Any]] | None = None
+        try:
+            vector = await self._vector_candidates(query)
+        except Exception:
+            logger.warning("Hybrid vector leg failed.", exc_info=True)
+        try:
+            lexical = await self.chunk_repo.fts_candidates(
+                query, settings.VECTOR_CANDIDATES_K
+            )
+        except Exception:
+            logger.warning("Hybrid lexical leg failed.", exc_info=True)
+
+        if vector is None and lexical is None:
+            raise RuntimeError("both hybrid legs failed")
+        if vector is None:
+            return lexical or []
+        if lexical is None:
+            return vector
+        return rrf_fuse(vector, lexical, self.hybrid_alpha)
 
     async def _vector_candidates(self, query: str) -> list[dict[str, Any]]:
         assert self.embedder and self.chunk_repo

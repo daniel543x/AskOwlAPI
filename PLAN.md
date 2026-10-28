@@ -362,7 +362,7 @@ Preset table over the shared loop (toolbox + conversation history + degrade path
       (feeds the Note assembler's Sources section).
 - [x] PR 4 `wu/rewrite` — history-aware standalone rewriting (default flip:
       `"standalone"`).
-- [ ] PR 7 `wu/hybrid` — lexical + vector RRF fusion behind `hybrid_alpha` (default 1.0
+- [x] PR 7 `wu/hybrid` — lexical + vector RRF fusion behind `hybrid_alpha` (default 1.0
       until measured).
 
 ---
