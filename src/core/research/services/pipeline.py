@@ -88,6 +88,7 @@ async def research_logic(
     session=None,
     today: str | None = None,
     source_types: list[str] | None = None,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the research pipeline, yielding (event, payload) pairs.
 
@@ -104,6 +105,7 @@ async def research_logic(
         toolbox = AskToolbox(
             searching, scraper, ranker, embedder, chunk_repo,
             source_types=source_types,
+            attachments=attachments,
         )
 
         # <----- Planning (native tool call) ----->
@@ -202,6 +204,7 @@ async def research_sse_adapter(
     session=None,
     today: str | None = None,
     source_types: list[str] | None = None,
+    attachments: list[dict[str, Any]] | None = None,
     turn: TurnResources | None = None,
 ) -> AsyncGenerator[str]:
     """Translate research events into an SSE stream.
@@ -221,6 +224,7 @@ async def research_sse_adapter(
             pipeline = research_logic(
                 query, searching, model, scraper, ranker, embedder=embedder,
                 session=session, today=today, source_types=source_types,
+                attachments=attachments,
             )
             async for event, data in pipeline:
                 if event == "answer_ready":
@@ -301,6 +305,7 @@ async def research_json_adapter(
     session=None,
     today: str | None = None,
     source_types: list[str] | None = None,
+    attachments: list[dict[str, Any]] | None = None,
     turn: TurnResources | None = None,
 ) -> dict[str, Any]:
     """Run the research pipeline and return the full result as one dict."""
@@ -312,6 +317,7 @@ async def research_json_adapter(
             pipeline = research_logic(
                 query, searching, model, scraper, ranker, embedder=embedder,
                 session=session, today=today, source_types=source_types,
+                attachments=attachments,
             )
             async for event, data in pipeline:
                 if event == "error":

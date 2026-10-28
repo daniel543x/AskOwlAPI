@@ -11,6 +11,7 @@ from .core.ask.router import router as AskRouter
 from .core.research.router import router as ResearchRouter
 from .init import init
 from .modules.api_keys.router import router as ApiKeysRouter
+from .modules.attachments.router import router as AttachmentsRouter
 from .modules.history.router import router as HistoryRouter
 from .modules.identity.auth.repository import RefreshTokenRepository
 from .modules.identity.router import router as IdentityRouter
@@ -111,6 +112,7 @@ app.include_router(ResearchRouter)
 app.include_router(ProfileRouter)
 app.include_router(SearchEngineRouter)
 app.include_router(JobsRouter)
+app.include_router(AttachmentsRouter)
 
 
 @app.get("/healthy")

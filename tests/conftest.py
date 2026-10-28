@@ -24,6 +24,7 @@ from src.app import app  # noqa: E402
 
 # Import all models so create_all sees every table.
 from src.modules.api_keys.model import ApiKey  # noqa: E402, F401
+from src.modules.attachments.model import Attachment  # noqa: E402, F401
 from src.modules.chunk_store.model import Chunk  # noqa: E402, F401
 from src.modules.history.model import Conversation, Message  # noqa: E402, F401
 from src.modules.identity.auth.model import RefreshToken  # noqa: E402, F401

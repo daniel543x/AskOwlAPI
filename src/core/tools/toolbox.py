@@ -103,6 +103,7 @@ class AskToolbox:
         recency_bias: float = 0.0,
         now: datetime | None = None,
         source_types: list[str] | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ):
         self.searching = searching
         self.scraper = scraper
@@ -132,6 +133,9 @@ class AskToolbox:
         # Source types (PR 11): converted to per-call search categories and
         # engine additions; None/empty = the provider's own defaults.
         self.source_types = source_types or None
+        # Attachments (PR 15): validated refs for this turn; the
+        # `search_files` tool retrieves strictly inside their conversation.
+        self.attachments = attachments or None
 
         self.raw_results: list = []
         self.ranked_sources: list[dict[str, Any]] = []
@@ -446,6 +450,39 @@ class PreScoreArgs(BaseModel):
     text: str = Field(description="Text the question refers to.")
 
 
+class SearchFilesArgs(BaseModel):
+    query: str = Field(description="What to look for inside uploaded files.")
+
+
+async def _search_files(toolbox: AskToolbox, query: str) -> str:
+    """Conversation-scoped retrieval over the turn's uploaded files."""
+    import uuid as _uuid
+
+    if not toolbox.attachments:
+        return json.dumps({"files": [], "note": "No files attached."})
+    if toolbox.embedder is None or toolbox.chunk_repo is None:
+        return json.dumps(
+            {
+                "files": [],
+                "note": "No embedding model configured; file retrieval is "
+                "unavailable in this turn.",
+            }
+        )
+    conversation_id = _uuid.UUID(str(toolbox.attachments[0]["conversation_id"]))
+    embedding = (await toolbox.embedder.embed_texts([query]))[0]
+    chunks = await toolbox.chunk_repo.conversation_chunks_strict(
+        conversation_id, embedding, settings.ATTACHMENT_SEARCH_K
+    )
+    files = [
+        {
+            "source": (c.get("metadata") or {}).get("title", "attachment"),
+            "content": c.get("content", "")[:1200],
+        }
+        for c in chunks
+    ]
+    return json.dumps({"files": files, "count": len(files)})
+
+
 class GameOffersArgs(BaseModel):
     game_name: str = Field(description="Video game title to price-check.")
 
@@ -483,6 +520,22 @@ def build_tools(toolbox: AskToolbox) -> list[StructuredTool]:
     `game_offers` (PR 14) only when gg.deals is enabled and configured.
     """
     tools: list[StructuredTool] = []
+    if toolbox.attachments:
+        tools.append(
+            StructuredTool.from_function(
+                coroutine=lambda **kwargs: _search_files(
+                    toolbox, kwargs["query"]
+                ),
+                name="search_files",
+                description=(
+                    "Search inside the files attached to this conversation "
+                    "by semantic query; returns the matching passages with "
+                    "their file names. Use for questions about the "
+                    "uploaded documents."
+                ),
+                args_schema=SearchFilesArgs,
+            )
+        )
     if settings.GGDEALS_ENABLED:
         from ...modules.ggdeals.factory import get_client
 
