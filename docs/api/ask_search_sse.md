@@ -169,6 +169,31 @@ The LLM is never used without a tool call:
 
 ## Changelog
 
+### v2.15 (2026-10-28, PR 17 — additive)
+
+- Added: `degraded` event on search streams
+  (`{"reason": "..."}`) — the agentic core (behind `AGENTIC_SEARCH`,
+  default off) could not complete the turn (tool-contract violation
+  after one repair attempt, or budget exhaustion without material) and
+  the deterministic pipeline took over, so the UI can be honest about
+  the fallback.
+- Behavior (flag on): `POST /ask/search` runs one low-budget tool loop
+  (web_search / fetch_pages / get_context, 1-3 iterations) and the
+  answer streams through the CitedAnswer contract in-place; history
+  rides in the loop's system prompt. The eval gate (golden set,
+  citation fidelity >= baseline, MRR within -5%, p50 <= 1.5x) governs
+  the default flip, not this release.
+
+### v2.14 (2026-10-28, PR 16 — additive)
+
+- Added: image attachments (png/jpeg/webp/gif, <= 10 MB each, <= 4 per
+  request) via the same upload route, stored as blobs with orphan TTL
+  cleanup. Ask-time gate: an image attachment with a model lacking
+  `vision` is a coded 422 `model_lacks_vision` — never a silent drop.
+  Images reach the synthesis LLM as content blocks next to the
+  retrieved context and never the search engine path; history persists
+  references, not base64.
+
 ### v2.13 (2026-10-28, PR 15 — additive)
 
 - Added: `POST /conversations/{id}/attachments` (multipart; txt, md,

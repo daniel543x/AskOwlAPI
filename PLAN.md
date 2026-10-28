@@ -301,7 +301,7 @@ the same ask-router / SSE-doc files — rebase before merging.
   - Scope note (decision 21): **no `scope` default flip here** — upload chunks are
     conversation-scoped unconditionally, web chunks stay global (`scope=conversation`
     stays opt-in); a default flip is deferred to the protocol-v3 window if ever needed.
-- [ ] **PR 16 `client/attachments-vision`** — images (round 3 addition; depends on PR 9,
+- [x] **PR 16 `client/attachments-vision`** — images (round 3 addition; depends on PR 9,
       PR 15).
   - Image allowlist png/jpeg/webp/gif, ≤ 10 MB each, ≤ 4 per request; stored as blobs
     (refs in messages, TTL cleanup job).
@@ -323,7 +323,7 @@ Preset table over the shared loop (toolbox + conversation history + degrade path
 | `deep_research` | yes | yes | yes (`revise_plan`) | yes | high | elevated | yes |
 | `persona` | by depth | by depth | by depth | by depth | `persona.default_parameters` (clamped) | elevated | per-persona |
 
-- [ ] **PR 17 `rebuild/core`** — agentic search behind `AGENTIC_SEARCH` (default **off**;
+- [x] **PR 17 `rebuild/core`** — agentic search behind `AGENTIC_SEARCH` (default **off**;
       deliberate flip after eval).
   - Evolved `agent_logic` as the single loop; conversation history moves into the core;
     `POST /ask/search` runs the loop when the flag is on, the deterministic pipeline

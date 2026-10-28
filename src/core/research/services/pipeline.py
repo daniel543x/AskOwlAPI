@@ -205,6 +205,7 @@ async def research_sse_adapter(
     today: str | None = None,
     source_types: list[str] | None = None,
     attachments: list[dict[str, Any]] | None = None,
+    images: list[bytes] | None = None,
     turn: TurnResources | None = None,
 ) -> AsyncGenerator[str]:
     """Translate research events into an SSE stream.
@@ -237,7 +238,8 @@ async def research_sse_adapter(
 
                     try:
                         report = stream_report(
-                            model, data["query"], data["gathered"], today=today
+                            model, data["query"], data["gathered"],
+                            today=today, images=images,
                         )
                         async for delta in report:
                             yield frame("message", {"text": delta})
@@ -269,6 +271,7 @@ async def agent_sse_adapter(
     toolbox: AskToolbox,
     budget: Budget,
     persona=None,
+    images: list[bytes] | None = None,
     turn: TurnResources | None = None,
 ) -> AsyncGenerator[str]:
     """Translate agent-loop events into an SSE stream.
@@ -286,7 +289,7 @@ async def agent_sse_adapter(
     try:
         async with turn.gated() if turn is not None else nullcontext():
             async for event, data in agent_logic(
-                goal, model, toolbox, budget, persona
+                goal, model, toolbox, budget, persona, images=images
             ):
                 yield frame(event, data)
     except GateBusy:
@@ -306,6 +309,7 @@ async def research_json_adapter(
     today: str | None = None,
     source_types: list[str] | None = None,
     attachments: list[dict[str, Any]] | None = None,
+    images: list[bytes] | None = None,
     turn: TurnResources | None = None,
 ) -> dict[str, Any]:
     """Run the research pipeline and return the full result as one dict."""
@@ -346,7 +350,8 @@ async def research_json_adapter(
             else:
                 try:
                     report = await generate_report(
-                        model, answer_data["query"], answer_data["gathered"], today
+                        model, answer_data["query"], answer_data["gathered"],
+                        today, images,
                     )
                 except ToolProtocolError as e:
                     raise HTTPException(

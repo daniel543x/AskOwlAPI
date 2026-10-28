@@ -193,4 +193,4 @@ async def get_turn_resources(
             ),
         ),
     ]
-    return TurnResources(keys=keys)
+    return TurnResources(keys=keys, model_capabilities=resolved.capabilities)

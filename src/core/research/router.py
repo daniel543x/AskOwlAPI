@@ -15,7 +15,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from ...modules.attachments.service import resolve_for_ask
+from ...modules.attachments.service import (
+    ensure_vision,
+    fetch_image_blobs,
+    resolve_for_ask,
+)
 from ...modules.chunk_store.repository import ChunkRepository
 from ...modules.decision.base import IDecisionMaker
 from ...modules.decision.factory import get_optional_decision_maker
@@ -90,6 +94,10 @@ async def ask_research(
         session, user.id, None, attachment_ids,
         require_same_conversation=False,
     )
+    ensure_vision(turn.model_capabilities, attachments)
+    images = await fetch_image_blobs(
+        session, attachments, settings.ATTACHMENT_MAX_IMAGES
+    )
     att_dicts = [
         {"id": a.id, "filename": a.filename, "conversation_id": a.conversation_id}
         for a in attachments
@@ -120,6 +128,7 @@ async def ask_research(
                 session=session,
                 source_types=source_types,
                 attachments=att_dicts,
+                images=images,
                 turn=turn,
             ),
             media_type="text/event-stream",
@@ -135,6 +144,7 @@ async def ask_research(
         session=session,
         source_types=source_types,
         attachments=att_dicts,
+        images=images,
         turn=turn,
     )
 
@@ -165,6 +175,18 @@ async def ask_agent(
     attachment_ids: list[uuid.UUID] = Query(default=[]),
 ):
     ensure_source_types(source_types, declared_source_types)
+    agent_refs = await resolve_for_ask(
+        session, user.id, None, attachment_ids,
+        require_same_conversation=False,
+    )
+    ensure_vision(turn.model_capabilities, agent_refs)
+    agent_images = await fetch_image_blobs(
+        session, agent_refs, settings.ATTACHMENT_MAX_IMAGES
+    )
+    agent_attachments = [
+        {"id": a.id, "filename": a.filename, "conversation_id": a.conversation_id}
+        for a in agent_refs
+    ]
     persona = None
     if persona_id is not None:
         persona = await PersonaRepository(session).get_for_user(user.id, persona_id)
@@ -182,14 +204,7 @@ async def ask_agent(
         allowed_engines=persona.allowed_engines if persona else None,
         decision_maker=decision_maker,
         source_types=source_types,
-        attachments=[
-            {"id": a.id, "filename": a.filename,
-             "conversation_id": a.conversation_id}
-            for a in await resolve_for_ask(
-                session, user.id, None, attachment_ids,
-                require_same_conversation=False,
-            )
-        ],
+        attachments=agent_attachments,
     )
 
     return StreamingResponse(
@@ -199,6 +214,7 @@ async def ask_agent(
             toolbox,
             make_budget(persona.default_parameters if persona else None),
             persona=persona,
+            images=agent_images,
             turn=turn,
         ),
         media_type="text/event-stream",

@@ -83,6 +83,7 @@ async def search_logic(
     today: str | None = None,
     source_types: list[str] | None = None,
     attachments: list[dict[str, Any]] | None = None,
+    history: list[tuple[str, str]] | None = None,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the search pipeline, yielding (event, payload) pairs.
 
@@ -92,7 +93,34 @@ async def search_logic(
 
     Errors are reported as ``error`` events, never raised, so streaming
     consumers always get a well-formed termination.
+
+    With `AGENTIC_SEARCH` on (PR 17), the turn runs the agentic core
+    first; a tool-contract violation or a budget exhaustion without
+    material emits a ``degraded`` event and falls back to this
+    deterministic body (decision 8).
     """
+    if settings.AGENTIC_SEARCH:
+        try:
+            from ..agentic import (
+                AgentDegraded,
+                agentic_search_logic,
+                search_budget,
+            )
+
+            pre_toolbox = AskToolbox(
+                searching, scraper, ranker, embedder, None,
+                decision_maker=decision_maker,
+                max_urls=max_urls,
+                attachments=attachments,
+            )
+            async for event, data in agentic_search_logic(
+                query, model, pre_toolbox, search_budget(), history
+            ):
+                yield event, data
+            return
+        except AgentDegraded as e:
+            logger.warning("Agentic search degraded: %s", e)
+            yield "degraded", {"reason": str(e)}
     try:
         chunk_repo = ChunkRepository(session) if session is not None else None
         toolbox = AskToolbox(
@@ -205,6 +233,7 @@ async def _stream_answer_frames(
     model: BaseChatModel,
     history: list[tuple[str, str]] | None = None,
     today: str | None = None,
+    images: list[bytes] | None = None,
 ):
     """Yield ("answer"|"thinking", text) deltas; deterministic text when
     context is empty."""
@@ -213,7 +242,7 @@ async def _stream_answer_frames(
         return
 
     async for kind, delta in stream_cited_answer(
-        model, query, context, history, today
+        model, query, context, history, today, images
     ):
         yield kind, delta
 
@@ -274,6 +303,7 @@ async def search_sse_adapter(
     today: str | None = None,
     source_types: list[str] | None = None,
     attachments: list[dict[str, Any]] | None = None,
+    images: list[bytes] | None = None,
     turn: TurnResources | None = None,
 ) -> AsyncGenerator[str]:
     """Translate pipeline events into an SSE stream (protocol v2).
@@ -322,6 +352,7 @@ async def search_sse_adapter(
                 today=today,
                 source_types=source_types,
                 attachments=attachments,
+                history=history,
             ):
                 if event == "answer_ready":
                     yield frame("status", {"step": "Generating answer..."})
@@ -329,7 +360,8 @@ async def search_sse_adapter(
                     answer_parts: list[str] = []
                     try:
                         async for kind, delta in _stream_answer_frames(
-                            data["query"], data["context"], model, history, today
+                            data["query"], data["context"], model, history,
+                            today, images,
                         ):
                             if kind == "thinking":
                                 yield frame("thinking", {"text": delta})
@@ -369,6 +401,16 @@ async def search_sse_adapter(
                             "error", {"error": f"Answer generation failed: {str(e)}"}
                         )
                     return
+                elif event == "agentic_answer":
+                    # PR 17: the core already streamed the answer deltas;
+                    # persist the turn and terminate.
+                    answer_text = data["answer"]
+                    await _save_turn(session, conversation, data["query"], answer_text)
+                    if not data["context"].strip():
+                        yield frame("done", {"status": "no_context"})
+                    else:
+                        yield frame("done", {"status": "completed"})
+                    return
                 else:
                     yield frame(event, data)
 
@@ -402,6 +444,7 @@ async def search_json_adapter(
     today: str | None = None,
     source_types: list[str] | None = None,
     attachments: list[dict[str, Any]] | None = None,
+    images: list[bytes] | None = None,
     turn: TurnResources | None = None,
 ) -> dict[str, Any]:
     """Run the pipeline and return the full result as one JSON-ready dict.
@@ -433,6 +476,7 @@ async def search_json_adapter(
                     today=today,
                     source_types=source_types,
                     attachments=attachments,
+                    history=history,
                 )
                 async for event, data in pipeline:
                     if event == "error":
@@ -442,6 +486,9 @@ async def search_json_adapter(
                         break
                     if event == "answer_ready":
                         answer_data = data
+                        break
+                    if event == "agentic_answer":
+                        answer_data = {**data, "direct_answer": data["answer"]}
                         break
     except GateBusy as e:
         logger.info("Search turn rejected: resource gates busy (query: %s).", query)
@@ -460,12 +507,16 @@ async def search_json_adapter(
         )
 
     context = answer_data["context"]
-    if not context.strip():
+    if "direct_answer" in answer_data:
+        # PR 17: the agentic core already produced (and streamed) the
+        # answer; never re-generate.
+        answer = answer_data["direct_answer"]
+    elif not context.strip():
         answer = NO_CONTEXT_ANSWER
     else:
         try:
             answer = await generate_cited_answer(
-                model, answer_data["query"], context, history, today
+                model, answer_data["query"], context, history, today, images
             )
         except ToolProtocolError as e:
             raise HTTPException(

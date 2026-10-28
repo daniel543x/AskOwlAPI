@@ -131,9 +131,14 @@ async def gated_turn(keys: list[GateKey], wait_timeout: float | None = None):
 
 @dataclass(frozen=True)
 class TurnResources:
-    """The gates one ask turn must hold (model + search), ready to wrap."""
+    """The gates one ask turn must hold (model + search), ready to wrap.
+
+    `model_capabilities` rides along for ask-time gates that need model
+    facts (e.g. the vision gate, PR 16) without re-resolving the model.
+    """
 
     keys: list[GateKey]
+    model_capabilities: list[str] = ()
 
     def gated(self, wait_timeout: float | None = None):
         return gated_turn(self.keys, wait_timeout=wait_timeout)

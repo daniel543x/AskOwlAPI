@@ -18,7 +18,11 @@ from ...core.tools.chunking import chunk_markdown_data
 from ...tools.settings import settings
 from ..chunk_store.repository import ChunkRepository
 from .extract import extract_text
-from .model import Attachment, AttachmentRef
+from .model import (
+    ATTACHMENT_KIND_IMAGE,
+    Attachment,
+    AttachmentRef,
+)
 from .repository import AttachmentRepository, attachment_chunk_metadata
 
 logger = logging.getLogger(__name__)
@@ -127,10 +131,54 @@ async def resolve_for_ask(
             )
     return [
         AttachmentRef(
-            id=a.id, filename=a.filename, conversation_id=a.conversation_id
+            id=a.id,
+            filename=a.filename,
+            conversation_id=a.conversation_id,
+            kind=a.kind,
         )
         for a in found.values()
     ]
+
+
+def ensure_vision(
+    model_capabilities: list[str], refs: list[AttachmentRef]
+) -> None:
+    """Coded 422 when image attachments meet a non-vision model (decision 14).
+
+    Never a silent drop: an image ask with a model lacking `vision`
+    fails loudly; the iron rule additionally requires `tools`.
+    """
+    if "vision" in model_capabilities:
+        return
+    images = [ref.filename for ref in refs if ref.kind == ATTACHMENT_KIND_IMAGE]
+    if images:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "model_lacks_vision",
+                "message": (
+                    "This turn includes image attachments "
+                    f"({images}) but the selected model does not "
+                    "support vision. Pick a vision-capable model."
+                ),
+            },
+        )
+
+
+async def fetch_image_blobs(
+    session: AsyncSession, refs: list[AttachmentRef], max_images: int
+) -> list[bytes]:
+    """Raw bytes of the referenced image attachments, upload order."""
+    from .repository import AttachmentRepository
+
+    image_ids = [
+        ref.id for ref in refs if ref.kind == ATTACHMENT_KIND_IMAGE
+    ]
+    if not image_ids:
+        return []
+    return await AttachmentRepository(session).get_image_blobs(
+        image_ids, max_images
+    )
 
 
 async def attachment_context(
@@ -158,3 +206,33 @@ async def attachment_context(
         parts.append(part)
         used += len(part)
     return "\n\n".join(parts)
+
+
+async def ingest_image(
+    session: AsyncSession,
+    conversation_id: uuid.UUID,
+    user_id: uuid.UUID,
+    filename: str,
+    content_type: str,
+    data: bytes,
+) -> Attachment:
+    """Store one image attachment (blob only; never the search path).
+
+    Images reach the synthesis LLM as content blocks when the model has
+    the `vision` capability (decision 14) — chunks and embeddings never
+    happen for images.
+    """
+    attachment = Attachment(
+        user_id=user_id,
+        conversation_id=conversation_id,
+        filename=filename,
+        content_type=content_type,
+        size_bytes=len(data),
+        extracted_chars=0,
+        kind=ATTACHMENT_KIND_IMAGE,
+        created_at=datetime.now(UTC),
+    )
+    attachment = await AttachmentRepository(session).create(attachment)
+    await AttachmentRepository(session).store_image_blob(attachment.id, data)
+    logger.info("Stored image attachment %s (%d bytes).", filename, len(data))
+    return attachment

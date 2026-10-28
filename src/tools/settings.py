@@ -176,10 +176,21 @@ class Settings(BaseSettings):
     JOB_RETRY_DELAY_S: float = 5.0
     JOB_MAX_RETRIES: int = 3
 
+    # <----- Agentic search core (PR 17 / decision 8) ----->
+    # One tool loop shared by all modes; the deterministic pipeline stays
+    # as the degrade path. Ships off; flips after the eval gate (two
+    # consecutive green runs of the golden-set harness).
+    AGENTIC_SEARCH: bool = False
+    AGENTIC_SEARCH_MAX_ITERATIONS: int = 3
+    AGENTIC_SEARCH_TIME_BUDGET_S: float = 120.0
+    AGENTIC_SEARCH_TOKEN_BUDGET: int = 20_000
+    AGENTIC_REPAIR_ATTEMPTS: int = 1
+
     # <----- Attachments (PR 15 / decision 14) ----->
     # Text files upload into conversation-scoped chunks; images (PR 16)
     # will gate on the vision capability. Extraction is capped per file.
     ATTACHMENT_MAX_FILES: int = 5
+    ATTACHMENT_MAX_IMAGES: int = 4
     ATTACHMENT_MAX_FILE_MB: int = 10
     ATTACHMENT_MAX_CHARS: int = 50_000
     ATTACHMENT_CONTEXT_MAX_CHARS: int = 8_000
