@@ -53,12 +53,17 @@ class ModelRepository:
         user_id: uuid.UUID,
         user_roles: list[str],
         requested_model_id: uuid.UUID | None = None,
+        profile_model_id: uuid.UUID | None = None,
     ) -> ResolvedModel:
         view = await self._catalog_view(user_id)
 
         try:
             model_id, tier = resolve_model_id(
-                kind, requested_model_id, view, user_roles
+                kind,
+                requested_model_id,
+                view,
+                user_roles,
+                profile_model_id=profile_model_id,
             )
         except SelectionError:
             builtin = self._builtin_model(kind)

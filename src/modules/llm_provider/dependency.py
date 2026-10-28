@@ -15,6 +15,8 @@ from langchain_core.language_models import BaseChatModel
 
 from ..identity.auth.security import get_current_user
 from ..identity.user.model import User
+from ..profile.factory import get_optional_user_preferences
+from ..profile.model import UserPreferences
 from .capability_probe import effective_reasoning_state
 from .factory import ChatModelFactory, get_llm_factory
 from .model import ModelKind
@@ -66,18 +68,25 @@ async def build_chat_model(
     request_model_id: uuid.UUID | None,
     thinking: bool | None = None,
     effort: str | None = None,
+    profile=None,
 ) -> BaseChatModel:
     """Resolve, gate, and build the chat model for one ask turn.
 
     `thinking`/`effort` come from the request (POST body or GET query).
-    Shared by every ask route so the reasoning contract is identical.
+    `profile` is the caller's preference row (decision 12): its
+    default_model_id sits between the explicit request and the per-kind
+    preference in the resolution order, and its thinking/effort fill the
+    slots the request left unset — soft-clamped to the resolved model
+    (profile values never 422; explicit request values do).
     """
+    profile_model_id = profile.default_model_id if profile else None
     try:
         resolved = await repo.resolve_model(
             kind=ModelKind.CHAT.value,
             user_id=user.id,
             user_roles=_user_role_names(user),
             requested_model_id=request_model_id,
+            profile_model_id=profile_model_id,
         )
         ensure_capability(resolved, "tools")
     except SelectionError as e:
@@ -93,6 +102,17 @@ async def build_chat_model(
     except ReasoningError as e:
         raise _reasoning_http_error(e) from e
 
+    if profile is not None:
+        # Decision 12: request > profile > model default. Profile values
+        # were clamped on save, but the effective model may have changed
+        # since — clamp again here, silently.
+        if thinking is None and "thinking" in capabilities:
+            thinking = profile.thinking
+        if effort is None and "effort" in capabilities:
+            candidate = profile.effort
+            if candidate and (not effort_levels or candidate in effort_levels):
+                effort = candidate
+
     return factory.create_chat_model(
         resolved, reasoning_params=adapter_wire_params(resolved, thinking, effort)
     )
@@ -106,6 +126,7 @@ async def get_llm_client(
     request_model_id: uuid.UUID | None = Query(default=None, alias="model_id"),
     thinking: bool | None = Query(default=None),
     effort: str | None = Query(default=None),
+    profile: UserPreferences | None = Depends(get_optional_user_preferences),
 ) -> BaseChatModel:
     """Chat model for every ask route — the single override seam.
 
@@ -126,5 +147,11 @@ async def get_llm_client(
             if effort is None:
                 effort = body.get("effort")
     return await build_chat_model(
-        repo, factory, user, request_model_id, thinking=thinking, effort=effort
+        repo,
+        factory,
+        user,
+        request_model_id,
+        thinking=thinking,
+        effort=effort,
+        profile=profile,
     )

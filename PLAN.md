@@ -243,7 +243,7 @@ the same ask-router / SSE-doc files — rebase before merging.
     `default_params < adapter(request)`.
   - SSE v2.4 (additive): `thinking` event (reasoning-trace passthrough; UI may hide it).
   - Version bump: **0.15.0** (the reset from `1.0.0rc1` happens in this PR's branch, decision 16).
-- [ ] **PR 10 `client/profile`** — profile preferences (UX round 3).
+- [x] **PR 10 `client/profile`** — profile preferences (UX round 3).
   - `user_preferences` table (user_id PK, default_model_id, default_mode, thinking,
     effort, source_types, updated_at). `GET/PUT /profile/preferences`;
     `GET /profile/preferences?model_id=X` returns `{stored, resolved, warnings}` —

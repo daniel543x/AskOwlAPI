@@ -52,7 +52,9 @@ class FakeRepo(ModelRepository):
         self.resolved = resolved
         self.resolved_with = None
 
-    async def resolve_model(self, kind, user_id, user_roles, requested_model_id=None):
+    async def resolve_model(
+        self, kind, user_id, user_roles, requested_model_id=None, **kwargs
+    ):
         self.resolved_with = (kind, requested_model_id)
         return self.resolved
 
@@ -74,7 +76,11 @@ async def test_get_llm_client_gates_on_tools_capability():
 
     with pytest.raises(HTTPException) as exc_info:
         await get_llm_client(
-            http_request=_get_request(), repo=repo, factory=factory, user=_as_user(user)
+            http_request=_get_request(),
+            repo=repo,
+            factory=factory,
+            user=_as_user(user),
+            profile=None,
         )
 
     assert exc_info.value.status_code == 422
@@ -95,6 +101,7 @@ async def test_get_llm_client_builds_model_when_capable():
         request_model_id=None,
         thinking=None,
         effort=None,
+        profile=None,
     )
 
     assert model is factory.sentinel
