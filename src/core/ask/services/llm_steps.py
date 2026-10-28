@@ -61,23 +61,42 @@ Context Chunks:
 # <----- Query rewriting ----->
 
 
+def history_block(history: list[tuple[str, str]] | None) -> str:
+    """Prior turns as a compact block (WU-1): last 6 pairs, oldest first."""
+    if not history:
+        return ""
+    lines = [
+        f"{role.capitalize()}: {content}" for role, content in history[-6:]
+    ]
+    return "\n".join(lines) + "\n"
+
+
 async def rewrite_query(
     model: BaseChatModel,
     raw_query: str,
+    history: list[tuple[str, str]] | None = None,
     today: str | None = None,
-) -> tuple[str, bool]:
-    """Optimize the query via a native tool call.
+) -> tuple[str, bool, bool]:
+    """Optimize the query via a native tool call (WU-1 / AR-4).
 
-    Returns (optimized_query, used_tool_call). On a tool-protocol error the
-    raw query is used; free-form model text is never parsed or trusted.
+    With `history`, the prior turns are prepended so pronouns and
+    omissions resolve into a standalone query. Returns
+    (optimized_query, used_tool_call, standalone): `standalone` is True
+    only when history actually shaped the rewrite. On a tool-protocol
+    error the raw query is used; free-form model text is never parsed or
+    trusted.
     """
     bound = model.bind_tools([SubmitSearchQuery])
+    if history:
+        prompt = f"{history_block(history)}Current question: {raw_query}"
+    else:
+        prompt = raw_query
     response = await bound.ainvoke(
         [
             SystemMessage(
                 content=f"{current_date_line(today)}\n{QUERY_OPTIMIZER_SYSTEM}"
             ),
-            HumanMessage(content=raw_query),
+            HumanMessage(content=prompt),
         ]
     )
 
@@ -85,13 +104,13 @@ async def rewrite_query(
         if tool_call.get("name") == "SubmitSearchQuery":
             optimized = str(tool_call.get("args", {}).get("query", "")).strip()
             if optimized:
-                return optimized, True
+                return optimized, True, bool(history)
 
     logger.warning(
         "Query rewriting did not use the SubmitSearchQuery tool; "
         "falling back to the raw query (tool-protocol error path)."
     )
-    return raw_query, False
+    return raw_query, False, False
 
 
 # <----- Answer synthesis ----->

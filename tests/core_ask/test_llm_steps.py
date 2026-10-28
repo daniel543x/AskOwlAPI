@@ -21,7 +21,7 @@ async def test_rewrite_query_uses_submit_search_query_tool_call():
         responses=[tool_call("SubmitSearchQuery", {"query": "rust lang"})]
     )
 
-    optimized, used_tool_call = await rewrite_query(model, "what is rust?")
+    optimized, used_tool_call, _standalone = await rewrite_query(model, "what is rust?")
 
     assert optimized == "rust lang"
     assert used_tool_call is True
@@ -32,7 +32,9 @@ async def test_rewrite_query_uses_submit_search_query_tool_call():
 async def test_rewrite_query_falls_back_to_raw_query_without_tool_call():
     model = ScriptedToolModel(responses=[AIMessage(content="just prose, no tool")])
 
-    optimized, used_tool_call = await rewrite_query(model, "original question")
+    optimized, used_tool_call, _standalone = await rewrite_query(
+        model, "original question"
+    )
 
     assert optimized == "original question"
     assert used_tool_call is False
@@ -43,7 +45,7 @@ async def test_rewrite_query_ignores_other_tool_calls():
         responses=[tool_call("SomeOtherTool", {"query": "nope"})]
     )
 
-    optimized, used_tool_call = await rewrite_query(model, "raw q")
+    optimized, used_tool_call, _standalone = await rewrite_query(model, "raw q")
 
     assert optimized == "raw q"
     assert used_tool_call is False

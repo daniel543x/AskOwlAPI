@@ -60,6 +60,16 @@ _search_scope = require_scope("search")
 class SearchRequest(AskBody):
     """Body of POST /ask/search: the v3 base plus retrieval extras."""
 
+    rewrite: Literal["standalone", "simple", "none"] = Field(
+        default="standalone",
+        description=(
+            "Query rewriting mode (WU-1, default flipped in PR 4): "
+            "'standalone' resolves pronouns and omissions against the "
+            "conversation history; 'simple' is history-free rewriting "
+            "(the permanent escape hatch); 'none' skips the rewriting "
+            "LLM call entirely (eval/tool callers)."
+        ),
+    )
     max_urls: int | None = Field(
         default=None,
         ge=1,
@@ -218,6 +228,7 @@ async def ask_search(
             for a in attachments
         ],
         images=images,
+        rewrite=request.rewrite,
     )
     return {"answer": answer}
 
