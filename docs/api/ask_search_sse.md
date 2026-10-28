@@ -41,7 +41,7 @@ ranking (WU-11): 0 = neutral; publication-fresh chunks (<30 days) get the
 largest boost, unknown dates are never penalized; clamped server-side to
 `RECENCY_BIAS_MAX`.
 
-Current protocol version: **v2** (breaking; there are no external consumers yet).
+Current protocol version: **v3** (breaking changes are recorded per entry; the webapp is the first consumer and freezes the contract).
 Changelog at the bottom.
 
 ## Wire format
@@ -168,6 +168,18 @@ The LLM is never used without a tool call:
   (HTTP 422 with an explanation).
 
 ## Changelog
+
+### v3 (2026-10-28, PR 21 — breaking)
+
+- Breaking: research/deep_research/persona routes are **POST-only** with
+  the unified body schema `{query, stream, conversation_id, thinking,
+  effort, source_types, background, attachment_ids, depth, persona_id}`;
+  the search route adopts the same base (its retrieval extras stay).
+  `GET /ask/agent` is removed — use `POST /ask/deep_research` (the deep
+  preset) or `POST /ask/persona` with `depth=quick` (the free loop).
+- Scopes: `search | research | deep_research | persona`; existing keys
+  with the legacy `agent` scope keep working on the renamed routes
+  until reissued.
 
 ### v2.18 (2026-10-28, PR 20 — additive)
 

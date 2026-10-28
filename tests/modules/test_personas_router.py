@@ -155,9 +155,13 @@ async def test_agent_with_persona_applies_it(auth_client, db_session):
     )
     app.dependency_overrides[get_llm_client] = lambda: model
 
-    response = await auth_client.get(
-        "/ask/agent",
-        params={"goal": "memory safety", "persona_id": persona_id},
+    response = await auth_client.post(
+        "/ask/persona",
+        json={
+            "query": "memory safety",
+            "persona_id": persona_id,
+            "depth": "quick",
+        },
         headers=headers,
     )
     assert response.status_code == 200
@@ -181,9 +185,13 @@ async def test_agent_with_foreign_persona_is_404(auth_client, db_session):
     )
     persona_id = created.json()["id"]
 
-    response = await auth_client.get(
-        "/ask/agent",
-        params={"goal": "memory safety", "persona_id": persona_id},
+    response = await auth_client.post(
+        "/ask/persona",
+        json={
+            "query": "memory safety",
+            "persona_id": persona_id,
+            "depth": "quick",
+        },
         headers={"Authorization": f"Bearer {token_agent_user}"},
     )
     assert response.status_code == 404
@@ -193,9 +201,13 @@ async def test_agent_with_foreign_persona_is_404(auth_client, db_session):
 async def test_agent_with_missing_persona_is_404(auth_client, db_session):
     token = await make_user(db_session, role_name="research")
 
-    response = await auth_client.get(
-        "/ask/agent",
-        params={"goal": "memory safety", "persona_id": uuid.uuid4()},
+    response = await auth_client.post(
+        "/ask/persona",
+        json={
+            "query": "memory safety",
+            "persona_id": str(uuid.uuid4()),
+            "depth": "quick",
+        },
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 404

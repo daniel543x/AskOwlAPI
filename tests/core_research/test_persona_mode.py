@@ -54,27 +54,27 @@ async def _collect(gen):
 
 
 def test_depth_request_beats_persona_and_default():
-    from src.core.research.router import PersonaAskRequest, _resolve_depth
+    from src.core.research.router import PersonaBody, _resolve_depth
 
     persona = _persona(depth="deep")
-    request = PersonaAskRequest(
+    request = PersonaBody(
         query="q", persona_id=persona.id, depth="quick"
     )
     assert _resolve_depth(request, persona) == "quick"
 
-    request = PersonaAskRequest(query="q", persona_id=persona.id)
+    request = PersonaBody(query="q", persona_id=persona.id)
     assert _resolve_depth(request, persona) == "deep"
 
     empty = _persona()
-    request = PersonaAskRequest(query="q", persona_id=empty.id)
+    request = PersonaBody(query="q", persona_id=empty.id)
     assert _resolve_depth(request, empty) == settings.PERSONA_DEFAULT_DEPTH
 
 
 def test_invalid_persona_depth_falls_back():
-    from src.core.research.router import PersonaAskRequest, _resolve_depth
+    from src.core.research.router import PersonaBody, _resolve_depth
 
     persona = _persona(depth="turbo")
-    request = PersonaAskRequest(query="q", persona_id=persona.id)
+    request = PersonaBody(query="q", persona_id=persona.id)
     assert _resolve_depth(request, persona) == settings.PERSONA_DEFAULT_DEPTH
 
 

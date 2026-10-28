@@ -32,7 +32,7 @@ def hash_api_key(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-VALID_SCOPES = ("search", "research", "agent")
+VALID_SCOPES = ("search", "research", "deep_research", "persona", "agent")
 
 
 class ApiKey(SQLModel, table=True):

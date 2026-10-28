@@ -4,6 +4,9 @@ Every LLM interaction in the pipeline goes through one of these native tool
 contracts; free-form generation is never trusted as an interface.
 """
 
+import uuid
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -16,6 +19,26 @@ class SubmitSearchQuery(BaseModel):
             "conversational filler, same language as the user's question."
         )
     )
+
+
+class AskBody(BaseModel):
+    """The unified v3 ask body (protocol v3, PR 21).
+
+    One body schema for every ask route; search adds its retrieval
+    extras, persona requires persona_id. Routes ignore fields that do
+    not apply to them.
+    """
+
+    query: str
+    stream: bool = True
+    conversation_id: uuid.UUID | None = None
+    thinking: bool | None = None
+    effort: Literal["low", "medium", "high", "max"] | None = None
+    source_types: list[str] = []
+    background: bool = False
+    attachment_ids: list[uuid.UUID] = []
+    depth: Literal["quick", "research", "deep"] | None = None
+    persona_id: uuid.UUID | None = None
 
 
 class CitedAnswer(BaseModel):
