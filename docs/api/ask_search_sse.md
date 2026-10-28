@@ -169,6 +169,15 @@ The LLM is never used without a tool call:
 
 ## Changelog
 
+### v3.1 (2026-10-28, PR 4 — additive)
+
+- Added: `rewrite` request field on the search route
+  (`"standalone" | "simple" | "none"`, default **`"standalone"`** — the
+  deliberate default flip from WU-1): standalone resolves pronouns and
+  omissions against the conversation history; `simple` is history-free;
+  `none` skips the rewriting LLM call entirely. The `query` event gains
+  `standalone` (whether history shaped the rewrite).
+
 ### v3 (2026-10-28, PR 21 — breaking)
 
 - Breaking: research/deep_research/persona routes are **POST-only** with

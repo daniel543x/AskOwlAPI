@@ -84,6 +84,7 @@ async def search_logic(
     source_types: list[str] | None = None,
     attachments: list[dict[str, Any]] | None = None,
     history: list[tuple[str, str]] | None = None,
+    rewrite: str = "standalone",
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the search pipeline, yielding (event, payload) pairs.
 
@@ -133,12 +134,22 @@ async def search_logic(
             source_types=source_types,
         )
 
-        # <----- Query rewriting (native tool call) ----->
+        # <----- Query rewriting (native tool call, WU-1) ----->
         yield "status", {"step": "Building query for search engine..."}
-        async with _stage("query_optimization"):
-            optimized_query, used_tool_call = await rewrite_query(
-                model, query, today=today
-            )
+        if rewrite == "none":
+            # The permanent escape hatch (eval/tool callers): skip the
+            # rewriting LLM call entirely.
+            optimized_query, used_tool_call, standalone = query, False, False
+        else:
+            history_for_rewrite = history if rewrite == "standalone" else None
+            async with _stage("query_optimization"):
+                (
+                    optimized_query,
+                    used_tool_call,
+                    standalone,
+                ) = await rewrite_query(
+                    model, query, history_for_rewrite, today=today
+                )
 
         # <----- Query-choice pre-score (optional decision layer) ----->
         if settings.PRE_SCORE_QUERY_CHOICE and decision_maker:
@@ -147,7 +158,11 @@ async def search_logic(
                     decision_maker, query, optimized_query
                 )
 
-        yield "query", {"query": optimized_query, "tool_call": used_tool_call}
+        yield "query", {
+            "query": optimized_query,
+            "tool_call": used_tool_call,
+            "standalone": standalone,
+        }
         if settings.DEBUG:
             yield "debug", {
                 "stage": "query_optimization",
@@ -304,6 +319,7 @@ async def search_sse_adapter(
     source_types: list[str] | None = None,
     attachments: list[dict[str, Any]] | None = None,
     images: list[bytes] | None = None,
+    rewrite: str = "standalone",
     turn: TurnResources | None = None,
 ) -> AsyncGenerator[str]:
     """Translate pipeline events into an SSE stream (protocol v2).
@@ -353,6 +369,7 @@ async def search_sse_adapter(
                 source_types=source_types,
                 attachments=attachments,
                 history=history,
+                rewrite=rewrite,
             ):
                 if event == "answer_ready":
                     yield frame("status", {"step": "Generating answer..."})
@@ -445,6 +462,7 @@ async def search_json_adapter(
     source_types: list[str] | None = None,
     attachments: list[dict[str, Any]] | None = None,
     images: list[bytes] | None = None,
+    rewrite: str = "standalone",
     turn: TurnResources | None = None,
 ) -> dict[str, Any]:
     """Run the pipeline and return the full result as one JSON-ready dict.
@@ -477,6 +495,7 @@ async def search_json_adapter(
                     source_types=source_types,
                     attachments=attachments,
                     history=history,
+                    rewrite=rewrite,
                 )
                 async for event, data in pipeline:
                     if event == "error":
