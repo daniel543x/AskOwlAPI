@@ -10,8 +10,8 @@ over POST.
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +22,16 @@ from ...modules.embedding.base import IEmbedder
 from ...modules.embedding.factory import get_optional_embedder
 from ...modules.identity.auth.security import require_scope
 from ...modules.identity.user.model import User
-from ...modules.llm_provider.dependency import get_llm_client
+from ...modules.jobs.factory import get_job_queue
+from ...modules.jobs.gates import (
+    GateBusy,
+    TurnResources,
+    acquire_gates,
+    provider_busy_detail,
+    release_gates,
+)
+from ...modules.jobs.model import Job
+from ...modules.llm_provider.dependency import get_llm_client, get_turn_resources
 from ...modules.owl_reranker.base import IRanker
 from ...modules.owl_reranker.factory import get_ranker
 from ...modules.scrapy.factory import get_scraper
@@ -33,7 +42,8 @@ from ...modules.search_engine.factory import (
 )
 from ...modules.search_engine.providers.base import ISearchProvider
 from ...modules.search_engine.source_types import ensure_source_types
-from ...tools.db import get_session
+from ...tools.db import engine, get_session
+from ...tools.settings import settings
 from .services.search import search_json_adapter, search_sse_adapter
 
 router = APIRouter(prefix="/ask", tags=["Asks"])
@@ -100,6 +110,13 @@ class SearchRequest(BaseModel):
             "own defaults; validated against GET /search/sources."
         ),
     )
+    background: bool = Field(
+        default=False,
+        description=(
+            "Run this turn as a background job (PR 12): responds 202 with "
+            "a job id; the answer is not streamed."
+        ),
+    )
     thinking: bool | None = Field(
         default=None,
         description=(
@@ -129,8 +146,23 @@ async def ask_search(
     user: User = Depends(_search_scope),
     session: AsyncSession = Depends(get_session),
     model: BaseChatModel = Depends(get_llm_client),
+    turn: TurnResources = Depends(get_turn_resources),
 ):
     ensure_source_types(request.source_types, declared_source_types)
+    if request.background:
+        return await _enqueue_search_turn(
+            request, model, searching, scraper, ranker, embedder,
+            decision_maker, user, turn,
+        )
+    if settings.BUSY_POLICY == "reject":
+        try:
+            await acquire_gates(turn.keys, timeout=0)
+        except GateBusy as e:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=provider_busy_detail(),
+            ) from e
+        release_gates(turn.keys)
     if request.stream:
         return StreamingResponse(
             search_sse_adapter(
@@ -150,6 +182,7 @@ async def ask_search(
                 scope=request.scope,
                 recency_bias=request.recency_bias,
                 source_types=request.source_types,
+                turn=turn,
             ),
             media_type="text/event-stream",
         )
@@ -171,5 +204,66 @@ async def ask_search(
         scope=request.scope,
         recency_bias=request.recency_bias,
         source_types=request.source_types,
+        turn=turn,
     )
     return {"answer": answer}
+
+
+async def _enqueue_search_turn(
+    request: SearchRequest,
+    model: BaseChatModel,
+    searching: ISearchProvider,
+    scraper: IScraper,
+    ranker: IRanker,
+    embedder: IEmbedder | None,
+    decision_maker: IDecisionMaker | None,
+    user: User,
+    turn: TurnResources,
+) -> JSONResponse:
+    """Auto-convert a busy foreground ask into a queued job (PR 12)."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    job = Job(
+        user_id=user.id,
+        kind="search",
+        payload={
+            "query": request.query,
+            "conversation_id": str(request.conversation_id)
+            if request.conversation_id
+            else None,
+        },
+    )
+
+    async def runner() -> str:
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            result = await search_json_adapter(
+                request.query,
+                searching,
+                model,
+                scraper,
+                ranker,
+                embedder=embedder,
+                session=session,
+                user_id=user.id,
+                conversation_id=request.conversation_id,
+                decision_maker=decision_maker,
+                max_urls=request.max_urls,
+                query_variations=request.query_variations,
+                cache=request.cache,
+                scope=request.scope,
+                recency_bias=request.recency_bias,
+                source_types=request.source_types,
+                turn=turn,
+            )
+        return (result.get("answer") or "")[:4000]
+
+    saved = await get_job_queue().submit(job, runner)
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content={
+            "job_id": str(saved.id),
+            "kind": saved.kind,
+            "status": saved.status,
+            "queue_position": saved.queue_position,
+        },
+    )

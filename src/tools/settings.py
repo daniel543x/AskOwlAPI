@@ -1,4 +1,5 @@
 import logging
+from typing import Literal
 
 from cryptography.fernet import Fernet
 from pydantic import Field, field_validator
@@ -160,6 +161,20 @@ class Settings(BaseSettings):
     # later). The `redis` package is an optional extra (`uv sync
     # --all-extras`); Redis failures degrade to memory, never crash.
     REDIS_URL: str = ""
+
+    # <----- Resource gates + job queue (PR 12 / decision 19) ----->
+    # What a foreground ask does when the model/search gate is busy:
+    # wait (bounded), background (auto-convert into a queued job), or
+    # reject (503 provider_busy). Ollama ships max_concurrency 1
+    # (GPU-bound, serial); other providers default to the value below.
+    BUSY_POLICY: Literal["wait", "background", "reject"] = "wait"
+    BUSY_WAIT_TIMEOUT_S: float = 120.0
+    DEFAULT_PROVIDER_MAX_CONCURRENCY: int = 2
+    # Background jobs: FIFO with per-user fairness (round-robin over
+    # pending jobs; no user may exceed the running cap).
+    JOB_PER_USER_RUNNING_CAP: int = 2
+    JOB_RETRY_DELAY_S: float = 5.0
+    JOB_MAX_RETRIES: int = 3
 
     # <----- Capability probe (PR 9 / decisions 11 + 20) ----->
     # Provider capability probes (e.g. Ollama /api/show) are cached via the

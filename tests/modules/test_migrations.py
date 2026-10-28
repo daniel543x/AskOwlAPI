@@ -37,6 +37,7 @@ EXPECTED_TABLES = {
     "searchproviderconfig",
     "user",
     "usermodelpreference",
+    "job",
     "userpreferences",
     "userrole",
 }

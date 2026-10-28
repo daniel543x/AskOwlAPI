@@ -9,13 +9,19 @@ import json
 import logging
 import time
 from collections.abc import AsyncGenerator
+from contextlib import nullcontext
 from typing import Any
 
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 from langchain_core.language_models import BaseChatModel
 
 from ....modules.chunk_store.repository import ChunkRepository
 from ....modules.embedding.base import IEmbedder
+from ....modules.jobs.gates import (
+    GateBusy,
+    TurnResources,
+    provider_busy_detail,
+)
 from ....modules.owl_reranker.base import IRanker
 from ....modules.scrapy.providers.base import IScraper
 from ....modules.search_engine.providers.base import ISearchProvider
@@ -196,6 +202,7 @@ async def research_sse_adapter(
     session=None,
     today: str | None = None,
     source_types: list[str] | None = None,
+    turn: TurnResources | None = None,
 ) -> AsyncGenerator[str]:
     """Translate research events into an SSE stream.
 
@@ -209,34 +216,47 @@ async def research_sse_adapter(
         event_id += 1
         return f"event: {event}\nid: {event_id}\ndata: {json.dumps(data)}\n\n"
 
-    pipeline = research_logic(
-        query, searching, model, scraper, ranker, embedder=embedder, session=session,
-        today=today, source_types=source_types,
-    )
-    async for event, data in pipeline:
-        if event == "answer_ready":
-            yield frame("status", {"step": "Writing research report..."})
+    try:
+        async with turn.gated() if turn is not None else nullcontext():
+            pipeline = research_logic(
+                query, searching, model, scraper, ranker, embedder=embedder,
+                session=session, today=today, source_types=source_types,
+            )
+            async for event, data in pipeline:
+                if event == "answer_ready":
+                    yield frame("status", {"step": "Writing research report..."})
 
-            if data["no_context"]:
-                yield frame("message", {"text": NO_CONTEXT_REPORT})
-                yield frame("done", {"status": "no_context"})
-                return
+                    if data["no_context"]:
+                        yield frame("message", {"text": NO_CONTEXT_REPORT})
+                        yield frame("done", {"status": "no_context"})
+                        return
 
-            try:
-                report = stream_report(
-                    model, data["query"], data["gathered"], today=today
-                )
-                async for delta in report:
-                    yield frame("message", {"text": delta})
-                yield frame("done", {"status": "completed"})
-            except ToolProtocolError as e:
-                logger.exception("Report streaming failed for query: %s", query)
-                yield frame("error", {"error": str(e)})
-            except Exception as e:
-                logger.exception("Report streaming failed for query: %s", query)
-                yield frame("error", {"error": f"Report generation failed: {str(e)}"})
-            return
-        yield frame(event, data)
+                    try:
+                        report = stream_report(
+                            model, data["query"], data["gathered"], today=today
+                        )
+                        async for delta in report:
+                            yield frame("message", {"text": delta})
+                        yield frame("done", {"status": "completed"})
+                    except ToolProtocolError as e:
+                        logger.exception(
+                            "Report streaming failed for query: %s", query
+                        )
+                        yield frame("error", {"error": str(e)})
+                    except Exception as e:
+                        logger.exception(
+                            "Report streaming failed for query: %s", query
+                        )
+                        yield frame(
+                            "error",
+                            {"error": f"Report generation failed: {str(e)}"},
+                        )
+                    return
+                yield frame(event, data)
+    except GateBusy:
+        logger.info("Research turn rejected: resource gates busy (query: %s).", query)
+        yield frame("error", provider_busy_detail())
+        return
 
 
 async def agent_sse_adapter(
@@ -245,8 +265,13 @@ async def agent_sse_adapter(
     toolbox: AskToolbox,
     budget: Budget,
     persona=None,
+    turn: TurnResources | None = None,
 ) -> AsyncGenerator[str]:
-    """Translate agent-loop events into an SSE stream."""
+    """Translate agent-loop events into an SSE stream.
+
+    `turn` (PR 12) gates the whole loop; a busy gate past the bounded
+    wait surfaces as a coded ``error`` event.
+    """
     event_id = 0
 
     def frame(event: str, data: dict[str, Any]) -> str:
@@ -254,8 +279,16 @@ async def agent_sse_adapter(
         event_id += 1
         return f"event: {event}\nid: {event_id}\ndata: {json.dumps(data)}\n\n"
 
-    async for event, data in agent_logic(goal, model, toolbox, budget, persona):
-        yield frame(event, data)
+    try:
+        async with turn.gated() if turn is not None else nullcontext():
+            async for event, data in agent_logic(
+                goal, model, toolbox, budget, persona
+            ):
+                yield frame(event, data)
+    except GateBusy:
+        logger.info("Agent turn rejected: resource gates busy (goal: %s).", goal)
+        yield frame("error", provider_busy_detail())
+        return
 
 
 async def research_json_adapter(
@@ -268,53 +301,68 @@ async def research_json_adapter(
     session=None,
     today: str | None = None,
     source_types: list[str] | None = None,
+    turn: TurnResources | None = None,
 ) -> dict[str, Any]:
     """Run the research pipeline and return the full result as one dict."""
     answer_data: dict[str, Any] | None = None
     error_detail: str | None = None
 
-    pipeline = research_logic(
-        query, searching, model, scraper, ranker, embedder=embedder, session=session,
-        today=today, source_types=source_types,
-    )
-    async for event, data in pipeline:
-        if event == "error":
-            error_detail = data.get("error", "Failed to execute research logic.")
-            break
-        if event == "answer_ready":
-            answer_data = data
-            break
-
-    if error_detail:
-        raise HTTPException(status_code=500, detail=error_detail)
-
-    if answer_data is None:
-        raise HTTPException(
-            status_code=500,
-            detail="No research data produced (no page content could be extracted).",
-        )
-
-    if answer_data["no_context"]:
-        report = NO_CONTEXT_REPORT
-    else:
-        try:
-            report = await generate_report(
-                model, answer_data["query"], answer_data["gathered"], today
+    try:
+        async with turn.gated() if turn is not None else nullcontext():
+            pipeline = research_logic(
+                query, searching, model, scraper, ranker, embedder=embedder,
+                session=session, today=today, source_types=source_types,
             )
-        except ToolProtocolError as e:
-            raise HTTPException(
-                status_code=502,
-                detail=f"{e} The model must support tool calling.",
-            ) from e
-        except Exception as e:
-            logger.exception("Report generation failed for query: %s", query)
-            raise HTTPException(
-                status_code=500, detail=f"Report generation failed: {str(e)}"
-            ) from e
+            async for event, data in pipeline:
+                if event == "error":
+                    error_detail = data.get(
+                        "error", "Failed to execute research logic."
+                    )
+                    break
+                if event == "answer_ready":
+                    answer_data = data
+                    break
 
-    return {
-        "query": answer_data["query"],
-        "subquestions": answer_data["subquestions"],
-        "gathered": answer_data["gathered"],
-        "report": report,
-    }
+            if error_detail:
+                raise HTTPException(status_code=500, detail=error_detail)
+
+            if answer_data is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "No research data produced "
+                        "(no page content could be extracted)."
+                    ),
+                )
+
+            if answer_data["no_context"]:
+                report = NO_CONTEXT_REPORT
+            else:
+                try:
+                    report = await generate_report(
+                        model, answer_data["query"], answer_data["gathered"], today
+                    )
+                except ToolProtocolError as e:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"{e} The model must support tool calling.",
+                    ) from e
+                except Exception as e:
+                    logger.exception("Report generation failed for query: %s", query)
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Report generation failed: {str(e)}",
+                    ) from e
+
+            return {
+                "query": answer_data["query"],
+                "subquestions": answer_data["subquestions"],
+                "gathered": answer_data["gathered"],
+                "report": report,
+            }
+    except GateBusy as e:
+        logger.info("Research turn rejected: resource gates busy (query: %s).", query)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=provider_busy_detail(),
+        ) from e

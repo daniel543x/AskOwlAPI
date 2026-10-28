@@ -138,8 +138,20 @@ class ModelRepository:
             effort_levels=list(entry.effort_levels or []),
             vector_dims=entry.vector_dims,
             entry_id=entry.id,
+            provider_id=provider.id if provider else None,
+            max_concurrency=self._provider_concurrency(provider),
             source=tier,
         )
+
+    @staticmethod
+    def _provider_concurrency(provider: ModelProvider | None) -> int:
+        if provider is None:
+            return 1
+        if provider.max_concurrency:
+            return provider.max_concurrency
+        if provider.provider_type.lower() == "ollama":
+            return 1
+        return settings.DEFAULT_PROVIDER_MAX_CONCURRENCY
 
     def _builtin_model(self, kind: str) -> ResolvedModel | None:
         """Built-in local defaults, used when the catalog has nothing."""

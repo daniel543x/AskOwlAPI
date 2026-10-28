@@ -12,13 +12,18 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, nullcontext
 from typing import Any
 
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 from langchain_core.language_models import BaseChatModel
 
 from ....modules.chunk_store.repository import ChunkRepository
 from ....modules.embedding.base import IEmbedder
 from ....modules.history.model import Conversation
 from ....modules.history.repository import HistoryRepository
+from ....modules.jobs.gates import (
+    GateBusy,
+    TurnResources,
+    provider_busy_detail,
+)
 from ....modules.owl_reranker.base import IRanker
 from ....modules.scrapy.providers.base import IScraper
 from ....modules.search_engine.providers.base import ISearchProvider
@@ -251,6 +256,7 @@ async def search_sse_adapter(
     recency_bias: float = 0.0,
     today: str | None = None,
     source_types: list[str] | None = None,
+    turn: TurnResources | None = None,
 ) -> AsyncGenerator[str]:
     """Translate pipeline events into an SSE stream (protocol v2).
 
@@ -260,6 +266,11 @@ async def search_sse_adapter(
     With `session` and `user_id`, the turn is persisted to the caller's
     conversation (`conversation_id`, or a new conversation when omitted);
     prior turns are injected as chat history into the answer step.
+
+    `turn` (PR 12) holds the resource gates for the whole stream: the
+    first frame is delayed until the gates free up, and a busy gate that
+    outlasts the bounded wait surfaces as an ``error`` event with the
+    coded ``provider_busy`` body.
     """
     event_id = 0
 
@@ -268,69 +279,88 @@ async def search_sse_adapter(
         event_id += 1
         return _sse_frame(event_id, event, data)
 
-    try:
-        conversation, history, created = await _resolve_conversation(
-            session, user_id, conversation_id, query
-        )
-    except KeyError:
-        yield frame("error", {"error": "Conversation not found."})
-        return
-    if conversation is not None:
-        yield frame(
-            "conversation",
-            {"conversation_id": str(conversation.id), "created": created},
-        )
+    async def _sse_body():
+        try:
+            conversation, history, created = await _resolve_conversation(
+                session, user_id, conversation_id, query
+            )
+        except KeyError:
+            yield frame("error", {"error": "Conversation not found."})
+            return
+        if conversation is not None:
+            yield frame(
+                "conversation",
+                {"conversation_id": str(conversation.id), "created": created},
+            )
 
-    bypass = cache == "bypass"
-    with cache_bypass() if bypass else nullcontext():
-        async for event, data in search_logic(
-            query, searching, model, scraper, ranker, embedder=embedder,
-            session=session, decision_maker=decision_maker, max_urls=max_urls,
-            query_variations=query_variations,
-            scope=scope, recency_bias=recency_bias,
-            conversation_id=conversation.id if conversation is not None else None,
-            today=today,
-            source_types=source_types,
-        ):
-            if event == "answer_ready":
-                yield frame("status", {"step": "Generating answer..."})
+        bypass = cache == "bypass"
+        with cache_bypass() if bypass else nullcontext():
+            async for event, data in search_logic(
+                query, searching, model, scraper, ranker, embedder=embedder,
+                session=session, decision_maker=decision_maker, max_urls=max_urls,
+                query_variations=query_variations,
+                scope=scope, recency_bias=recency_bias,
+                conversation_id=conversation.id if conversation is not None else None,
+                today=today,
+                source_types=source_types,
+            ):
+                if event == "answer_ready":
+                    yield frame("status", {"step": "Generating answer..."})
 
-                answer_parts: list[str] = []
-                try:
-                    async for kind, delta in _stream_answer_frames(
-                        data["query"], data["context"], model, history, today
-                    ):
-                        if kind == "thinking":
-                            yield frame("thinking", {"text": delta})
-                            continue
-                        answer_parts.append(delta)
-                        yield frame("message", {"text": delta})
+                    answer_parts: list[str] = []
+                    try:
+                        async for kind, delta in _stream_answer_frames(
+                            data["query"], data["context"], model, history, today
+                        ):
+                            if kind == "thinking":
+                                yield frame("thinking", {"text": delta})
+                                continue
+                            answer_parts.append(delta)
+                            yield frame("message", {"text": delta})
 
-                    answer_text = "".join(answer_parts)
-                    await _save_turn(session, conversation, data["query"], answer_text)
-
-                    if settings.PRE_SCORE_GROUNDING_CHECK and decision_maker:
-                        supported = await grounding_confidence(
-                            decision_maker, data["query"], data["context"], answer_text
+                        answer_text = "".join(answer_parts)
+                        await _save_turn(
+                            session, conversation, data["query"], answer_text
                         )
-                        if supported is not None:
-                            yield frame("grounding", {"supported": round(supported, 4)})
 
-                    if not data["context"].strip():
-                        yield frame("done", {"status": "no_context"})
-                    else:
-                        yield frame("done", {"status": "completed"})
-                except ToolProtocolError as e:
-                    logger.exception("Answer streaming failed for query: %s", query)
-                    yield frame("error", {"error": str(e)})
-                except Exception as e:
-                    logger.exception("Answer streaming failed for query: %s", query)
-                    yield frame(
-                        "error", {"error": f"Answer generation failed: {str(e)}"}
-                    )
-                return
-            else:
-                yield frame(event, data)
+                        if settings.PRE_SCORE_GROUNDING_CHECK and decision_maker:
+                            supported = await grounding_confidence(
+                                decision_maker, data["query"], data["context"],
+                                answer_text,
+                            )
+                            if supported is not None:
+                                yield frame(
+                                    "grounding", {"supported": round(supported, 4)}
+                                )
+
+                        if not data["context"].strip():
+                            yield frame("done", {"status": "no_context"})
+                        else:
+                            yield frame("done", {"status": "completed"})
+                    except ToolProtocolError as e:
+                        logger.exception(
+                            "Answer streaming failed for query: %s", query
+                        )
+                        yield frame("error", {"error": str(e)})
+                    except Exception as e:
+                        logger.exception(
+                            "Answer streaming failed for query: %s", query
+                        )
+                        yield frame(
+                            "error", {"error": f"Answer generation failed: {str(e)}"}
+                        )
+                    return
+                else:
+                    yield frame(event, data)
+
+    try:
+        async with turn.gated() if turn is not None else nullcontext():
+            async for item in _sse_body():
+                yield item
+    except GateBusy:
+        logger.info("Search turn rejected: resource gates busy (query: %s).", query)
+        yield frame("error", provider_busy_detail())
+        return
 
 
 # <----- JSON Adapter ----->
@@ -352,6 +382,7 @@ async def search_json_adapter(
     recency_bias: float = 0.0,
     today: str | None = None,
     source_types: list[str] | None = None,
+    turn: TurnResources | None = None,
 ) -> dict[str, Any]:
     """Run the pipeline and return the full result as one JSON-ready dict.
 
@@ -367,24 +398,36 @@ async def search_json_adapter(
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
-    bypass = cache == "bypass"
-    with cache_bypass() if bypass else nullcontext():
-        pipeline = search_logic(
-            query, searching, model, scraper, ranker, embedder=embedder,
-            session=session, decision_maker=decision_maker, max_urls=max_urls,
-            query_variations=query_variations,
-            scope=scope, recency_bias=recency_bias,
-            conversation_id=conversation.id if conversation is not None else None,
-            today=today,
-            source_types=source_types,
-        )
-        async for event, data in pipeline:
-            if event == "error":
-                error_detail = data.get("error", "Failed to execute search logic.")
-                break
-            if event == "answer_ready":
-                answer_data = data
-                break
+    try:
+        async with turn.gated() if turn is not None else nullcontext():
+            bypass = cache == "bypass"
+            with cache_bypass() if bypass else nullcontext():
+                pipeline = search_logic(
+                    query, searching, model, scraper, ranker, embedder=embedder,
+                    session=session, decision_maker=decision_maker, max_urls=max_urls,
+                    query_variations=query_variations,
+                    scope=scope, recency_bias=recency_bias,
+                    conversation_id=(
+                        conversation.id if conversation is not None else None
+                    ),
+                    today=today,
+                    source_types=source_types,
+                )
+                async for event, data in pipeline:
+                    if event == "error":
+                        error_detail = data.get(
+                            "error", "Failed to execute search logic."
+                        )
+                        break
+                    if event == "answer_ready":
+                        answer_data = data
+                        break
+    except GateBusy as e:
+        logger.info("Search turn rejected: resource gates busy (query: %s).", query)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=provider_busy_detail(),
+        ) from e
 
     if error_detail:
         raise HTTPException(status_code=500, detail=error_detail)
