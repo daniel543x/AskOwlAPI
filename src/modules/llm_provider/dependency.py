@@ -13,10 +13,14 @@ import uuid
 from fastapi import Depends, HTTPException, Query, Request, status
 from langchain_core.language_models import BaseChatModel
 
+from ...tools.settings import settings
 from ..identity.auth.security import get_current_user
 from ..identity.user.model import User
+from ..jobs.gates import GateKey, TurnResources, model_gate, search_gate
 from ..profile.factory import get_optional_user_preferences
 from ..profile.model import UserPreferences
+from ..search_engine.factory import get_search_provider
+from ..search_engine.providers.base import ISearchProvider
 from .capability_probe import effective_reasoning_state
 from .factory import ChatModelFactory, get_llm_factory
 from .model import ModelKind
@@ -155,3 +159,38 @@ async def get_llm_client(
         effort=effort,
         profile=profile,
     )
+
+
+async def get_turn_resources(
+    repo: ModelRepository = Depends(get_repository),
+    user: User = Depends(get_current_user),
+    request_model_id: uuid.UUID | None = Query(default=None, alias="model_id"),
+    profile: UserPreferences | None = Depends(get_optional_user_preferences),
+    searching: ISearchProvider = Depends(get_search_provider),
+) -> TurnResources:
+    """The gates one ask turn must hold: model + search (PR 12).
+
+    Resolves the same model the LLM dependency resolves (request >
+    profile > preference > default) to key the model gate; the search
+    gate is keyed per provider config. Only gate identity is computed
+    here — acquisition happens at the turn boundary in the adapters.
+    """
+    resolved = await repo.resolve_model(
+        kind=ModelKind.CHAT.value,
+        user_id=user.id,
+        user_roles=_user_role_names(user),
+        requested_model_id=request_model_id,
+        profile_model_id=profile.default_model_id if profile else None,
+    )
+    keys: list[GateKey] = [
+        model_gate(resolved.provider_id, resolved.max_concurrency),
+        search_gate(
+            getattr(searching, "search_resource_id", None),
+            getattr(
+                searching,
+                "search_max_concurrency",
+                settings.DEFAULT_PROVIDER_MAX_CONCURRENCY,
+            ),
+        ),
+    ]
+    return TurnResources(keys=keys)

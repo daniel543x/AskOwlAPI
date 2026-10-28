@@ -258,7 +258,7 @@ the same ask-router / SSE-doc files — rebase before merging.
   - `GET /search/sources` → types of active/selected provider; ask body gains
     `source_types: []` (validated, unknown → 422; empty = provider default).
   - Personas: `allowed_source_types` intersection left as backlog (v1: provider defaults).
-- [ ] **PR 12 `client/queue`** — provider-aware resource gates + job queue (round 4:
+- [x] **PR 12 `client/queue`** — provider-aware resource gates + job queue (round 4:
       cache × inbox × queue; consumes PR 2's ICache).
   - `ResourceGate`: per-resource async semaphore keyed `model:<provider_id>`,
     `search:<provider_id>`, `ggdeals`, …; per-provider `max_concurrency` in provider

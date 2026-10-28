@@ -69,6 +69,9 @@ class ModelProvider(SQLModel, table=True):
     api_key_encrypted: str | None = Field(default=None)
 
     is_active: bool = Field(default=True)
+    # Resource-gate size (PR 12 / decision 19). NULL = type default:
+    # Ollama ships 1 (GPU-bound, serial); others use the settings default.
+    max_concurrency: int | None = Field(default=None)
     health_status: str = Field(default=ProviderHealth.UNKNOWN.value)
     last_probe_at: datetime | None = Field(
         default=None, sa_type=DateTime(timezone=True)

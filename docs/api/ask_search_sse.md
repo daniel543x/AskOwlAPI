@@ -12,6 +12,10 @@ to `QUERY_VARIATIONS_MAX`.
 `cache` (`"on"` | `"bypass"`, default `"on"`) — `"bypass"` forces fresh
 search + scrape for this turn (evals, admin debugging); a cache hit is
 otherwise invisible except latency.
+`background` (`bool`, default `false`) — run the turn as a background
+job (PR 12): responds `202` with `{job_id, kind, status, queue_position}`;
+the answer is never streamed. Jobs run FIFO with per-user fairness
+(decision 19); the InBox routes arrive in PR 13.
 `thinking` (`bool | null`, default `null`) — reasoning-mode control
 (decision 11): `null` = model default; requesting it on a model without
 the `thinking` capability is a 422 (`model_lacks_thinking`).
@@ -160,6 +164,16 @@ The LLM is never used without a tool call:
   (HTTP 422 with an explanation).
 
 ## Changelog
+
+### v2.10 (2026-10-28, PR 12 — additive)
+
+- Added: `background` request parameter on ask routes — busy foreground
+  turns can auto-convert into queued jobs (`202 {job_id, ...}`). Every
+  LLM/search call passes per-resource gates (`model:<provider>`,
+  `search:<config>`); `BUSY_POLICY=reject` surfaces a coded 503
+  `provider_busy` body.
+- Rate-limit responses from providers are honored (Retry-After) when
+  retrying background jobs.
 
 ### v2.9 (2026-10-28, PR 11 — additive)
 

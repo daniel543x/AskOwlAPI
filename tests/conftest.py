@@ -30,6 +30,7 @@ from src.modules.identity.auth.model import RefreshToken  # noqa: E402, F401
 from src.modules.identity.role.model import Role, UserRole  # noqa: E402, F401
 from src.modules.identity.role.service import init_roles  # noqa: E402
 from src.modules.identity.user.model import User  # noqa: E402, F401
+from src.modules.jobs.model import Job  # noqa: E402, F401
 from src.modules.llm_provider.model import (  # noqa: E402, F401
     DefaultSettings,
     ModelCatalogEntry,

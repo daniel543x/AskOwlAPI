@@ -144,7 +144,15 @@ class SearchProviderFactory:
         if provider_type not in cls._providers:
             raise ValueError(f"Unsupported provider type: {provider_type}")
 
-        return cls._provider_for(provider_type, settings_to_apply)
+        provider = cls._provider_for(provider_type, settings_to_apply)
+        # Resource-gate identity (PR 12): the search gate is keyed per
+        # provider config; concurrency comes from the settings blob.
+        provider.search_resource_id = str(config.id) if config else None
+        provider.search_max_concurrency = int(
+            (config.settings.get("max_concurrency") if config else None)
+            or settings.DEFAULT_PROVIDER_MAX_CONCURRENCY
+        )
+        return provider
 
 
 # Dependency

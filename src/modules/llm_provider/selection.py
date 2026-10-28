@@ -44,6 +44,9 @@ class ResolvedModel:
     effort_levels: list[str] = field(default_factory=list)
     vector_dims: int | None = None
     entry_id: uuid.UUID | None = None
+    # Resource-gate identity (PR 12): the model gate is keyed per provider.
+    provider_id: uuid.UUID | None = None
+    max_concurrency: int = 1
     source: str = TIER_DEFAULT
 
 

@@ -10,8 +10,8 @@ share the ask pipeline's dependency wiring.
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -25,7 +25,16 @@ from ...modules.identity.auth.security import (
     require_scope,
 )
 from ...modules.identity.user.model import User
-from ...modules.llm_provider.dependency import get_llm_client
+from ...modules.jobs.factory import get_job_queue
+from ...modules.jobs.gates import (
+    GateBusy,
+    TurnResources,
+    acquire_gates,
+    provider_busy_detail,
+    release_gates,
+)
+from ...modules.jobs.model import Job
+from ...modules.llm_provider.dependency import get_llm_client, get_turn_resources
 from ...modules.owl_reranker.base import IRanker
 from ...modules.owl_reranker.factory import get_ranker
 from ...modules.personas.repository import PersonaRepository
@@ -37,7 +46,8 @@ from ...modules.search_engine.factory import (
 )
 from ...modules.search_engine.providers.base import ISearchProvider
 from ...modules.search_engine.source_types import ensure_source_types
-from ...tools.db import get_session
+from ...tools.db import engine, get_session
+from ...tools.settings import settings
 from ..tools.toolbox import AskToolbox
 from .services.pipeline import (
     agent_sse_adapter,
@@ -69,8 +79,25 @@ async def ask_research(
     embedder: IEmbedder | None = Depends(get_optional_embedder),
     session: AsyncSession = Depends(get_session),
     source_types: list[str] = Query(default=[]),
+    turn: TurnResources = Depends(get_turn_resources),
+    background: bool = Query(default=False),
+    user: User = Depends(get_current_elevated_user),
 ):
     ensure_source_types(source_types, declared_source_types)
+    if background:
+        return await _enqueue_research_turn(
+            query, searching, model, scraper, ranker, embedder,
+            session, user, source_types, turn,
+        )
+    if settings.BUSY_POLICY == "reject":
+        try:
+            await acquire_gates(turn.keys, timeout=0)
+        except GateBusy as e:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=provider_busy_detail(),
+            ) from e
+        release_gates(turn.keys)
     if stream:
         return StreamingResponse(
             research_sse_adapter(
@@ -82,6 +109,7 @@ async def ask_research(
                 embedder=embedder,
                 session=session,
                 source_types=source_types,
+                turn=turn,
             ),
             media_type="text/event-stream",
         )
@@ -95,6 +123,7 @@ async def ask_research(
         embedder=embedder,
         session=session,
         source_types=source_types,
+        turn=turn,
     )
 
 
@@ -120,6 +149,7 @@ async def ask_agent(
     session: AsyncSession = Depends(get_session),
     declared_source_types: list[str] = Depends(get_declared_source_types),
     source_types: list[str] = Query(default=[]),
+    turn: TurnResources = Depends(get_turn_resources),
 ):
     ensure_source_types(source_types, declared_source_types)
     persona = None
@@ -148,6 +178,51 @@ async def ask_agent(
             toolbox,
             make_budget(persona.default_parameters if persona else None),
             persona=persona,
+            turn=turn,
         ),
         media_type="text/event-stream",
+    )
+
+
+async def _enqueue_research_turn(
+    query: str,
+    searching: ISearchProvider,
+    model: BaseChatModel,
+    scraper: IScraper,
+    ranker: IRanker,
+    embedder: IEmbedder | None,
+    session: AsyncSession,
+    user: User,
+    source_types: list[str],
+    turn: TurnResources,
+) -> JSONResponse:
+    """Auto-convert a busy foreground research run into a job (PR 12)."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    job = Job(user_id=user.id, kind="research", payload={"query": query})
+
+    async def runner() -> str:
+        async with AsyncSession(engine, expire_on_commit=False) as job_session:
+            result = await research_json_adapter(
+                query,
+                searching,
+                model,
+                scraper,
+                ranker,
+                embedder=embedder,
+                session=job_session,
+                source_types=source_types,
+                turn=turn,
+            )
+        return (result.get("report") or "")[:4000]
+
+    saved = await get_job_queue().submit(job, runner)
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content={
+            "job_id": str(saved.id),
+            "kind": saved.kind,
+            "status": saved.status,
+            "queue_position": saved.queue_position,
+        },
     )
