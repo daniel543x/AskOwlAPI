@@ -9,23 +9,21 @@ share the ask pipeline's dependency wiring.
 """
 
 import uuid
-from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
-from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.core.ask.services.search import _resolve_conversation, _save_turn
 from src.core.research.services.agent import agent_logic
 
+from ...core.ask.services.contracts import AskBody
 from ...modules.attachments.service import (
     ensure_vision,
     fetch_image_blobs,
     resolve_for_ask,
 )
-from ...modules.chunk_store.repository import ChunkRepository
 from ...modules.decision.base import IDecisionMaker
 from ...modules.decision.factory import get_optional_decision_maker
 from ...modules.embedding.base import IEmbedder
@@ -62,7 +60,6 @@ from ...tools.db import engine, get_session
 from ...tools.settings import settings
 from ..tools.toolbox import AskToolbox
 from .services.pipeline import (
-    agent_sse_adapter,
     make_budget,
     research_json_adapter,
     research_sse_adapter,
@@ -81,7 +78,7 @@ def get_note_store(
     )
 
 
-@router.get(
+@router.post(
     "/research",
     dependencies=[
         Depends(get_current_elevated_user),
@@ -89,10 +86,7 @@ def get_note_store(
     ],
 )
 async def ask_research(
-    query: str = Query(..., description="User query."),
-    stream: bool = Query(
-        True, description="Enable/Disable streaming response. Default True."
-    ),
+    body: ResearchBody,
     searching: ISearchProvider = Depends(get_search_provider),
     declared_source_types: list[str] = Depends(get_declared_source_types),
     model: BaseChatModel = Depends(get_llm_client),
@@ -100,32 +94,26 @@ async def ask_research(
     ranker: IRanker = Depends(get_ranker),
     embedder: IEmbedder | None = Depends(get_optional_embedder),
     session: AsyncSession = Depends(get_session),
-    source_types: list[str] = Query(default=[]),
     turn: TurnResources = Depends(get_turn_resources),
-    background: bool = Query(default=False),
     user: User = Depends(get_current_elevated_user),
-    attachment_ids: list[uuid.UUID] = Query(default=[]),
     note_store: NoteStore = Depends(get_note_store),
 ):
     return await _research_turn(
-        query, stream, searching, declared_source_types, model, scraper,
-        ranker, embedder, session, source_types, turn, background, user,
-        attachment_ids, note_store, scout=False, reflect=False,
+        body, searching, declared_source_types, model, scraper,
+        ranker, embedder, session, turn, user, note_store,
+        scout=False, reflect=False,
     )
 
 
-@router.get(
+@router.post(
     "/deep_research",
     dependencies=[
         Depends(get_current_elevated_user),
-        Depends(require_scope("research")),
+        Depends(require_scope("deep_research", legacy_aliases=("agent",))),
     ],
 )
 async def ask_deep_research(
-    query: str = Query(..., description="Research goal (v1 name: agent)."),
-    stream: bool = Query(
-        True, description="Enable/Disable streaming response. Default True."
-    ),
+    body: ResearchBody,
     searching: ISearchProvider = Depends(get_search_provider),
     declared_source_types: list[str] = Depends(get_declared_source_types),
     model: BaseChatModel = Depends(get_llm_client),
@@ -133,39 +121,33 @@ async def ask_deep_research(
     ranker: IRanker = Depends(get_ranker),
     embedder: IEmbedder | None = Depends(get_optional_embedder),
     session: AsyncSession = Depends(get_session),
-    source_types: list[str] = Query(default=[]),
     turn: TurnResources = Depends(get_turn_resources),
-    background: bool = Query(default=False),
     user: User = Depends(get_current_elevated_user),
-    attachment_ids: list[uuid.UUID] = Query(default=[]),
     note_store: NoteStore = Depends(get_note_store),
 ):
     """The deep-research preset (PR 19): scout + reflect + notes.
 
-    High budget via the shared Budget; renamed from `agent` in v3
-    (PR 21). The old `/ask/agent` loop stays as a deprecated alias.
+    High budget via the shared Budget; renamed from `agent` at protocol
+    v3 (this PR removed the `/ask/agent` alias).
     """
     return await _research_turn(
-        query, stream, searching, declared_source_types, model, scraper,
-        ranker, embedder, session, source_types, turn, background, user,
-        attachment_ids, note_store, scout=True, reflect=True,
+        body, searching, declared_source_types, model, scraper,
+        ranker, embedder, session, turn, user, note_store,
+        scout=True, reflect=True,
     )
 
 
-class PersonaAskRequest(BaseModel):
-    """Body of POST /ask/persona (PR 20 / decision 10)."""
-
-    query: str
-    persona_id: uuid.UUID  # required: missing = 422 by schema
-    depth: Literal["quick", "research", "deep"] | None = None
-    stream: bool = True
-    background: bool = False
-    attachment_ids: list[uuid.UUID] = []
-    source_types: list[str] = []
-    conversation_id: uuid.UUID | None = None
+class ResearchBody(AskBody):
+    """Body of POST /ask/research and /ask/deep_research (protocol v3)."""
 
 
-def _resolve_depth(request: PersonaAskRequest, persona) -> str:
+class PersonaBody(AskBody):
+    """Body of POST /ask/persona: the v3 base + required persona_id."""
+
+    persona_id: uuid.UUID
+
+
+def _resolve_depth(request: PersonaBody, persona) -> str:
     """Request > persona.default_parameters > settings default (clamped)."""
     if request.depth:
         return request.depth
@@ -179,11 +161,11 @@ def _resolve_depth(request: PersonaAskRequest, persona) -> str:
     "/persona",
     dependencies=[
         Depends(get_current_elevated_user),
-        Depends(require_scope("agent")),
+        Depends(require_scope("persona", legacy_aliases=("agent",))),
     ],
 )
 async def ask_persona(
-    request: PersonaAskRequest,
+    request: PersonaBody,
     searching: ISearchProvider = Depends(get_search_provider),
     declared_source_types: list[str] = Depends(get_declared_source_types),
     model: BaseChatModel = Depends(get_llm_client),
@@ -300,7 +282,7 @@ async def ask_persona(
 
 
 async def _persona_quick_turn(
-    request: PersonaAskRequest,
+    request: PersonaBody,
     persona,
     model: BaseChatModel,
     searching: ISearchProvider,
@@ -378,8 +360,7 @@ async def _persona_quick_turn(
 
 
 async def _research_turn(
-    query: str,
-    stream: bool,
+    body: ResearchBody,
     searching: ISearchProvider,
     declared_source_types: list[str],
     model: BaseChatModel,
@@ -387,18 +368,15 @@ async def _research_turn(
     ranker: IRanker,
     embedder: IEmbedder | None,
     session: AsyncSession,
-    source_types: list[str],
     turn: TurnResources,
-    background: bool,
     user: User,
-    attachment_ids: list[uuid.UUID],
     note_store: NoteStore,
     scout: bool,
     reflect: bool,
 ):
-    ensure_source_types(source_types, declared_source_types)
+    ensure_source_types(body.source_types, declared_source_types)
     attachments = await resolve_for_ask(
-        session, user.id, None, attachment_ids,
+        session, user.id, None, body.attachment_ids,
         require_same_conversation=False,
     )
     ensure_vision(turn.model_capabilities, attachments)
@@ -409,10 +387,10 @@ async def _research_turn(
         {"id": a.id, "filename": a.filename, "conversation_id": a.conversation_id}
         for a in attachments
     ]
-    if background:
+    if body.background:
         return await _enqueue_research_turn(
-            query, searching, model, scraper, ranker, embedder,
-            session, user, source_types, turn, att_dicts, images,
+            body.query, searching, model, scraper, ranker, embedder,
+            session, user, body.source_types, turn, att_dicts, images,
             scout=scout, reflect=reflect,
         )
     if settings.BUSY_POLICY == "reject":
@@ -424,17 +402,17 @@ async def _research_turn(
                 detail=provider_busy_detail(),
             ) from e
         release_gates(turn.keys)
-    if stream:
+    if body.stream:
         return StreamingResponse(
             research_sse_adapter(
-                query,
+                body.query,
                 searching,
                 model,
                 scraper,
                 ranker,
                 embedder=embedder,
                 session=session,
-                source_types=source_types,
+                source_types=body.source_types,
                 attachments=att_dicts,
                 images=images,
                 note_store=note_store,
@@ -446,98 +424,20 @@ async def _research_turn(
         )
 
     return await research_json_adapter(
-        query,
+        body.query,
         searching,
         model,
         scraper,
         ranker,
         embedder=embedder,
         session=session,
-        source_types=source_types,
+        source_types=body.source_types,
         attachments=att_dicts,
         images=images,
         note_store=note_store,
         scout=scout,
         reflect=reflect,
         turn=turn,
-    )
-
-
-@router.get(
-    "/agent",
-    dependencies=[
-        Depends(get_current_elevated_user),
-        Depends(require_scope("agent")),
-    ],
-    deprecated=True,
-    description=(
-        "Deprecated: use /ask/deep_research (the deep-research preset). "
-        "This free agent loop is kept temporarily and removed at protocol "
-        "v3."
-    ),
-)
-async def ask_agent(
-    goal: str = Query(..., description="Goal the agent should accomplish."),
-    persona_id: uuid.UUID | None = Query(
-        default=None, description="Persona constraining the agent (own only)."
-    ),
-    searching: ISearchProvider = Depends(get_search_provider),
-    model: BaseChatModel = Depends(get_llm_client),
-    scraper: IScraper = Depends(get_scraper),
-    ranker: IRanker = Depends(get_ranker),
-    embedder: IEmbedder | None = Depends(get_optional_embedder),
-    decision_maker: IDecisionMaker | None = Depends(get_optional_decision_maker),
-    user: User = Depends(get_current_elevated_user),
-    session: AsyncSession = Depends(get_session),
-    declared_source_types: list[str] = Depends(get_declared_source_types),
-    source_types: list[str] = Query(default=[]),
-    turn: TurnResources = Depends(get_turn_resources),
-    attachment_ids: list[uuid.UUID] = Query(default=[]),
-):
-    ensure_source_types(source_types, declared_source_types)
-    agent_refs = await resolve_for_ask(
-        session, user.id, None, attachment_ids,
-        require_same_conversation=False,
-    )
-    ensure_vision(turn.model_capabilities, agent_refs)
-    agent_images = await fetch_image_blobs(
-        session, agent_refs, settings.ATTACHMENT_MAX_IMAGES
-    )
-    agent_attachments = [
-        {"id": a.id, "filename": a.filename, "conversation_id": a.conversation_id}
-        for a in agent_refs
-    ]
-    persona = None
-    if persona_id is not None:
-        persona = await PersonaRepository(session).get_for_user(user.id, persona_id)
-        if persona is None:
-            raise HTTPException(status_code=404, detail="Persona not found.")
-
-    chunk_repo = ChunkRepository(session) if session is not None else None
-    toolbox = AskToolbox(
-        searching,
-        scraper,
-        ranker,
-        embedder,
-        chunk_repo,
-        allowed_domains=persona.allowed_domains if persona else None,
-        allowed_engines=persona.allowed_engines if persona else None,
-        decision_maker=decision_maker,
-        source_types=source_types,
-        attachments=agent_attachments,
-    )
-
-    return StreamingResponse(
-        agent_sse_adapter(
-            goal,
-            model,
-            toolbox,
-            make_budget(persona.default_parameters if persona else None),
-            persona=persona,
-            images=agent_images,
-            turn=turn,
-        ),
-        media_type="text/event-stream",
     )
 
 

@@ -93,7 +93,7 @@ async def make_user_with_role(
 
 @pytest.mark.asyncio
 async def test_research_requires_authentication(auth_client):
-    response = await auth_client.get("/ask/research", params={"query": "rust"})
+    response = await auth_client.post("/ask/research", json={"query": "rust"})
     assert response.status_code == 401
 
 
@@ -101,9 +101,9 @@ async def test_research_requires_authentication(auth_client):
 async def test_research_forbidden_for_plain_user_role(auth_client, db_session):
     _, token = await make_user_with_role(db_session, role_name=None)
 
-    response = await auth_client.get(
+    response = await auth_client.post(
         "/ask/research",
-        params={"query": "rust", "stream": False},
+        json={"query": "rust", "stream": False},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 403
@@ -114,9 +114,9 @@ async def test_research_forbidden_for_plain_user_role(auth_client, db_session):
 async def test_research_allowed_for_pro_role(auth_client, db_session):
     _, token = await make_user_with_role(db_session, role_name="research")
 
-    response = await auth_client.get(
+    response = await auth_client.post(
         "/ask/research",
-        params={"query": "rust", "stream": False},
+        json={"query": "rust", "stream": False},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
@@ -148,9 +148,9 @@ async def test_deep_research_route_runs_scout_reflect_notes(auth_client, db_sess
 
     app.dependency_overrides[get_llm_client] = deep_llm
 
-    response = await auth_client.get(
+    response = await auth_client.post(
         "/ask/deep_research",
-        params={"query": "rust", "stream": False},
+        json={"query": "rust", "stream": False},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
@@ -165,9 +165,9 @@ async def test_deep_research_route_runs_scout_reflect_notes(auth_client, db_sess
 async def test_deep_research_forbidden_for_plain_user_role(auth_client, db_session):
     _, token = await make_user_with_role(db_session, role_name=None)
 
-    response = await auth_client.get(
+    response = await auth_client.post(
         "/ask/deep_research",
-        params={"query": "rust", "stream": False},
+        json={"query": "rust", "stream": False},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 403
@@ -249,45 +249,14 @@ async def test_persona_route_forbidden_for_plain_user_role(auth_client, db_sessi
 async def test_research_allowed_for_admin_role(auth_client, db_session):
     _, token = await make_user_with_role(db_session, role_name="admin")
 
-    response = await auth_client.get(
+    response = await auth_client.post(
         "/ask/research",
-        params={"query": "rust", "stream": False},
+        json={"query": "rust", "stream": False},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
 
 
-@pytest.mark.asyncio
-async def test_agent_mode_forbidden_for_plain_user_role(auth_client, db_session):
-    _, token = await make_user_with_role(db_session, role_name=None)
-
-    response = await auth_client.get(
-        "/ask/agent",
-        params={"goal": "rust"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert response.status_code == 403
-
-
-@pytest.mark.asyncio
-async def test_agent_mode_streams_for_pro_role(auth_client, db_session):
-    _, token = await make_user_with_role(db_session, role_name="research")
-
-    # Agent loop model: one tool round, then the outcome.
-    app.dependency_overrides[get_llm_client] = lambda: ScriptedToolModel(
-        responses=[
-            tool_call("SubmitOutcome", {"answer": "Agent answer."}),
-        ]
-    )
-    response = await auth_client.get(
-        "/ask/agent",
-        params={"goal": "rust"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert response.status_code == 200
-    assert "event: message" in response.text
-    assert "Agent answer." in response.text
-    assert 'event: done' in response.text
 
 
 @pytest.mark.asyncio
