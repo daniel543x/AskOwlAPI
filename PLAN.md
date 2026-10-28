@@ -1,483 +1,362 @@
 # AskOwl Improvement Plan
 
-Status: draft v1 (2026-10-17). Source of truth for phased work. `CRUSH.md` tells the dev agent
-(crush) how to work in this repo; this file tells it what to build. (Replaces the retired
-`ROADMAP.md`; still-valuable roadmap ideas were folded into Phase 6 and §4.)
+Status: **draft v2 (2026-10-28)**. Source of truth for phased work. `CRUSH.md` tells the dev
+agent (crush) how to work in this repo; this file tells it what to build.
+
+v1 (2026-10-17) drove Phases 0–9: Phases 0–8 are shipped, Phase 9 PR 1 is shipped. This
+revision folds in the **webapp-client workstream** decided with the UI client author on
+2026-10-28 (client doubts 1–8 plus follow-ups: thinking/effort contract, profile
+preferences, attachments/vision). Where v2 supersedes v1 sequencing, §2.1 reconciles it
+explicitly — nothing is silently dropped.
 
 ---
 
-## 0. Product decisions (locked 2026-10-17)
+## 0. Product decisions
 
-1. **Model selection is admin-curated.** The admin manages the catalog of providers and models
-   (local Ollama, cloud, host/LAN — any mix). Users may only choose from catalog entries the
-   admin made available to their role. Defaults (per function) apply when the user does not
-   specify anything.
-2. **Pre-scorers are "typed decision" models, not cross-encoders.**
-   - **Jev** (https://typesafe.ai) — closed, API-only, early access. Returns typed decisions
-     (choice / score / yes-no) with calibrated probabilities.
-   - **Laya** (https://huggingface.co/convaiinnovations/laya) — open weights, Apache-2.0,
-     ModernBERT-large based decision model (421M, 512 tokens; multilingual variant 322M/8k).
-     Python SDK (`laya`), ONNX extra (`laya[onnx]`), and `laya[serve]` HTTP server exposing a
-     **Jev-compatible API**.
-   - One Jev-compatible HTTP client in AskOwl serves both (Laya self-hosted sidecar/host
-     service, or Jev cloud endpoint). In-process Laya SDK is a possible later optimization.
-   - Laya caveats to respect: base checkpoints are near chance zero-shot (accuracy comes from
-     fine-tuning) and outputs are over-confident until temperature scaling. Never trust them
-     in the hot path without passing the eval harness (Phase 3).
-   - The existing flashrank cross-encoder (`ms-marco-MiniLM-L-12-v2`) remains the relevance
-     scorer family; Jev/Laya form a second family for filtering/routing/verification decisions.
-3. **Deployment topology.** The application runs in a container. Models may be cloud, on the
-   host, on the LAN, or hybrid — therefore every model endpoint (base URL, API key) is catalog
-   data, never a hardcoded `localhost`. Ollama is optional, not assumed. Local-first defaults
-   are still desirable, but must degrade gracefully (health probes, clear errors).
-4. **Ship defaults.** Chat: `qwen3.5` via local Ollama (as used during development).
-   **Open decision:** default embedding model — proposal: `bge-m3` or `nomic-embed-text`
-   (Ollama), 1024/768 dims. Must be decided before the Phase 3 pgvector schema is written;
-   store dimensions per catalog entry so multiple embedders can coexist.
-5. **Audience & auth.** AskOwl serves interactive clients (future UI) **and** other backends:
-   streaming SSE and non-streaming JSON are both first-class. API-key auth is required but the
-   scheme is not finalized — design lands in Phase 6. Roles gate **modes**:
-   - `search` — basic search (pipeline). All authenticated users.
-   - `research` — advanced multi-step search. Elevated role.
-   - `agents` — custom search agents: user-created **personas** specialized in a topic (e.g.
-     a programmer persona scoped to a tech stack) so users don't repeat context and the agent
-     memory stays clean. Elevated role.
-6. **No clients exist yet.** Breaking changes to the SSE event protocol and route semantics
-   are allowed until first consumers appear.
-7. **No LLM usage without tool calls.** Phase 2 rebuilds every LLM step on native tool
-   calling; models without tool support are capability-gated out of steps that need it.
-8. **Language & logging.** English everywhere (code, comments, commits, docs). Real `logging`
-   with a debug mode (env-gated) that traces each pipeline stage and tool call.
+### Locked 2026-10-17 (v1, unchanged)
+
+1. **Model selection is admin-curated.** The admin manages the catalog of providers and
+   models (local Ollama, cloud, host/LAN — any mix). Users may only choose from catalog
+   entries the admin made available to their role. Defaults (per function) apply when the
+   user does not specify anything.
+2. **Pre-scorers are "typed decision" models, not cross-encoders** (Jev / Laya; one
+   Jev-compatible HTTP client; flashrank stays the relevance-scorer family). Phase 7 —
+   deliberately last.
+3. **Deployment topology:** the app runs in a container; every model endpoint (base URL,
+   API key) is catalog data, never a hardcoded `localhost`. Ollama is optional, not
+   assumed; local-first defaults must degrade gracefully.
+4. **Ship defaults:** chat `qwen3.5` via local Ollama; embeddings `bge-m3`, 1024 dims
+   (decided 2026-10-17); dimensions stored per catalog entry.
+5. **Audience & auth.** Interactive clients (the webapp) **and** other backends: streaming
+   SSE and non-streaming JSON are both first-class. API-key auth + refresh tokens
+   (Phase 8). **Roles gate modes — updated 2026-10-28, four modes:**
+   - `search` — basic search. All authenticated users.
+   - `research` — multi-step research. Elevated role.
+   - `deep_research` — autonomous long-loop research (v1 name: `agent`). Elevated role.
+   - `persona` — user-created agents; **whole mode is elevated** (depth is a budget
+     choice, not a role choice).
+6. **No consumers yet — until the webapp ships.** Breaking changes to the SSE protocol and
+   route semantics remain allowed; the webapp is the imminent first consumer and its GA
+   freezes the contract (see decision 16).
+7. **No LLM usage without tool calls.** Every LLM step is a native tool-calling step.
+   Consequence: a model usable by AskOwl at all must expose `tools`; **images additionally
+   require `vision`** (decision 14).
+
+### Locked 2026-10-28 (v2 — webapp client round)
+
+8. **One agentic core; modes = presets.** The core is one loop (toolbox + conversation
+   history) shared by all modes; `search`/`research`/`deep_research`/`persona` are budget +
+   feature presets over it (table in §2.3). The deterministic search pipeline
+   (rewrite → search → fetch → context → CitedAnswer) is **kept as the degrade path**:
+   triggered by a tool-contract violation (1 repair attempt, then degrade) or budget
+   exhaustion without material; the SSE stream carries a `degraded` event so the UI can be
+   honest about it. Feature flag `AGENTIC_SEARCH` ships default **off** and flips after the
+   eval gate (§2.3, PR 17).
+9. **Note tool for research-grade modes.** `note_write(task, content, sources_used)` writes
+   a `research_note` row; **the DB is the source of truth**. Notes decouple working-set
+   growth from the synthesis context and preserve citations across regeneration. Report
+   assembly is deterministic: the model calls
+   `SubmitReport(sections: [{idx, include, order, lead_in?}], intro?)` and the backend
+   streams note-sections + per-note citations + a global Sources section; a small editorial
+   call sees only the TOC. Used by `research`, `deep_research`, and `persona` at
+   depth ≥ research. Degrade: no notes → today's gathered→generate_report path.
+10. **Personas are a separate mode** (`POST /ask/persona`, required `persona_id` — missing
+    → 422, foreign → 404) with `depth: quick|research|deep` (default from
+    `persona.default_parameters`, clamped via `_bounded()`). UX argument: a card grid with
+    explicit opt-in prevents accidentally asking the wrong agent.
+11. **Thinking & effort contract (neutral fields, provider adapters).** Request fields are
+    **`thinking: bool|null`** and **`effort: "low"|"medium"|"high"|"max"|null`**
+    (`null` = model default). The name `reasoning_effort` exists **only** as OpenAI's wire
+    parameter inside the adapter — never in our API, docs, or UI. Catalog capabilities:
+    `tools`, **`thinking`**, **`effort`** (+ `vision`, decision 14); `effort` capability
+    comes with `effort_levels` (e.g. Ollama gpt-oss: low/medium/high; OpenAI: low/medium/
+    high; Ollama hybrid models: low/medium/high/max). UI renders controls **only** from
+    `GET /models` capabilities — never hardcoded per model family. Requesting a parameter
+    without the capability → `422` (precedent: `tools` gating). Transmission via a
+    `ReasoningAdapter` registry per `provider_type` (§2.2, PR 9); factory merge order:
+    `default_params` (catalog) < adapter output (request wins). **No auto model routing by
+    effort** — bigger-model-lower-effort is the user's decision; presets do **not** force
+    `thinking` (defaults belong to the profile, decision 12).
+12. **Profile preferences (server-side per-user defaults).** Stored: `default_model_id`,
+    `default_mode`, `thinking`, `effort`, `source_types`. **Switching the model resets
+    thinking/effort to that model's defaults** and the user re-picks (server enforces this
+    by clamping on save; the resolved view is what the UI renders). Resolution order:
+    **request > profile preference > model default**. `PUT /profile/preferences` validates
+    against the catalog and clamps unsupported values, returning the normalized payload +
+    `warnings` (degrade, never crash). Requests stay explicit (the API remains stateless;
+    the profile is the client's initialization source).
+13. **Source types are provider-declared, discovered — not hardcoded.** v1 set:
+    `web | news | academic | social`. `ISearchProvider.search(query, engines, categories)`;
+    SearXNG map: web→`general`, news→`news`, academic→`science`, social→engines
+    (reddit et al. — not a category). `GET /search/sources` returns the types supported by
+    the active/selected provider; the UI renders checkboxes dynamically.
+14. **Uploads & attachments.** Text files (txt/md/csv via stdlib, pdf via `pypdf`, docx via
+    `python-docx`, html via trafilatura) are parsed server-side into
+    **conversation-scoped chunks** (requires Phase 9 PR 6 scoping) and surfaced to the agent
+    via a `search_files` tool. **Images are accepted only when the model has `vision`:**
+    upload via `POST /conversations/{id}/attachments` (multipart) → `attachment_id`; the ask
+    request references `attachment_ids`; **at ask time, any image attachment with a
+    non-vision model → `422 model_lacks_vision`** (never a silent drop). Iron rule (7) ⇒
+    image requests require capabilities ⊇ `{tools, vision}`. Images go to the synthesis LLM
+    as content blocks (via LiteLLM), **never to the search engine**. Limits: allowlist
+    png/jpeg/webp/gif, ≤ 10 MB each, ≤ 4 images per request; blob storage with TTL cleanup;
+    messages persist references, not base64.
+15. **InBox = background jobs layer.** `background: true` on research-grade modes →
+    `202 + job_id`; `job` table (status, result_summary, seen, error); per-user SSE channel
+    with `job_update` events; `GET /jobs`, `POST /jobs/{id}/seen`; InBox is the UI over the
+    queue (decision 19): pending list with positions, running progress, completion
+    notifications (seen flag). Execution flows through the resource gates + job queue;
+    startup sweep marks `running` → `failed` (precedent: lifespan sweeps); notes make runs
+    incrementally observable and resumable later.
+16. **Versioning: 0.x until the webapp freezes the contract.** Reset `pyproject` from
+    `1.0.0rc1` to **0.15.0** in **PR 9 `client/capabilities`** (round-4 confirmation:
+    wave-1 merges — PR 2 / PR 6 / PR 11 — ship **without a version change**; the minor
+    ladder starts at the reset); **minor bump per merged phase branch** (0.16.0, …);
+    **1.0.0 = the webapp ships as first consumer** (contract freeze +
+    deprecation policy). SSE protocol changelog discipline starts now (v2.4 additive
+    events; v3 = breaking, Phase 11).
+17. **Cache: `wu/cache` (Phase 9 PR 2) via `ICache`.** In-memory TTL default; optional
+    Redis behind `REDIS_URL` (lazy import, degrade to memory). Retrieval artifacts cached,
+    **LLM answers never**; heavy page blobs → Postgres. The rate limiter is refactored onto
+    `ICache` in the same PR (behavior unchanged; unlocks multi-node later).
+18. **gg.deals is an optional, feature-flagged agent tool** (pattern: conditional attach
+    like `pre_score`). **Official API confirmed 2026-10-28: https://gg.deals/api** —
+    API key required, current + historical prices, Bundles API also exists. Dedicated
+    `src/modules/ggdeals/` module: HTTP client + `game_offers(game_name)` tool returning
+    structured offers (object/JSON, not prose). The ask response carries the structured
+    payload → SSE `offers` event → the client renders the banner — never inside answer
+    text. Exact endpoint shapes, quota and ToS verified at implementation (site is
+    Cloudflare-gated; the key appears to be a paid tier). Alternatives if the API
+    disappoints: CheapShark, IsThereAnyDeal.
+19. **Provider-aware job queue with resource gates** (round 4: cache × inbox × queue).
+    Every LLM/search/external-API call passes a **`ResourceGate`** — an async semaphore
+    keyed by resource (`model:<provider_id>`, `search:<provider_id>`, `ggdeals`, …) with
+    per-provider `max_concurrency` (Ollama ships 1 — GPU-bound, serial; cloud providers
+    ship ≥ 2 — parallel). Foreground requests pass gates too (`BUSY_POLICY:
+    wait|background|reject` — busy foreground ask can auto-convert into a queued job →
+    Inbox); `background: true` jobs queue FIFO with **per-user fairness** (round-robin +
+    per-user running cap) so several users never starve each other. External 429s are
+    retried with backoff honoring `Retry-After`. `JobQueue` backends: in-process asyncio
+    (default, single-node) or Redis (`REDIS_URL`, optional — multi-node, crash-resilient),
+    the same lazy pattern as `ICache` (decision 17).
+20. **z.ai thinking/effort: native mapping + probe-prune** (round 5, closes open
+    decision 11). Verified against the z.ai Deep Thinking docs (2026-10-28): the native
+    API supports `thinking: {type: enabled|disabled}` **and** `reasoning_effort`
+    (GLM-5.2+; values `max|xhigh|high|medium|low|minimal|none`, default `max`; compat
+    aliases `xhigh→max`, `low/medium→high` — whether they apply to the full API or only
+    the Coding Plan is exactly what the probe verifies; `minimal/none` skip thinking;
+    effort applies only while thinking is enabled; GLM-5.3 can no longer disable
+    thinking — effort-only; the response carries `reasoning_content` → SSE `thinking`
+    passthrough). Adapter zai: `thinking: false` → `{type: "disabled"}` (GLM ≤ 5.2;
+    GLM-5.3+ → `422 model_lacks_thinking`, capability `thinking` absent); `effort` →
+    `reasoning_effort` (`low|medium|high|max` — `max` is natively supported). Catalog
+    seeds: GLM-5.2+ `effort_levels: [low, medium, high, max]`; GLM-4.6/4.5: `thinking`
+    capability only. PR 9 adds a **live probe** (one synthetic call per level):
+    aliased/rejected levels are pruned from the cached `effort_levels` (if aliasing is
+    confirmed, the list converges to `[high, max]` — the conservative variant, reached
+    automatically). Probe rules: scoped to a single catalog entry, **never across
+    providers**; precedence **admin override > probe > seed**; a probe may only prune
+    confirmed-unsupported levels, never add; on probe error keep the seed (degrade, never
+    crash); results cached via `ICache` (PR 2). OpenAI/OpenRouter stay seed/
+    metadata-driven — no paid-API probing (OpenAI: documented stable levels; OpenRouter:
+    model metadata); deepseek unchanged (two entries, no runtime toggle).
+21. **Chunk scope stays targeted — no default flip** (round 5, closes open decision 13).
+    Web chunks remain **global** (cache reuse, dedupe, cross-conversation recall are
+    features); upload chunks are **conversation-scoped unconditionally** (privacy; PR 15,
+    independent of the `scope` default); `scope=conversation` remains an opt-in request
+    parameter. Tagging `conversation_id` happens for all chunks in PR 6 anyway, so a
+    later flip is a one-default change + eval re-run. Revisit at protocol v3 (PR 21) if
+    the instance turns multi-user — then flip to conversation-default inside the breaking
+    window.
 
 ---
+## 1. Current-state audit
 
-## 1. Current-state audit (2026-10-17)
-
-Working: modular FastAPI app; identity (JWT, users, roles user/pro/admin); `llm_provider`
-(catalog tables, per-user preference, per-request `model_id`, LangChain `init_chat_model`
-factory, encrypted API keys); SearXNG + trafilatura + flashrank pipeline behind
-`/ask/search` (SSE + JSON); `create_all` bootstrap seeding Ollama/qwen3.5.
-
-Defects (fix in Phase 0 unless noted):
-
-- `src/core/ask/services/search.py:241` — SSE event emits `da ta:` (corrupted) and lacks the
-  `\n\n` terminator; `search.py:245` passes the whole `{context, sources, query}` dict into
-  the answer prompt instead of `data["context"]`. Streaming is effectively broken.
-- `search.py:66–141` — `sse_search_generator` is dead duplicated pipeline code.
-- `search.py:257` — `HTTPException` raised inside the streaming generator after headers are
-  sent; kills the stream instead of emitting an SSE `error` event.
-- `src/modules/owl_reranker/factory.py:6` — cross-encoder loaded from disk on **every
-  request**; ranking and chunking are sync CPU work on the event loop (blocks all concurrent
-  requests).
-- `src/modules/scrapy/providers/trafilatura.py:20` — `trafilatura.fetch_url` called
-  sequentially inside `async def`; blocks the event loop for all page downloads.
-- `src/modules/search_engine/providers/searxng.py:10` — base URL hardcoded; factory passes DB
-  settings as kwargs the constructor does not accept (crash once settings exist).
-- `compose.yml` — image `searxng:latest` does not exist (use `searxng/searxng`), `BASE_URL`
-  should be `SEARXNG_BASE_URL`, JSON output format is never enabled in SearXNG settings, db
-  service mounts the searxng settings volume, api service commented out, no optional Ollama
-  service.
-- `src/tools/settings.py:9` — hardcoded fallback secret; must fail fast instead.
-- Empty placeholders: `src/modules/llm_provider/router.py`, `src/modules/history/*`,
-  `/ask/research` (returns ranked links only), `/ask/deep_research` (returns `None`).
-- `print()` used as logging; debug prints in `search_json_adapter`; mixed PL/EN comments.
-- Tests: 26 lines (identity only), conftest requires live Postgres. No Alembic, no CI.
-- `psycopg2-binary` dependency unused (app uses asyncpg).
-- README quickstart broken (`uv pip install -r pyproject.toml` is not valid uv usage).
-- Found 2026-10-17 (while registering the OpenRouter provider): `GET /health/models` returns
-  500 — `ModelRepository.probe_providers()` (`src/modules/llm_provider/repository.py`) commits,
-  which expires the provider ORM instances; the route then reads `provider.id` and the lazy
-  refresh raises `MissingGreenlet` (same trap `_set_default_if_missing` already documents).
-  Health state is persisted before the crash, so `GET /admin/models/providers` shows it.
-  **Fixed 2026-10-17** (phase-3 branch): `probe_providers` now refreshes each provider after
-  the commit; regression test in `tests/modules/llm_provider/test_repository.py`
-  (integration-marked).
-- Found 2026-10-18 (while writing the API docs auth matrix): the user-management routes
-  `GET /user/{id}`, `GET /user/nn/{nickname}`, `PATCH /user/{id}`, `DELETE /user/{id}`
-  (`src/modules/identity/user/router.py`) have **no authentication dependency wired** — any
-  anonymous caller can read, modify (including password), or delete any user by id. The docs
-  mark these as a known gap; fix before any public deployment (wire `get_current_user` +
-  ownership checks, or fold under `/admin` + self-service `/auth/users/me`).
-  **Fixed 2026-10-26** (`fix/user-routes-auth` branch): the four routes now require
-  `get_current_user` and enforce self-or-admin visibility — foreign targets return 404
-  (not 403) so ids cannot be probed, matching the personas convention. `POST /user`
-  stays open as registration. Covered by 4 integration tests (anonymous 401, foreign
-  404, self 200, admin 200/204); docs auth matrix + users page updated.
-- Found 2026-10-26 (flagged by a task agent building the API client; verified live):
-  every commit-then-read auth path returned 500 in production — `POST /auth/refresh` on
-  success (`rotate()`'s commit expires the loaded `User`, then reading `user.id` raises
-  `MissingGreenlet`), API-key requests (`resolve()` commits `last_used_at`, the caller
-  then reads `api_key.id`), admin block and password-change serialization. Root cause
-  is systemic, not per-route: production request sessions ran with the default
-  `expire_on_commit=True` while the whole test suite (conftest) runs `False`, so the
-  class was invisible to every test. **Fixed 2026-10-26** (`fix/session-expiry` branch):
-  app sessions are created with `expire_on_commit=False` — matching the test harness
-  and the Phase 3 `probe_providers` refresh precedent; regression test pins the session
-  configuration (`tests/tools/test_db_session.py`). Verified live: successful refresh,
-  API-key request, admin block all 200.
-- Found in `ref/Recomendation.md` (task agent), re-verified 2026-10-26: `ROLE_HIERARCHY`
-  in `src/modules/llm_provider/selection.py` was never updated when `pro` was renamed to
-  `research` (decision #4), so `required_role="research"` resolved to level 0 and **every
-  plain user passed the model-catalog role gate**. **Fixed 2026-10-26** (`fix/role-hierarchy`
-  branch): hierarchy is `{"user": 0, "research": 1, "admin": 2}` with the legacy `pro`
-  name aliased; unknown role names now **deny** (least privilege) instead of opening the
-  gate, and the admin create/update API rejects unknown names up front. Full access-matrix
-  unit tests plus an invariant test asserting every seeded role has a hierarchy entry;
-  `docs/api/models.md` role wording updated.
-- Report tail (2026-10-26, `ref/` findings F-01 and F-04): the remaining regression test
-  the session-expiry class needs now exists — search runs with a stub embedder that
-  really stores chunks (mid-request commit on the shared session) and the turn still
-  persists with JSON 200 — and the test harness is hermetic: conftest pins
-  `LOG_LEVEL`/`DEBUG` before importing src with a canary asserting the singleton, so
-  the developer shell or local `.env` can no longer flip pipeline behavior under test.
+The v1 audit (2026-10-17) is preserved in git history (`git show v1-plan:PLAN.md` is not
+tagged — use the commit that merged Phase 9 PR 1, 961e3b5). Durable facts now live in §0 as
+decisions. Short version: FastAPI + Postgres/pgvector + SearXNG + trafilatura; tool-calling
+pipeline everywhere (`search` deterministic, `research` planner+loop, `agent` autonomous);
+model catalog with capabilities + `default_params` passthrough into `init_chat_model`;
+API keys + refresh tokens; hybrid retrieval with flashrank; SSE protocol v2 (changelog
+through v2.3). Remaining debt relevant to v2: chunk store is global (fixed by Phase 9
+PR 6), SearXNG provider lacks per-call `categories` (PR 11), no capability probing for
+local models (PR 9), no per-user preferences (PR 10), no jobs layer (PR 13).
 
 ---
 
 ## 2. Phases
 
-Each phase = one branch, one PR, boxes ticked here when done.
+> Convention: **one phase-task = one branch = one PR**. Every step ships its default at
+> "current behavior" except where a **deliberate default flip** is noted. Each merged PR
+> bumps the minor version (decision 16).
 
-### Phase 0 — Stabilize (no behavior change)
+### 2.1 Phase 9 reconciliation (v1 → v2)
 
-- [x] Delete dead `sse_search_generator`; keep `search_logic` + adapters as the only pipeline.
-- [x] Fix SSE adapter: correct `data:` framing + `\n\n` terminators; pass `data["context"]`
-      to the answer chain; emit `error` SSE events instead of raising `HTTPException` mid-stream.
-- [x] Logging: configure `logging` (format with timestamps), add `LOG_LEVEL` and `DEBUG` env
-      settings; debug mode logs every pipeline stage with durations and LLM tool-call
-      payloads (redacting API keys). Replace all `print()`. Standardize comments to English.
-- [x] Reranker: load flashrank model once at app lifespan (not per request); run ranking and
-      chunking via `asyncio.to_thread`. Move `top_n` constants (10 URLs / 20 chunks) to settings.
-- [x] Scraper: fetch pages concurrently with `httpx.AsyncClient` (semaphore ≈ 5, timeout),
-      run `trafilatura.extract` in a thread pool. Keep the `IScraper` interface.
-- [x] Search provider: make base URL / engines / categories constructor params wired from DB
-      settings with env fallback; stop passing unsupported kwargs.
-- [x] `compose.yml`: fix searxng image + `SEARXNG_BASE_URL`; mount a repo `data/searxng/`
-      settings file enabling `search.formats: [html, json]`; remove the stray db volume mount;
-      add commented/profile `ollama` service; keep `db`.
-- [x] Settings hygiene: all config through `src/tools/settings.py` (pydantic-settings);
-      remove the hardcoded secret fallback (refuse to start without `MASTER_KEY`);
-      drop `psycopg2-binary`.
-- [x] Tests: unit tests for chunking, ranker (fakes), factories, and the ask pipeline with
-      stub search/scrape/LLM providers — no network, no Postgres. Mark DB-dependent tests
-      `integration` (skipped by default). Add `ruff` config.
-- [x] README: fix quickstart (`uv sync --all-extras`, `uv run main.py`).
+| v1 PR | Disposition in v2 |
+|---|---|
+| ~~PR 1 `wu/hygiene~~ | ✅ shipped (sanity filter on, dedup+fusion, max_urls) |
+| PR 2 `wu/cache` | **stays, next up** — v1 scope: search-result TTL cache, Postgres page cache, embed-skip, rule-based `query_variations`; v2 adds: rate limiter onto ICache (behavior unchanged), capability-probe cache consumer (PR 9); LLM answers never cached (decision 17) |
+| PR 3 `wu/citations` | stays (after Phase 10; feeds the Note report assembler's citation validator) |
+| PR 4 `wu/rewrite` | stays (stands alone; `rewrite: "standalone"` default flip) |
+| PR 5 `wu/research-loop` | **absorbed by Phase 11** (reflect–search + brief compression live inside the rebuild presets) |
+| PR 6 `wu/recency-scope` | **stays, prerequisite for PR 15** and news source types — v1 scope: dates in prompts and chunk metadata, `recency_bias`, `chunk.conversation_id` + scoping + HNSW + eviction; v2: `scope` ships `global` and **stays global** (decision 21 — no flip; uploads are conversation-scoped unconditionally in PR 15) |
+| PR 7 `wu/hybrid` | stays (unscheduled, after rebuild) |
+| PR 8 `wu/modes` | **un-deferred by the webapp; absorbed by Phase 11** (presets + protocol v3) |
 
-**DoD:** fresh `podman-compose up` + local Ollama with one pulled model serves a correct
-streaming and JSON answer; `uv run pytest` passes offline; no `print()` in `src/`.
+Recommended order: **PR 2 → PR 6 → Phase 10 (PRs 9–16; uploads/vision intentionally
+last per client decision) → Phase 11 (PRs 17–21) → PR 3 / PR 4 / PR 7**. The webapp can
+integrate against the current v2.3 protocol immediately (`search` + `research` exist
+today) and adopt v3 when Phase 11 lands.
 
-### Phase 1 — Model registry v2 (admin-curated, local-first, all model kinds)
+**Cutting vs merging (round 6).** Every branch may be cut from `main` at any time —
+`main` already carries all shipped work (961e3b5, no pending branches), so cutting is
+unblocked and can happen in parallel. The order above governs **merging**, which must
+respect hard dependencies: PR 10 ← PR 9; PR 13 ← PR 12; PR 14 ← PR 12 (offers cache via
+PR 2); PR 15 ← PR 6; PR 16 ← PR 9 + PR 15; PR 9 and PR 12 consume `ICache` from PR 2
+(soft — land PR 2 first). Phase 11 is sequential (17 → 18 → 19/20 → 21). Area-disjoint
+first wave for parallel work: **PR 2, PR 6, PR 11**. Caveat: PR 9–11 and PR 17–21 touch
+the same ask-router / SSE-doc files — rebase before merging.
 
-- [x] Generalize the `llm_provider` pattern into one registry for model kinds:
-      `chat`, `embedding`, `reranker` (cross-encoder), `decision` (Jev/Laya). Same tables and
-      the same resolution order everywhere: request param → user preference (role-checked) →
-      global default → built-in local default.
-- [x] Catalog entries carry: provider (base URL + encrypted API key — supports cloud, host,
-      LAN), model name, default params, `is_active`, `required_role`, `capabilities`
-      (e.g. `tools`, `streaming`), and for embeddings the vector dimensions.
-- [x] Startup bootstrap: probe configured providers (Ollama `/api/tags`, HTTP ping for
-      others); seed catalog only with what actually responds; record health per provider;
-      expose `GET /health/models`.
-- [x] Fill in the empty `llm_provider/router.py`:
-      `GET /models?kind=…` (role-filtered listing), `PUT /models/{id}/preference`,
-      admin CRUD for providers/entries/defaults (admin role).
-- [x] Embedding provider module: `IEmbedder` interface + Ollama implementation (async,
-      batched). No consumer yet — Phase 3 wires it in.
-- [x] Reranker registry: `IRanker` implementations registered by type; flashrank entry stays
-      the default. Model selection goes through the registry (kills the hardcoded
-      `get_ranker`).
+### 2.2 Phase 10 — Webapp client track (PRs 9–16)
 
-**DoD:** an admin can add an OpenRouter provider + model over the API and a user can select
-it per request; with only local Ollama running, defaults resolve without manual seeding.
+- [ ] **PR 9 `client/capabilities`** — thinking/effort end-to-end (doubt 2).
+  - Version probe per provider: Ollama `/api/show` + `/api/ps` capabilities
+    (`completion`, `tools`, `vision`, `thinking`) plus the `think`-levels 400-fallback;
+    z.ai effort-level probe (one synthetic call per level, decision 20); cached via
+    `ICache` (TTL, e.g. 5 min). OpenRouter model metadata; OpenAI/deepseek catalog seeds
+    (no paid-API probing). Probe precedence: **admin override > probe > seed**; probes
+    are per catalog entry — a probe result never changes what other providers advertise.
+    Admin can override entries.
+  - Catalog: `capabilities` extended with `thinking`/`effort`/`vision`; new
+    `effort_levels: []` field; `GET /models` exposes both (ModelEntryRead already returns
+    capabilities).
+  - `ReasoningAdapter` registry per `provider_type`: ollama → `think: true|false` or
+    `think: "low"|"medium"|"high"|"max"` (levels first; on HTTP 400 fallback to bool and
+    drop `effort_levels` from the cached entry); openai → `reasoning_effort`;
+    openrouter → `reasoning: {enabled, effort}`; zai → `thinking: {type: enabled|disabled}`
+    + `reasoning_effort: low|medium|high|max` (native mapping, decision 20; GLM-5.3+
+    cannot disable thinking → `422 model_lacks_thinking`); deepseek → no runtime
+    toggle, **two catalog entries** (chat / reasoner), capabilities empty; unknown → ignore
+    + `warnings` entry (degrade, never crash).
+  - Request fields `thinking`/`effort` on all ask routes; 422 gating (`model_lacks_thinking`,
+    `model_lacks_effort`, `unsupported_effort_level`); factory merge
+    `default_params < adapter(request)`.
+  - SSE v2.4 (additive): `thinking` event (reasoning-trace passthrough; UI may hide it).
+  - Version bump: **0.15.0** (the reset from `1.0.0rc1` happens in this PR's branch, decision 16).
+- [ ] **PR 10 `client/profile`** — profile preferences (UX round 3).
+  - `user_preferences` table (user_id PK, default_model_id, default_mode, thinking,
+    effort, source_types, updated_at). `GET/PUT /profile/preferences`;
+    `GET /profile/preferences?model_id=X` returns `{stored, resolved, warnings}` —
+    resolved = stored values clamped against X's capabilities + X's defaults (this is the
+    "model switch resets to defaults" contract, decision 12).
+  - Ask routes resolve: request > profile > model default; explicit request fields still
+    validated (422 on impossible combos).
+- [ ] **PR 11 `client/sources`** — source types (doubt 3).
+  - `ISearchProvider.search(query, engines, categories)`; SearXNG category map
+    (web→general, news→news, academic→science, social→engine list); provider config
+    declares `supported_source_types` (DB + type registry, SearchProviderConfig precedent).
+  - `GET /search/sources` → types of active/selected provider; ask body gains
+    `source_types: []` (validated, unknown → 422; empty = provider default).
+  - Personas: `allowed_source_types` intersection left as backlog (v1: provider defaults).
+- [ ] **PR 12 `client/queue`** — provider-aware resource gates + job queue (round 4:
+      cache × inbox × queue; consumes PR 2's ICache).
+  - `ResourceGate`: per-resource async semaphore keyed `model:<provider_id>`,
+    `search:<provider_id>`, `ggdeals`, …; per-provider `max_concurrency` in provider
+    config (Ollama ships 1 — GPU-bound, serial; cloud providers ship ≥ 2 — parallel).
+    Foreground requests pass gates too, with bounded wait via `BUSY_POLICY:
+    wait|background|reject` (`background` auto-converts a busy foreground ask into a
+    queued job → Inbox; `reject` → 503 `provider_busy`).
+  - `JobQueue` over the gates: FIFO with per-user fairness (round-robin + per-user running
+    cap, default 2) so multiple users never starve each other; external 429s retried with
+    backoff honoring `Retry-After`; queue state persisted in the `job` table.
+  - Backends: in-process asyncio (default, single-node) or Redis (`REDIS_URL`, optional —
+    multi-node, crash-resilient), same lazy pattern as ICache (decision 19).
+- [ ] **PR 13 `client/inbox`** — jobs layer + Inbox UX (doubt 5; builds on PR 12).
+  - `job` table (id, user_id, kind, status queued|running|succeeded|failed|cancelled,
+    queue_position, conversation_id, request payload ref, result_summary, error, seen,
+    timestamps); `background: true` on research-grade ask routes → `202 {job_id}`;
+    `GET /jobs[?seen=]`, `POST /jobs/{id}/seen`, `POST /jobs/{id}/cancel`; per-user SSE
+    stream with `job_update` events carrying `status` + `queue_position` (SSE v2.4);
+    startup sweep `running → failed`.
+  - Inbox view = queue view: pending list (positions), running (progress), done/failed
+    (notification, seen flag).
+- [ ] **PR 14 `client/ggdeals`** — optional, feature-flagged game-offers module (doubt 8;
+      official API confirmed 2026-10-28).
+  - `src/modules/ggdeals/`: HTTP client (API key in settings, provider-credential
+    precedent) + offers TTL cache via ICache; conditional tool attach (`pre_score`
+    pattern) behind `GGDEALS_ENABLED` (default off).
+  - Tool `game_offers(game_name)` → structured JSON (title, current best offer,
+    historical low, stores); ask response carries the structured payload → SSE `offers`
+    event → the client renders the banner — never inside answer text. Calls pass the
+    `ggdeals` gate (PR 12); exact endpoint shapes, quota and ToS verified at
+    implementation.
+- [ ] **PR 15 `client/uploads`** — text files (doubt 4; client decision 2026-10-28: files
+      ship last; depends on PR 6).
+  - `POST /conversations/{id}/attachments` (multipart): txt/md/csv (stdlib), pdf (`pypdf`),
+    docx (`python-docx`), html (trafilatura). Limits: 10 MB/file, 5 files/request,
+    ~50k chars/file extraction cap (configurable). Parsed text → conversation-scoped chunks
+    (PR 6 scoping) + `attachment` row.
+  - `search_files` tool for the agent (conversation-scoped retrieval); ask body gains
+    `attachment_ids`.
+  - Scope note (decision 21): **no `scope` default flip here** — upload chunks are
+    conversation-scoped unconditionally, web chunks stay global (`scope=conversation`
+    stays opt-in); a default flip is deferred to the protocol-v3 window if ever needed.
+- [ ] **PR 16 `client/attachments-vision`** — images (round 3 addition; depends on PR 9,
+      PR 15).
+  - Image allowlist png/jpeg/webp/gif, ≤ 10 MB each, ≤ 4 per request; stored as blobs
+    (refs in messages, TTL cleanup job).
+  - Ask-time gate: image attachment + model without `vision` → **422 model_lacks_vision**
+    (never silent-drop); iron rule ⇒ capabilities ⊇ `{tools, vision}` required.
+  - Synthesis prompt builder assembles image content blocks (LiteLLM image format) next to
+    the retrieved context; images never enter the search engine path.
 
-### Phase 2 — Tool-calling pipeline (`search` mode core)
+---
 
-- [x] Promote pipeline internals to first-class tools over the existing modules:
-      `web_search(query)`, `fetch_pages(urls)`, `get_context(query, …)` (rerank/select).
-- [x] Query rewriting: replace the prompt + `JsonOutputParser` step with a native tool call
-      (`bind_tools`); fallback to the raw query stays only as a *tool-protocol* error path,
-      never free-form generation.
-- [x] Answer synthesis: cited-answer contract enforced via tool call / structured output;
-      the answer step receives only tool-derived context ("no context → say so" rule).
-- [x] Capability gating: steps requiring tools reject catalog models without the `tools`
-      capability with a clear 4xx + explanation.
-- [x] SSE protocol v2, documented in `docs/api/`: events `status`, `query`, `sources`,
-      `context`, `message`, `done`, `error` (+ `debug` events when debug mode is on), with
-      event ids and a changelog; JSON mode returns the same data in one document.
-- [x] Integration tests for the tool-calling flow using a scripted fake chat model
-      (asserts tools were actually called — enforces the "no LLM without tool call" rule).
+### 2.3 Phase 11 — Core rebuild: one agentic core, modes = presets (PRs 17–21)
 
-**DoD:** `/ask/search` answers exclusively through tool calls (asserted by tests); protocol
-documented; both SSE and JSON consumers served.
+Preset table over the shared loop (toolbox + conversation history + degrade path):
 
-### Phase 3 — Hybrid retrieval (embeddings + vector store)
+| Preset | Planner | Note | Reflect | Scout | Budget | Role | History |
+|---|---|---|---|---|---|---|---|
+| `search` | – | – | – | – | low (1–3 iterations) | all | yes |
+| `research` | yes | yes | – | – | medium | elevated | yes |
+| `deep_research` | yes | yes | yes (`revise_plan`) | yes | high | elevated | yes |
+| `persona` | by depth | by depth | by depth | by depth | `persona.default_parameters` (clamped) | elevated | per-persona |
 
-- [x] Decide the default embedding model + dims (open decision §0.4); add pgvector (compose
-      image `pgvector/pgvector:pg16`, `CREATE EXTENSION vector` in init).
-      **Decided 2026-10-17: `bge-m3`, 1024 dims (Ollama).**
-- [x] New `chunks` table: content, metadata (url, headers), embedding vector, source page
-      reference. Embed at scrape time with the selected embedder.
-- [x] Retrieval in `get_context`: vector similarity candidates (top-k) → cross-encoder rerank
-      → top-n context. Embedder and reranker selectable per request via the registry
-      (`embedder_id` / `reranker_id` query params).
-- [x] Eval harness (pytest + golden set of ~20 queries with known good sources): recall@k,
-      MRR, end-to-end latency; a small CLI to compare configurations. New scorers must pass
-      before becoming defaults.
+- [ ] **PR 17 `rebuild/core`** — agentic search behind `AGENTIC_SEARCH` (default **off**;
+      deliberate flip after eval).
+  - Evolved `agent_logic` as the single loop; conversation history moves into the core;
+    `POST /ask/search` runs the loop when the flag is on, the deterministic pipeline
+    otherwise; `degraded` SSE event on fallback (decision 8).
+  - **Eval gate for the flip:** golden set of 30–50 queries; citation fidelity ≥
+    deterministic baseline; recall/MRR within −5% relative; p50 latency ≤ 1.5×; token cost
+    measured (no gate yet). Flip after 2 consecutive green runs.
+- [ ] **PR 18 `rebuild/note`** — `research_note` table + `note_write` (always returns the
+      TOC: `{idx, task, one_line_summary, sources_count}`) + `SubmitReport` deterministic
+      assembly + SSE `note` event; `research` re-based on the core; degrade →
+      gathered→generate_report (decision 9).
+- [ ] **PR 19 `rebuild/deep`** — `agent` → `deep_research` (alias `/ask/agent` kept
+      temporarily, deprecated); scout step (one forced web_search+fetch+get_context before
+      the planner); reflect via `revise_plan(add, rationale)` with ceiling
+      `RESEARCH_MAX_SUBQUESTIONS` + slack; high preset budget.
+- [ ] **PR 20 `rebuild/persona-mode`** — `POST /ask/persona` (required `persona_id`:
+      missing → 422, foreign → 404); `depth: quick|research|deep` (default from persona,
+      `_bounded()` clamp); persona-scoped conversations; elevated role gate.
+- [ ] **PR 21 `rebuild/protocol-v3`** — POST everywhere (research/agent GET → POST);
+      `/ask/agent` → `/ask/deep_research`; scopes `{search, research, deep_research,
+      persona}`; one body schema for all ask routes:
+      `{query, stream, conversation_id, thinking?, effort?, source_types?, background?,
+      attachment_ids?, depth?, persona_id?}`; SSE changelog **v3** (breaking); §0 entry
+      recorded; Phase 9 PR 5 + PR 8 closed as absorbed.
 
-**DoD:** answers are produced from vector-retrieved + reranked context; eval report exists;
-default configuration beats the Phase 2 baseline on the golden set.
-*Status: **closed 2026-10-18** (valid run on local Ollama `bge-m3`, both configs on
-identical cached search/scrape inputs; report at `eval_reports/eval_report.json`,
-gitignored — numbers recorded here). Vector retrieval was exercised on 20/20 queries and
-the gate ("vector must not lose to baseline") passed: vector ≥ baseline on every query,
-strict gains in mean MRR 0.074 → 0.082 and mean latency 13.2 s → 5.7 s. Recall ties at
-0.125 because search-egress poisoning floors 14/20 queries at zero golden URLs fetched
-for *both* configs (the rust query returned peptide articles, k8s returned Gmail login
-pages) — a strict "beats" is unmeasurable from this host; re-run from a clean egress
-after search-layer mitigation (proxy egress / API-keyed engines / result-sanity
-heuristics — a scheduled design decision, see the 2026-10-17 diagnosis below). Bugs found
-and fixed by the run: `ChunkRepository.vector_candidates` shipped `:query_vector::vector`
-to asyncpg as literal SQL (`text()` mis-parses a bind param followed by `::`) and the
-aborted transaction cascaded `InFailedSQLTransaction` onto later inserts — now
-`CAST(:query_vector AS vector)` plus rollback-on-error, with live-Postgres regression
-tests in `tests/modules/chunk_store/test_repository.py` (integration-marked).*
+### 2.4 Phase 12 — Retrieval upgrades (carried from Phase 9, unscheduled)
 
-### Phase 4 — Agent mode (`research` mode + agentic loop)
-
-- [x] Agent loop over the shared tools (`web_search`, `fetch_pages`, `get_context`) with
-      iteration/token/time budgets; per-step SSE events; models gated on the `tools`
-      capability. `pre_score` joins when the decision layer lands (Phase 7).
-- [x] `research` mode = planner (sub-questions via tool call) → per-sub-question search
-      pipeline → grounded synthesis report with citations. Replaces the `/ask/research` stub.
-- [x] Role gating per §0.5 (`search` all users; `research` elevated).
-
-**DoD:** research mode produces a cited report end-to-end with bounded budgets; role gating
-tested.
-*Status: **closed 2026-10-18**. Shared tools promoted to `src/core/tools/` (toolbox,
-chunking, ToolArgStream, ToolProtocolError) so neither pipeline imports the other. New
-`src/core/research/`: planner + per-sub-question gathering + cited-report synthesis
-(`/ask/research`, SSE + JSON), generic agent loop over the shared tools with a Budget
-(iterations / wall-clock / estimated tokens) and a forced-synthesis degrade path
-(`/ask/agent`, SSE). Both elevated modes gate on the existing `pro` or `admin` role
-(`get_current_elevated_user` in identity; the `pro` role is now seeded at startup —
-schema unchanged). Gating verified against live Postgres (401 anonymous / 403 plain
-user / 200 pro and admin); planner, agent loop, and adapters covered by 35 offline
-tests using the scripted tool model. Budgets and the extended SSE events (`plan`,
-budget-aware `done`) documented in `docs/api/ask_research_sse.md` and `.env.template`.
-Open decision #4 stays open — the gate reads a central `ELEVATED_ROLES` tuple, so a
-role rename is a one-line change.*
-
-### Phase 5 — Personas (custom agents)
-
-- [x] `agents` (personas) table per user: name, system context (topic/tech stack), search
-      constraints (allowed domains/engines/keywords), default parameters.
-- [x] Persona-scoped `agents` mode: agent loop constrained by the persona (query rewriting
-      biased by persona context, search constrained to its scope); select persona per
-      request/conversation; role-gated.
-- [x] Persona management endpoints (CRUD, own personas only).
-
-**DoD:** a "Rust programmer" persona demonstrably changes the sources and answers for the
-same query vs. no persona.
-*Status: **closed 2026-10-18**. New `personas` module (`src/modules/personas/`: model /
-repository / router, table `persona` — schema change, extends `create_all` bootstrap
-until Alembic lands in Phase 6). CRUD is scoped to the owner (`get_for_user` treats
-foreign personas as 404); `/ask/agent?persona_id=` loads one of the caller's personas and
-constrains the Phase 4 agent loop: system-context/keyword bias in the system prompt,
-domain allowlist as a host-suffix filter in `AskToolbox.web_search`, per-call engines via
-the extended `ISearchProvider.search(query, engines=...)` (SearXNG honors it), and budget
-overrides from `default_parameters` clamped to the settings ceiling. The DoD is asserted
-offline (persona changes both the ranked sources and the system prompt for the same
-query); CRUD isolation and the persona-wired agent route verified by 6 integration tests
-against live Postgres.*
-
-Post-personas follow-up:
-
-- [x] Re-run the Phase 3 golden-set eval from a clean egress (or after search-layer
-      mitigation: proxy egress / API-keyed engines — see backlog) so the "vector beats
-      baseline" gate can be measured strictly, not just "does not lose" (recall was
-      floored at 0.125 by search-egress poisoning on 14/20 queries; details in the Phase 3
-      status note).
-  *Status: **done 2026-10-18** (branch `eval-rerun-phase3`). Mitigation first: the eval
-  gained a result-sanity filter (topical-overlap guard between query and search results;
-  the exact Phase 3 poisoning — peptide articles for Rust queries — is now dropped and
-  reported per query, 8 unit tests). Re-run on local Ollama `bge-m3`, both configs on
-  identical cached inputs, 20/20 queries on genuine vector retrieval (no fallbacks):
-  **vector strictly beats baseline — recall 0.100 vs 0.075, MRR 0.063 vs 0.057, mean
-  latency 5.9 s vs 12.4 s**; vector also produced context on 3 queries where the
-  baseline had none (cross-query chunk accumulation). So the gate is no longer a tie.
-  Egress is still not fully clean, but the damage moved layers: after an engine-suspend
-  reset, search returned topically-relevant URLs, while page *fetching* is rate-limited
-  from this host (403/429 on StackOverflow, Cloudflare, …), capping absolute recall at
-  0.100 (16/20 queries still zero). Lifting that cap needs the backlog items: proxy
-  egress or API-keyed search backends.*
-
-### Phase 6 — Platform hardening
-
-- [x] History module (fill the empty files): PostgreSQL conversations/messages, per user,
-      wired into ask routes; `conversation_id` handling.
-- [x] Admin user management: block/unblock users (`is_active`), enforced by auth middleware
-      and all API-key checks; admin listing of users.
-- [x] API keys for clients/backends: server-generated keys, hash-only storage (reuse
-      `CryptoService`), scopes tied to modes/roles, rate limiting; reject valid keys whose
-      user is blocked/inactive; track `last_used_at`. Design doc first
-      (open decision — scheme not finalized).
-- [x] Alembic migrations; retire `create_all` (Phase 3's pgvector schema migrates too);
-      validate upgrade **and downgrade** paths on a clean database.
-- [x] CI (GitHub Actions): ruff, unit tests (no services), integration tests with
-      postgres + searxng services, container build; dependency vulnerability scan
-      (e.g. `pip-audit`) and a secrets-exposure check on every PR.
-- [x] Fill `docs/` per `docs/doc_plan.md`; README rewrite (modes, model selection, topology
-      options) verified by a fresh-clone test; release tagging.
-- [x] Release tagging is deferred to the first tagged release (V1-RC); everything else
-      above shipped 2026-10-18.
-
-*Status: **closed 2026-10-18** (release tagging noted above). History: `history` module
-(`conversation`/`message` tables, owner-scoped CRUD, `GET /history[...]`), wired into
-`/ask/search` — `conversation_id` continues a conversation (404 foreign), omitted creates
-one (SSE `conversation` event; JSON `conversation_id` field); prior turns inject into the
-answer step; turn persistence never kills a finished stream. Admin: `user.is_active`
-enforced at login (401), JWT validation (403), and every API-key resolve (401);
-`GET /admin/users`, `PATCH /admin/users/{id}/status` (409 self-block guard). API keys:
-`ak-`-prefixed server-generated keys, SHA-256 **hash-only** storage (deliberate deviation
-from the "reuse CryptoService" note: user keys are never needed in cleartext after
-issuance, so irreversibility beats reversibility; design in
-`docs/architecture/api_keys.md`), scopes `{search, research, agent}` enforced per mode on
-X-API-Key sessions, in-process fixed-window rate limit (`API_KEY_RATE_LIMIT_PER_MINUTE`),
-`last_used_at` tracked. Alembic: initial revision covers all 14 tables (pgvector extension
-created in-migration); startup runs `upgrade head`, pre-Alembic databases are adopted by
-stamping; `create_all` survives only as the pytest harness bootstrap; upgrade/downgrade/
-re-upgrade validated on clean scratch DBs (integration tests + live verification). CI:
-`.github/workflows/ci.yml` (ruff, offline pytest, integration pytest with a pgvector
-service — SearXNG not needed: integration tests stub the search provider, container
-build, `uv export` + `pip-audit`, gitleaks with a `.gitleaks.toml` allowlist for the
-committed deterministic test key). Docs filled per `doc_plan.md` (api/architecture/
-operations + index); Containerfile rewritten (uv-based, migrations baked in — the old one
-referenced a nonexistent requirements.txt and a broken CMD); README extended (history,
-API keys, migrations, CI). Fresh-clone test executed as command-coherence verification
-locally (no second machine available — noted, not silently passed).*
-
-### Phase 7 — Decision layer (Jev / Laya pre-scorers) — deliberately last
-
-- [x] `decision` provider: Jev-compatible HTTP client (choice / score / noul questions →
-      typed answers with calibrated probabilities), configured as a catalog provider
-      (Laya sidecar / host service / Jev cloud). Optional in-process Laya SDK variant later.
-- [x] Apply temperature scaling / calibration wrapper per Laya docs before trusting scores.
-- [x] Wire into the pipeline as **pre-scores** (each individually toggleable, off by default
-      until eval'd):
-      - search-result filtering: noul "is this result relevant to the query?" before scraping
-        (saves fetches);
-      - chunk filtering: score "rate relevance 1–5" as a second opinion next to the
-        cross-encoder;
-      - query choice: pick the best rewritten search query among candidates;
-      - grounding check: noul "is this claim supported by the context?" as a post-answer
-        verification signal (surfaced, not silently blocking).
-- [x] Expose decisions as a tool (`pre_score`) so the Phase 4 agent mode can use them too.
-- [x] `compose.yml`: optional `laya-serve` profile (`laya[serve]` image/service).
-
-**DoD:** with a Laya sidecar or Jev key configured, each pre-score use case can be enabled
-and measured via the Phase 3 eval harness; failures degrade gracefully (skip, never crash).
-*Status: **closed 2026-10-18**. New `decision` module: `IDecisionMaker` interface with
-typed helpers (noul / score / choice, single + batch) and `JevCompatibleClient` speaking
-the documented wire protocol (`/v1/systemone[\/batch]`); one client serves a
-`laya[serve]` sidecar, a host service, or Jev cloud (decision #2: sidecar). Resolution via
-the catalog (`kind=decision`, provider type `jev`, optional per request
-`decision_model_id`); the dependency degrades to None — the whole layer is optional.
-Temperature scaling: every probability passes `softmax(logits/T)` with temperatures from
-the entry's `default_params.calibration` keyed by `"<type>:<option-count>"` (defaults are
-placeholders — fit on own data per Laya docs, mean ECE 0.213→0.081 when fitted; noted in
-`docs/architecture/decision_layer.md`). All four pre-scores wired and toggleable in
-settings, default OFF: search-result filter (batched noul, never empties the set), chunk
-second-opinion (1–5 with min-score floor), query choice (raw vs optimized), grounding
-signal (SSE `grounding` event + JSON `grounding_supported`, never blocking). Agent mode
-gains a `pre_score` tool when a decision model resolves. Eval CLI measures the retrieval
-pre-scores (`--pre-score-search-filter`, `--pre-score-chunk-filter`,
-`--decision-id`). compose: `--profile laya` service (pip-installs `laya[serve]`; no
-prebuilt image exists). 37 new offline tests (wire protocol, calibration math, degradation
-paths, pipeline surfacing, tool gating). Note: this branch also carries the cherry-picked
-decisions commit (`a9d51d3`, pushed to the PR #5 branch after that PR was merged — see PR
-description).*
-
-### Phase 8 — Auth: refresh tokens (scheduled 2026-10-26, implemented 2026-10-26)
-
-Today `POST /auth/login` returns only a stateless JWT (`ACCESS_TOKEN_EXPIRE_MINUTES`,
-6 h as of 2026-10-26) and clients re-send the password on expiry; API keys cover
-machines, not interactive sessions. This phase adds a proper refresh flow.
-
-- [x] Design doc first (`docs/architecture/auth.md`): token format, storage, rotation and
-      revocation policy, threat model (open decision #5 — do not start before it is decided).
-- [x] `refresh_token` table: hash-only storage (SHA-256, same precedent as API keys —
-      plaintext never stored or logged), user FK, expiry, rotation parent link, rotated /
-      revoked flags, client label + `created_at` + `last_used_at` (per-session rows: each
-      login / device mints its own token so one device can be revoked without the others);
-      Alembic migration (create_all survives only as the pytest harness bootstrap).
-- [x] Issue at `POST /auth/login` next to the access token; the access token stays
-      stateless and DB-validated per request (6 h default, decided 2026-10-26 —
-      `get_current_user` checks `is_active` on every call, so the long window does not
-      delay revocation).
-- [x] `POST /auth/refresh`: single-use rotation on every call — a fresh random secret (new
-      hash in a new row, parent-linked); the old row is kept marked `rotated` because reuse
-      detection depends on the history; reuse of an already-rotated token revokes the whole
-      rotation chain (stolen-token detection).
-- [x] Revocation paths: explicit logout endpoint, password change, and admin block —
-      `is_active` must gate refresh the same way it already gates JWT validation and
-      API-key resolution.
-- [x] Cleanup: expired / rotated rows are retained (reuse evidence + audit) and purged
-      after a retention window by a periodic in-process task on the app lifespan — expired
-      tokens presented at use time just get 401, the row stays until the sweep.
-- [x] Settings: `REFRESH_TOKEN_EXPIRE_DAYS` (decided: 90), `REFRESH_TOKEN_RETENTION_DAYS`
-      (+ any rotation knobs) in `src/tools/settings.py` and `.env.template`; no hardcoded
-      values. The access-token default already moved to 360 min.
-- [x] Tests: offline unit tests for issue / rotate / reject / chain-revoke logic; DB paths
-      (table + route) integration-marked against live Postgres.
-- [x] Docs: auth matrix in `docs/api/` and README login section updated; SSE and JSON
-      clients unaffected (refresh is a plain JSON round-trip before streaming starts).
-
-**DoD:** an interactive client holds a long-lived refresh token and mints fresh access
-tokens without re-sending the password; a rotated/reused token is detected and the chain
-revoked; blocked users cannot refresh.
-*Status: **closed 2026-10-26** (same day as scheduling; decision #5 approved as opaque
-DB-backed). New `RefreshToken` table (migration `c84e1f7a20bd`; migration test's
-table set extended) with hash-only storage and per-session rows; `POST /auth/login`
-now returns `{access_token, token_type, refresh_token}`, `POST /auth/refresh` rotates
-single-use (old row marked rotated, child minted in one commit) and replays revoke the
-whole parent-link chain, `POST /auth/logout` is idempotent 204. Revocation wired into
-password change (`PATCH /user/{id}`), admin block, and user deletion. Purge sweep runs
-at startup and every 6 h on the app lifespan (`REFRESH_TOKEN_RETENTION_DAYS=30`);
-session window `REFRESH_TOKEN_EXPIRE_DAYS=90`, sliding per refresh. 8 offline unit
-tests (token shape, state classification, chain walk) + 9 integration tests (rotation,
-replay-kills-chain, logout, expiry retention, block, password change, purge). Design in
-`docs/architecture/auth.md`; API doc auth matrix updated.*
-
-### Phase 9 — Workflow upgrades (`ref/WORKFLOW_UPGRADES.md`, plan: `ref/WORKFLOW_IMPLEMENTATION_PLAN.md`)
-
-User-facing retrieval knobs in the order of the WU rollout sequence. Every
-step ships its default at "current behavior" except where a deliberate flip
-is noted; each PR is one branch.
-
-- [x] PR 1 `wu/hygiene` (WU-3 + WU-6 / AR-2): URL normalization (`src/tools/urls.py`),
-      sanity filter promoted to production (`RESULT_SANITY_FILTER`, **deliberate
-      default flip: on** — validated by the Phase-3 eval re-run), dedup by
-      normalized URL + fusion tie-break (`src/modules/search_engine/fusion.py`),
-      `max_urls` request cap (`TOP_N_URLS_MAX`), `URL_SELECTION_MIN_FUSION` floor
-      (default off), `debug` event carries `dropped_results`/`merged_results`.
-- [x] PR 2 `wu/cache` (WU-10 + WU-2 / AR-1): search-result TTL cache (one shared
-      instance per provider config in the factory), Postgres `scraped_page` page
-      cache (migration `b7e4d29c81af`) wrapped in the scraper factory, embed-skip
-      (`ChunkRepository.existing_hashes`), rule-based `query_variations`, and the
-      `cache: "on" | "bypass"` request param. Defaults reproduce today's pipeline;
-      a cache hit is invisible except latency. *Stacked on PR 1 (shares
-      `normalize_url` keys and the dedup merge).*
-- [ ] PR 3 `wu/citations` (WU-9 / AR-5 + AR-9): numbered `[n]` citations + validator +
-      offline fixture eval in CI.
-- [ ] PR 4 `wu/rewrite` (WU-1 / AR-4): history-aware standalone rewriting
-      (`rewrite` param; **deliberate default flip: `"standalone"`**).
-- [ ] PR 5 `wu/research-loop` (WU-7 + WU-8 / AR-3): reflect–search loop + brief
-      compression (`RESEARCH_COMPRESS_CONTEXT` ships false).
-- [ ] PR 6 `wu/recency-scope` (WU-11 + WU-5 / AR-7 + AR-8): dates in prompts and
-      chunk metadata, `recency_bias`, `chunk.conversation_id` + scoping + HNSW +
-      eviction (`scope` default ships `"global"`; flip is an open decision).
-- [ ] PR 7 `wu/hybrid` (WU-4): lexical + vector RRF fusion behind `hybrid_alpha`
-      (default 1.0 until measured).
-- [ ] PR 8 `wu/modes` (WU-12): mode presets — deferred until a UI client asks.
+- [ ] PR 3 `wu/citations` — numbered `[n]` citations + validator + offline fixture eval
+      (feeds the Note assembler's Sources section).
+- [ ] PR 4 `wu/rewrite` — history-aware standalone rewriting (default flip:
+      `"standalone"`).
+- [ ] PR 7 `wu/hybrid` — lexical + vector RRF fusion behind `hybrid_alpha` (default 1.0
+      until measured).
 
 ---
 
@@ -485,20 +364,29 @@ is noted; each PR is one branch.
 
 | # | Decision | Owner | Needed by |
 |---|----------|-------|-----------|
-| 1 | ~~Default embedding model + dims~~ **Decided 2026-10-17: `bge-m3`, 1024 dims (Ollama)** | daniel | Phase 3 ✅ |
-| 2 | ~~Laya packaging~~ **Decided 2026-10-18: HTTP sidecar** (`laya[serve]` container or Jev cloud; one Jev-compatible client) | daniel | Phase 7 |
-| 3 | ~~API-key scheme (shape, scopes, rotation)~~ **Decided (approved) 2026-10-18**: implemented design in `docs/architecture/api_keys.md` | daniel | closed |
-| 4 | ~~Keep or drop the `pro` role name~~ **Decided 2026-10-18: renamed to `research`** (data migration renames seeded rows; assignments preserved via role id) | daniel | closed |
-| 5 | ~~Refresh-token format: opaque random token, DB-backed and revocable (API-key precedent) vs stateless signed JWT (no DB hit, but needs a denylist to revoke)~~ **Decided (approved) 2026-10-26: opaque random token, DB-backed** (SHA-256 hash-only, single-use rotation parent chain; access token 6 h, refresh window 90 days) | daniel | closed |
+| 1–5 | *(closed 2026-10-17 → 2026-10-26: embedding model, Laya packaging, API-key scheme, `research` role rename, refresh-token design)* | — | closed |
+| 6 | ~~Reasoning/effort field naming~~ **Decided 2026-10-28:** `thinking` + `effort`; `reasoning_effort` only as OpenAI wire param inside the adapter | daniel | closed |
+| 7 | ~~Profile preferences on model switch~~ **Decided 2026-10-28:** reset thinking/effort to model defaults; request > profile > model default | daniel | closed |
+| 8 | ~~Image gating~~ **Decided 2026-10-28:** 422 `model_lacks_vision` at ask time; capabilities ⊇ `{tools, vision}` | daniel | closed |
+| 9 | ~~Persona gating~~ **Decided 2026-10-28:** whole persona mode elevated (depth is a budget choice) | daniel | closed |
+| 10 | ~~Version baseline~~ **Decided 2026-10-28:** reset to 0.15.0 in PR 9; minor per merged branch; 1.0.0 at webapp GA | daniel | closed |
+| 11 | ~~z.ai effort levels~~ **Decided 2026-10-28 (round 5):** native mapping + probe-prune — adapter maps `effort` → `reasoning_effort` (`low|medium|high|max`), catalog seeds per GLM generation, live probe prunes aliased/rejected levels (decision 20) | daniel | closed |
+| 12 | ~~gg.deals~~ **Decided 2026-10-28:** official Prices API confirmed (API key; current + historical prices); exact endpoint shapes, quota and ToS verified at PR 14 implementation | daniel | closed |
+| 13 | ~~`scope` default flip~~ **Decided 2026-10-28 (round 5):** no flip — web chunks stay global, uploads conversation-scoped unconditionally, `scope=conversation` opt-in; revisit at protocol v3 (decision 21) | daniel | closed |
 
 ---
 
-## 4. Backlog (unscheduled; carried over from the retired `ROADMAP.md`)
+## 4. Backlog (unscheduled)
 
-- **Alternate search backends:** Tavily / SerpAPI / Bing API providers for the `search_engine`
-  module, configurable per request or per persona. Doubles as the "API-keyed engines"
-  mitigation for the search-egress poisoning diagnosed at Phase 3 closure.
-- **API-caller tool for agent modes:** let Phase 4/5 agents call external REST APIs with
-  user-provided (encrypted) credentials as an additional first-class tool.
-- **Soft delete for user data:** hide-but-preserve semantics (conversations, personas) instead
-  of hard row deletion.
+- **Alternate search backends:** Tavily / SerpAPI / Bing providers (also the "API-keyed
+  engines" mitigation for search-egress poisoning, Phase 3 closure).
+- **API-caller tool for agent modes:** external REST calls with user-provided (encrypted)
+  credentials.
+- **Soft delete for user data:** hide-but-preserve (conversations, personas, attachments).
+- **Per-model settings memory:** remember last thinking/effort per model in the profile
+  (v1 ships single active preference set + reset-on-switch).
+- **Persona-level source types:** intersect `allowed_source_types` with provider support.
+- **Multi-node topology:** Redis-backed ICache + jobs outgrow single-node asyncio.
+- **Job auto-resume:** replay interrupted background runs from the last `research_note`.
+- **OCR fallback for non-vision models:** out of scope for v1; would belong in a
+  pre-scorer-style sidecar.
