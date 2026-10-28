@@ -120,6 +120,14 @@ class Settings(BaseSettings):
     # reranking. Chunks are embedded at scrape time when an embedder resolves.
     VECTOR_CANDIDATES_K: int = 25
 
+    # <----- Recency (WU-11) ----->
+    # Operator ceiling for the per-request recency_bias (0 = neutral).
+    RECENCY_BIAS_MAX: float = 1.0
+
+    # <----- Chunk-store hygiene (AR-8) ----->
+    # Chunks older than this are purged at boot (0 disables eviction).
+    CHUNK_TTL_DAYS: int = 30
+
     # <----- Research mode / agent loop ----->
     RESEARCH_MAX_SUBQUESTIONS: int = 5
     AGENT_MAX_ITERATIONS: int = 8

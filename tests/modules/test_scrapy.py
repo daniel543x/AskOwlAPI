@@ -98,3 +98,63 @@ def test_scraper_falls_back_to_settings_defaults():
 def test_scraper_treats_missing_config_as_empty(missing):
     scraper = TrafilturaScraper(config=missing)
     assert scraper.concurrency > 0
+
+
+# <----- Page metadata extraction (AR-7 task 2) ----->
+
+METADATA_HTML = """<html><head><title>Metadata Test Page</title>
+<meta name="date" content="2026-01-15">
+</head><body>
+<h1>Metadata Header</h1>
+<p>Enough meaningful text for the extractor to keep this page.</p>
+</body></html>"""
+
+
+async def test_scrape_carries_title_and_publication_date(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=METADATA_HTML)
+
+    _install_mock_transport(monkeypatch, handler)
+    scraper = TrafilturaScraper()
+
+    result = await scraper.scrape([{"url": "http://meta.test/1"}])
+
+    assert result is not None
+    page = result[0]
+    # trafilatura reports the extracted content heading as the title.
+    assert page["title"] == "Metadata Header"
+    assert page["published_at"] == "2026-01-15"
+    assert page["fetched_at"]
+
+
+async def test_chunk_metadata_carries_title_site_and_dates():
+    from src.core.tools.chunking import chunk_markdown_data
+
+    chunks = chunk_markdown_data(
+        [
+            {
+                "url": "https://docs.example/guide/intro",
+                "content": "# Guide\n\nSome section text long enough to chunk.",
+                "title": "The Guide",
+                "published_at": "2026-01-15",
+                "fetched_at": "2026-10-26T00:00:00+00:00",
+            }
+        ]
+    )
+
+    assert chunks
+    for chunk in chunks:
+        metadata = chunk["metadata"]
+        assert metadata["title"] == "The Guide"
+        assert metadata["site"] == "docs.example"
+        assert metadata["published_at"] == "2026-01-15"
+        assert metadata["fetched_at"] == "2026-10-26T00:00:00+00:00"
+
+
+def test_registrable_domain():
+    from src.tools.urls import registrable_domain
+
+    assert registrable_domain("https://docs.example/guide") == "docs.example"
+    assert registrable_domain("https://a.b.example/x") == "b.example"
+    assert registrable_domain("https://www.example.com") == "example.com"
+    assert registrable_domain("http://localhost:3000/x") == "localhost"
