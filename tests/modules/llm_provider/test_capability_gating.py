@@ -108,8 +108,7 @@ async def test_thinking_without_capability_is_a_coded_422():
         )
 
     assert exc_info.value.status_code == 422
-    detail = exc_info.value.detail
-    assert isinstance(detail, dict)
+    detail = cast(dict, exc_info.value.detail)
     assert detail["code"] == "model_lacks_thinking"
     assert factory.created == []
 
@@ -125,8 +124,7 @@ async def test_unsupported_effort_level_is_a_coded_422():
         await build_chat_model(repo, factory, _as_user(user), None, effort="max")
 
     assert exc_info.value.status_code == 422
-    detail = exc_info.value.detail
-    assert isinstance(detail, dict)
+    detail = cast(dict, exc_info.value.detail)
     assert detail["code"] == "unsupported_effort_level"
 
 
