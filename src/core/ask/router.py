@@ -13,7 +13,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
-from pydantic import BaseModel, Field
+from pydantic import Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...modules.attachments.service import (
@@ -49,6 +49,7 @@ from ...modules.search_engine.providers.base import ISearchProvider
 from ...modules.search_engine.source_types import ensure_source_types
 from ...tools.db import engine, get_session
 from ...tools.settings import settings
+from .services.contracts import AskBody
 from .services.search import search_json_adapter, search_sse_adapter
 
 router = APIRouter(prefix="/ask", tags=["Asks"])
@@ -56,16 +57,9 @@ router = APIRouter(prefix="/ask", tags=["Asks"])
 _search_scope = require_scope("search")
 
 
-class SearchRequest(BaseModel):
-    """Body of POST /ask/search."""
+class SearchRequest(AskBody):
+    """Body of POST /ask/search: the v3 base plus retrieval extras."""
 
-    query: str = Field(description="User query.")
-    stream: bool = Field(
-        default=True, description="Stream the answer as SSE. Default true."
-    )
-    conversation_id: uuid.UUID | None = Field(
-        default=None, description="Continue an existing conversation (own only).",
-    )
     max_urls: int | None = Field(
         default=None,
         ge=1,
@@ -130,21 +124,8 @@ class SearchRequest(BaseModel):
             "a job id; the answer is not streamed."
         ),
     )
-    thinking: bool | None = Field(
-        default=None,
-        description=(
-            "Reasoning-mode control (decision 11). null = model default; "
-            "requires the model's 'thinking' capability (422 otherwise)."
-        ),
-    )
-    effort: Literal["low", "medium", "high", "max"] | None = Field(
-        default=None,
-        description=(
-            "Reasoning-effort control (decision 11). null = model default; "
-            "requires the 'effort' capability and a supported level "
-            "(422 with a coded error otherwise)."
-        ),
-    )
+    # thinking/effort/source_types/attachment_ids/background/depth/
+    # persona_id come from the AskBody base (protocol v3).
 
 
 @router.post("/search", dependencies=[Depends(require_scope("search"))])

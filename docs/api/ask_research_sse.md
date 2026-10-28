@@ -1,24 +1,33 @@
 # Ask Research / Agent API — SSE Protocol
 
-Applies to `GET /ask/research` (SSE with `stream=true`, default; JSON with
-`stream=false`) and `GET /ask/agent` (SSE only). Both routes require an
-elevated role (`research` or `admin`); see `docs/api/ask_search_sse.md` for the
-base wire format (SSE framing, event ids, terminal events) — this document
-only lists the extensions over protocol v2.
+Applies to `POST /ask/research` (SSE with `stream=true`, default; JSON with
+`stream=false`) and `POST /ask/deep_research` (the deep preset: scout +
+reflect + notes). Both routes require an elevated role (`research` or
+`admin`); see `docs/api/ask_search_sse.md` for the base wire format (SSE
+framing, event ids, terminal events) — this document lists the
+extensions.
 
-## Route parameters
+**Protocol v3 (breaking, PR 21):** both routes are POST-only with the
+unified body `{query, stream, conversation_id, thinking, effort,
+source_types, background, attachment_ids, depth, persona_id}`; the
+`GET /ask/agent` loop is removed (use `/ask/persona` with
+`depth=quick`, or `/ask/deep_research`).
 
-| Route           | Parameters                                    |
-|-----------------|-----------------------------------------------|
-| `/ask/research` | `query` (required), `stream` (default `true`), `model_id`, `embedder_id`, `reranker_id`, `search_provider`, `source_types` (repeated, optional) |
-| `/ask/agent`    | `goal` (required), `persona_id` (optional), `model_id`, `embedder_id`, `reranker_id`, `decision_model_id`, `search_provider`, `source_types` (repeated, optional) |
+## Route parameters (v3: the body)
 
-Model-selection parameters are optional UUIDs (see
-[models.md](models.md)); `search_provider` selects a search provider by name.
-`source_types` narrows the search slice for the run (PR 11 / decision 13):
-repeat the parameter (`source_types=web&source_types=news`); empty =
-provider default. Values are validated against the active provider's
-declared set (`GET /search/sources`) — unknown values are a 422.
+All ask routes share one body schema (`AskBody`): `{query` (required),
+`stream`, `conversation_id`, `thinking`, `effort`, `source_types`,
+`background`, `attachment_ids`, `depth`, `persona_id`}`. The research
+routes ignore `depth`/`persona_id`; `thinking`/`effort` follow the PR 9
+capability contract. Model-selection parameters (`model_id`,
+`embedder_id`, `reranker_id`, `decision_model_id`, `search_provider`)
+stay on the query string (see [models.md](models.md));
+`search_provider` selects a search provider by name.
+
+`source_types` narrows the search slice for the run (PR 11 / decision
+13): an array in the body; empty = provider default. Values are
+validated against the active provider's declared set
+(`GET /search/sources`) — unknown values are a 422.
 
 `persona_id` selects one of the caller's personas (`POST/GET/PATCH/DELETE /personas`):
 its system context and keywords bias the agent's queries, its domain allowlist filters

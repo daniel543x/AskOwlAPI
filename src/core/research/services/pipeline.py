@@ -30,8 +30,15 @@ from ...tools.errors import ToolProtocolError
 from ...tools.toolbox import AskToolbox
 from .agent import agent_logic
 from .budgets import Budget
-from .planner import plan_subquestions
-from .synthesis import NO_CONTEXT_REPORT, generate_report, stream_report
+from .planner import plan_subquestions, revise_research_plan
+from .synthesis import (
+    NO_CONTEXT_REPORT,
+    assemble_note_report,
+    assemble_note_report_stream,
+    generate_report,
+    plan_note_report,
+    stream_report,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +96,10 @@ async def research_logic(
     today: str | None = None,
     source_types: list[str] | None = None,
     attachments: list[dict[str, Any]] | None = None,
+    note_store=None,
+    scout: bool = False,
+    reflect: bool = False,
+    persona=None,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the research pipeline, yielding (event, payload) pairs.
 
@@ -104,9 +115,24 @@ async def research_logic(
         chunk_repo = ChunkRepository(session) if session is not None else None
         toolbox = AskToolbox(
             searching, scraper, ranker, embedder, chunk_repo,
+            allowed_domains=persona.allowed_domains if persona else None,
+            allowed_engines=persona.allowed_engines if persona else None,
             source_types=source_types,
             attachments=attachments,
+            note_store=note_store,
         )
+
+        # <----- Scout (deep preset, PR 19): one forced pass before the
+        # planner so sub-questions are biased by real material. ----->
+        if scout:
+            yield "status", {"step": "Scouting the landscape..."}
+            await toolbox.web_search(query)
+            if toolbox.ranked_sources:
+                yield "sources", {"sources": toolbox.ranked_sources,
+                                  "subquery": query}
+            await toolbox.fetch_pages()
+            scout_context = await toolbox.get_context(query)
+            budget.spend_tokens(scout_context)
 
         # <----- Planning (native tool call) ----->
         yield "status", {"step": "Planning sub-questions..."}
@@ -158,6 +184,15 @@ async def research_logic(
                     "seconds": round(time.perf_counter() - start, 3),
                 }
 
+            if context.strip() and note_store is not None:
+                sources_used = [
+                    s.get("url", "")
+                    for s in (toolbox.ranked_sources or [])[:8]
+                ]
+                entry = await note_store.write(
+                    subquestion, context, sources_used
+                )
+                yield "note", entry
             if context.strip():
                 gathered.append(
                     {
@@ -178,6 +213,64 @@ async def research_logic(
                 },
             )
             return
+
+        # <----- Reflect (deep preset, PR 19): one revise_plan round that
+        # may add sub-questions for gaps, clamped to the ceiling + slack.
+        if reflect:
+            digest = "\n".join(
+                f"- {item['subquestion']}: {item['context'][:160]}..."
+                for item in gathered
+            )
+            added, rationale = await revise_research_plan(
+                model, query, digest, today=today
+            )
+            ceiling = (
+                settings.RESEARCH_MAX_SUBQUESTIONS
+                + settings.RESEARCH_REFLECT_SLACK
+            )
+            added = [q for q in added if q not in subquestions][
+                : max(0, ceiling - len(subquestions))
+            ]
+            if added:
+                yield "reflect", {
+                    "added": added,
+                    "rationale": rationale,
+                    "subquestions": subquestions + added,
+                }
+                for subquestion in added:
+                    if budget.exhausted:
+                        break
+                    yield "status", {
+                        "step": f"Researching (reflect): {subquestion}"
+                    }
+                    await toolbox.web_search(subquestion)
+                    if toolbox.ranked_sources:
+                        yield "sources", {
+                            "sources": toolbox.ranked_sources,
+                            "subquery": subquestion,
+                        }
+                    await toolbox.fetch_pages()
+                    context = await toolbox.get_context(subquestion)
+                    budget.spend_tokens(context)
+                    if context.strip():
+                        if note_store is not None:
+                            entry = await note_store.write(
+                                subquestion,
+                                context,
+                                [
+                                    s.get("url", "")
+                                    for s in (toolbox.ranked_sources or [])[:8]
+                                ],
+                            )
+                            yield "note", entry
+                        gathered.append(
+                            {
+                                "subquestion": subquestion,
+                                "sources": list(toolbox.ranked_sources),
+                                "context": context,
+                            }
+                        )
+                subquestions = subquestions + added
 
         yield (
             "answer_ready",
@@ -206,6 +299,10 @@ async def research_sse_adapter(
     source_types: list[str] | None = None,
     attachments: list[dict[str, Any]] | None = None,
     images: list[bytes] | None = None,
+    note_store=None,
+    scout: bool = False,
+    reflect: bool = False,
+    persona=None,
     turn: TurnResources | None = None,
 ) -> AsyncGenerator[str]:
     """Translate research events into an SSE stream.
@@ -225,7 +322,8 @@ async def research_sse_adapter(
             pipeline = research_logic(
                 query, searching, model, scraper, ranker, embedder=embedder,
                 session=session, today=today, source_types=source_types,
-                attachments=attachments,
+                attachments=attachments, note_store=note_store,
+                scout=scout, reflect=reflect, persona=persona,
             )
             async for event, data in pipeline:
                 if event == "answer_ready":
@@ -234,6 +332,35 @@ async def research_sse_adapter(
                     if data["no_context"]:
                         yield frame("message", {"text": NO_CONTEXT_REPORT})
                         yield frame("done", {"status": "no_context"})
+                        return
+
+                    notes = await note_store.ordered_notes() if note_store else []
+                    if notes:
+                        # PR 18: editorial plan from the TOC, then the
+                        # deterministic assembly streams the sections.
+                        try:
+                            plan = await plan_note_report(
+                                model, data["query"], notes
+                            )
+                            async for delta in assemble_note_report_stream(
+                                notes, plan
+                            ):
+                                yield frame("message", {"text": delta})
+                            yield frame("done", {"status": "completed"})
+                        except ToolProtocolError as e:
+                            logger.warning(
+                                "Note report degraded for %s: %s", query, e
+                            )
+                            yield frame(
+                                "degraded",
+                                {"reason": f"note report: {e}"},
+                            )
+                            async for delta in stream_report(
+                                model, data["query"], data["gathered"],
+                                today=today, images=images,
+                            ):
+                                yield frame("message", {"text": delta})
+                            yield frame("done", {"status": "completed"})
                         return
 
                     try:
@@ -310,6 +437,10 @@ async def research_json_adapter(
     source_types: list[str] | None = None,
     attachments: list[dict[str, Any]] | None = None,
     images: list[bytes] | None = None,
+    note_store=None,
+    scout: bool = False,
+    reflect: bool = False,
+    persona=None,
     turn: TurnResources | None = None,
 ) -> dict[str, Any]:
     """Run the research pipeline and return the full result as one dict."""
@@ -321,7 +452,8 @@ async def research_json_adapter(
             pipeline = research_logic(
                 query, searching, model, scraper, ranker, embedder=embedder,
                 session=session, today=today, source_types=source_types,
-                attachments=attachments,
+                attachments=attachments, note_store=note_store,
+                scout=scout, reflect=reflect, persona=persona,
             )
             async for event, data in pipeline:
                 if event == "error":
@@ -347,6 +479,19 @@ async def research_json_adapter(
 
             if answer_data["no_context"]:
                 report = NO_CONTEXT_REPORT
+            elif note_store is not None and note_store.notes:
+                notes = await note_store.ordered_notes()
+                try:
+                    plan = await plan_note_report(
+                        model, answer_data["query"], notes
+                    )
+                    report = assemble_note_report(notes, plan)
+                except ToolProtocolError as e:
+                    logger.warning("Note report degraded for %s: %s", query, e)
+                    report = await generate_report(
+                        model, answer_data["query"], answer_data["gathered"],
+                        today, images,
+                    )
             else:
                 try:
                     report = await generate_report(

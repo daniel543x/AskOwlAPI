@@ -41,7 +41,7 @@ ranking (WU-11): 0 = neutral; publication-fresh chunks (<30 days) get the
 largest boost, unknown dates are never penalized; clamped server-side to
 `RECENCY_BIAS_MAX`.
 
-Current protocol version: **v2** (breaking; there are no external consumers yet).
+Current protocol version: **v3** (breaking changes are recorded per entry; the webapp is the first consumer and freezes the contract).
 Changelog at the bottom.
 
 ## Wire format
@@ -168,6 +168,50 @@ The LLM is never used without a tool call:
   (HTTP 422 with an explanation).
 
 ## Changelog
+
+### v3 (2026-10-28, PR 21 — breaking)
+
+- Breaking: research/deep_research/persona routes are **POST-only** with
+  the unified body schema `{query, stream, conversation_id, thinking,
+  effort, source_types, background, attachment_ids, depth, persona_id}`;
+  the search route adopts the same base (its retrieval extras stay).
+  `GET /ask/agent` is removed — use `POST /ask/deep_research` (the deep
+  preset) or `POST /ask/persona` with `depth=quick` (the free loop).
+- Scopes: `search | research | deep_research | persona`; existing keys
+  with the legacy `agent` scope keep working on the renamed routes
+  until reissued.
+
+### v2.18 (2026-10-28, PR 20 — additive)
+
+- Added: `POST /ask/persona` (decision 10) — required `persona_id`
+  (missing = 422 by schema, foreign = 404), `depth:
+  quick|research|deep` (request > persona.default_parameters > server
+  default, clamped), the whole mode elevated. quick = the free loop
+  over a persona-scoped conversation (the conversation carries
+  `persona_id`); research/deep = the research pipeline with persona
+  search constraints (deep adds scout + reflect). Background jobs
+  supported for research/deep depths.
+
+### v2.17 (2026-10-28, PR 19 — additive)
+
+- Added: `GET /ask/deep_research` — the deep-research preset (decision
+  8): scout pass before the planner, one `revise_plan` reflection round
+  (additions clamped to `RESEARCH_MAX_SUBQUESTIONS` +
+  `RESEARCH_REFLECT_SLACK`), the note flow from v2.16, and the high
+  shared budget. Elevated role.
+- Deprecated: `GET /ask/agent` (the free agent loop) — kept
+  temporarily, removed at protocol v3.
+
+### v2.16 (2026-10-28, PR 18 — additive)
+
+- Added: research notes (decision 9) — research runs persist
+  `note_write` rows (DB as source of truth) and emit a `note` event per
+  written note (`{idx, task, one_line_summary, sources_count, id}`).
+- Behavior: the research synthesis becomes an editorial call over the
+  notes' TOC only (`SubmitReport(sections, intro)`), then a
+  deterministic assembly streams intro + ordered sections with
+  per-section citations and a global Sources section. Editorial
+  contract violations degrade to the gathered→generate_report path.
 
 ### v2.15 (2026-10-28, PR 17 — additive)
 

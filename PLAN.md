@@ -168,6 +168,13 @@ explicitly — nothing is silently dropped.
     later flip is a one-default change + eval re-run. Revisit at protocol v3 (PR 21) if
     the instance turns multi-user — then flip to conversation-default inside the breaking
     window.
+22. **Protocol v3 recorded (2026-10-28, PR 21).** All ask routes are
+    POST-only with the unified body `{query, stream, conversation_id,
+    thinking, effort, source_types, background, attachment_ids, depth,
+    persona_id}`; `/ask/agent` is removed (deep_research + persona-quick
+    replace it); scopes are `{search, research, deep_research, persona}`
+    with the legacy `agent` scope accepted until reissued. The webapp
+    integrates against v3; the contract freeze (1.0.0) follows its GA.
 
 ---
 ## 1. Current-state audit
@@ -198,10 +205,10 @@ local models (PR 9), no per-user preferences (PR 10), no jobs layer (PR 13).
 | PR 2 `wu/cache` | **stays, next up** — v1 scope: search-result TTL cache, Postgres page cache, embed-skip, rule-based `query_variations`; v2 adds: rate limiter onto ICache (behavior unchanged), capability-probe cache consumer (PR 9); LLM answers never cached (decision 17) |
 | PR 3 `wu/citations` | stays (after Phase 10; feeds the Note report assembler's citation validator) |
 | PR 4 `wu/rewrite` | stays (stands alone; `rewrite: "standalone"` default flip) |
-| PR 5 `wu/research-loop` | **absorbed by Phase 11** (reflect–search + brief compression live inside the rebuild presets) |
+| ~~PR 5 `wu/research-loop`~~ | **closed — absorbed by Phase 11** (the reflect round lives in the deep preset via `revise_plan`, PR 19) |
 | PR 6 `wu/recency-scope` | **stays, prerequisite for PR 15** and news source types — v1 scope: dates in prompts and chunk metadata, `recency_bias`, `chunk.conversation_id` + scoping + HNSW + eviction; v2: `scope` ships `global` and **stays global** (decision 21 — no flip; uploads are conversation-scoped unconditionally in PR 15) |
 | PR 7 `wu/hybrid` | stays (unscheduled, after rebuild) |
-| PR 8 `wu/modes` | **un-deferred by the webapp; absorbed by Phase 11** (presets + protocol v3) |
+| ~~PR 8 `wu/modes`~~ | **closed — absorbed by Phase 11** (modes = presets landed with PRs 17-20; protocol v3 landed in PR 21) |
 
 Recommended order: **PR 2 → PR 6 → Phase 10 (PRs 9–16; uploads/vision intentionally
 last per client decision) → Phase 11 (PRs 17–21) → PR 3 / PR 4 / PR 7**. The webapp can
@@ -331,18 +338,18 @@ Preset table over the shared loop (toolbox + conversation history + degrade path
   - **Eval gate for the flip:** golden set of 30–50 queries; citation fidelity ≥
     deterministic baseline; recall/MRR within −5% relative; p50 latency ≤ 1.5×; token cost
     measured (no gate yet). Flip after 2 consecutive green runs.
-- [ ] **PR 18 `rebuild/note`** — `research_note` table + `note_write` (always returns the
+- [x] **PR 18 `rebuild/note`** — `research_note` table + `note_write` (always returns the
       TOC: `{idx, task, one_line_summary, sources_count}`) + `SubmitReport` deterministic
       assembly + SSE `note` event; `research` re-based on the core; degrade →
       gathered→generate_report (decision 9).
-- [ ] **PR 19 `rebuild/deep`** — `agent` → `deep_research` (alias `/ask/agent` kept
+- [x] **PR 19 `rebuild/deep`** — `agent` → `deep_research` (alias `/ask/agent` kept
       temporarily, deprecated); scout step (one forced web_search+fetch+get_context before
       the planner); reflect via `revise_plan(add, rationale)` with ceiling
       `RESEARCH_MAX_SUBQUESTIONS` + slack; high preset budget.
-- [ ] **PR 20 `rebuild/persona-mode`** — `POST /ask/persona` (required `persona_id`:
+- [x] **PR 20 `rebuild/persona-mode`** — `POST /ask/persona` (required `persona_id`:
       missing → 422, foreign → 404); `depth: quick|research|deep` (default from persona,
       `_bounded()` clamp); persona-scoped conversations; elevated role gate.
-- [ ] **PR 21 `rebuild/protocol-v3`** — POST everywhere (research/agent GET → POST);
+- [x] **PR 21 `rebuild/protocol-v3`** — POST everywhere (research/agent GET → POST);
       `/ask/agent` → `/ask/deep_research`; scopes `{search, research, deep_research,
       persona}`; one body schema for all ask routes:
       `{query, stream, conversation_id, thinking?, effort?, source_types?, background?,

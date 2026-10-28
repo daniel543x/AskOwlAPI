@@ -252,8 +252,8 @@ async def test_api_key_scopes_gate_modes(auth_client, db_session):
     )
     assert search_ok.status_code == 200
 
-    research_denied = await auth_client.get(
-        "/ask/research", params={"query": "rust", "stream": False},
+    research_denied = await auth_client.post(
+        "/ask/research", json={"query": "rust", "stream": False},
         headers={"X-API-Key": raw_key},
     )
     assert research_denied.status_code == 403

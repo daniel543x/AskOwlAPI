@@ -22,6 +22,11 @@ class Conversation(SQLModel, table=True):
     updated_at: datetime | None = Field(
         default=None, sa_type=DateTime(timezone=True)
     )
+    # Persona scope (PR 20): set when the conversation belongs to a
+    # persona mode turn; NULL = an ordinary conversation.
+    persona_id: UUID | None = Field(
+        default=None, foreign_key="persona.id", index=True
+    )
 
 
 class Message(SQLModel, table=True):

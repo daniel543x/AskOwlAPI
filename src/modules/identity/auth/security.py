@@ -74,11 +74,14 @@ async def get_current_user(
     raise credentials_exception
 
 
-def require_scope(scope: str):
+def require_scope(scope: str, legacy_aliases: tuple[str, ...] = ()):
     """Mode gate for API-key sessions: the key must carry `scope`.
 
     JWT sessions pass through (role gating already applies via the
-    elevated-user dependencies); this only narrows API keys.
+    elevated-user dependencies); this only narrows API keys. Routes
+    renamed at protocol v3 accept their legacy scope as an alias
+    (e.g. `agent` for `deep_research`/`persona`) so existing keys keep
+    working until reissued.
     """
 
     async def dependency(
@@ -86,7 +89,9 @@ def require_scope(scope: str):
         user: User = Depends(get_current_user),
     ) -> User:
         scopes = getattr(request.state, "api_key_scopes", None)
-        if scopes is not None and scope not in scopes:
+        if scopes is not None and scope not in scopes and not any(
+            alias in scopes for alias in legacy_aliases
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"This mode requires the '{scope}' scope on the API key.",

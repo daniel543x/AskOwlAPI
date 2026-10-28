@@ -131,6 +131,9 @@ class Settings(BaseSettings):
 
     # <----- Research mode / agent loop ----->
     RESEARCH_MAX_SUBQUESTIONS: int = 5
+    # Reflect ceiling slack (PR 19): revise_plan may add sub-questions up
+    # to RESEARCH_MAX_SUBQUESTIONS + this slack in total.
+    RESEARCH_REFLECT_SLACK: int = 2
     AGENT_MAX_ITERATIONS: int = 8
     AGENT_TIME_BUDGET_SECONDS: float = 300.0
     # Estimated tokens (chars/4) across all LLM calls of one research/agent run.
@@ -185,6 +188,12 @@ class Settings(BaseSettings):
     AGENTIC_SEARCH_TIME_BUDGET_S: float = 120.0
     AGENTIC_SEARCH_TOKEN_BUDGET: int = 20_000
     AGENTIC_REPAIR_ATTEMPTS: int = 1
+
+    # <----- Persona mode (PR 20 / decision 10) ----->
+    # Depth falls back to this when neither the request nor the persona's
+    # default_parameters name one; personas may override budgets via
+    # default_parameters (clamped by _bounded()).
+    PERSONA_DEFAULT_DEPTH: Literal["quick", "research", "deep"] = "quick"
 
     # <----- Attachments (PR 15 / decision 14) ----->
     # Text files upload into conversation-scoped chunks; images (PR 16)
