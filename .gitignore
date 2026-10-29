@@ -1,5 +1,7 @@
 # ===== Environment Variables =====
 .env
+# Cross-project handoff notes (symlink to ~/projects/AskOwl/flow.md)
+flow.md
 .env.local
 .env.*.local
 .env.development.local
