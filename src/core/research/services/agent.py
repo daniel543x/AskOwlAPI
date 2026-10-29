@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from math import floor
 from time import monotonic
 from typing import Any
@@ -116,21 +117,34 @@ def persona_system_block(persona) -> str:
 
 
 async def _beaten(
-    model: Runnable[LanguageModelInput, AIMessage],    messages: list[BaseMessage],
+    model: Runnable[LanguageModelInput, AIMessage],
+    messages: list[BaseMessage],
 ) -> AsyncGenerator[PipelineEvent]:
-    """One `ainvoke` round, yielding a status heartbeat while it pends."""
+    """One `ainvoke` round, yielding a status heartbeat while it pends.
+
+    Ticks stream out as they occur; the pending task is cancelled if the
+    consumer abandons the generator mid-call.
+    """
     started = monotonic()
-    task = asyncio.create_task(model.ainvoke(messages))
-    while True:
-        try:
-            response = await asyncio.wait_for(
-                asyncio.shield(task), timeout=HEARTBEAT_SECONDS
-            )
-            yield "__llm_done__", {"response": response}
-            return
-        except TimeoutError:
-            elapsed = floor(monotonic() - started)
-            yield "status", {"step": f"Agent thinking… ({elapsed}s)"}
+    task: asyncio.Task[AIMessage] = asyncio.create_task(model.ainvoke(messages))
+    try:
+        while True:
+            try:
+                response = await asyncio.wait_for(
+                    asyncio.shield(task), timeout=HEARTBEAT_SECONDS
+                )
+                yield "__llm_done__", {"response": response}
+                return
+            except TimeoutError:
+                elapsed = floor(monotonic() - started)
+                yield "status", {"step": f"Agent thinking… ({elapsed}s)"}
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except BaseException:  # noqa: BLE001 - task cleanup, any outcome
+                pass
 
 
 async def _run_tool(toolbox: AskToolbox, name: str, args: dict[str, Any]) -> str:
@@ -180,11 +194,17 @@ async def agent_logic(
 
         nudge_sent = False
         while not budget.exhausted and budget.iterations_left:
-            ticks = [tick async for tick in _beaten(bound, messages)]
-            for tick in ticks:
-                if tick[0] == "status":
-                    yield tick
-            response = ticks[-1][1]["response"]
+            response: AIMessage | None = None
+            async with aclosing(_beaten(bound, messages)) as beat:
+                async for tick in beat:
+                    if tick[0] == "status":
+                        yield tick
+                    else:
+                        response = tick[1]["response"]
+            if response is None:
+                raise ToolProtocolError(
+                    "The agent LLM call ended without a response."
+                )
             budget.spend_tokens(
                 str(response.content), json.dumps(response.tool_calls, default=str)
             )

@@ -42,6 +42,7 @@ async def init_db(engine: AsyncEngine) -> None:
                 "BEGIN IF EXISTS (\n"
                 "    SELECT 1 FROM pg_constraint\n"
                 "    WHERE conname = 'conversation_persona_id_fkey'\n"
+                "      AND conrelid = 'conversation'::regclass\n"
                 "      AND confdeltype NOT IN ('n')\n"
                 ") THEN\n"
                 "    ALTER TABLE conversation "

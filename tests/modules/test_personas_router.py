@@ -279,3 +279,44 @@ async def test_init_db_fk_swap_is_idempotent(db_session):
     if isinstance(confdeltype, bytes):
         confdeltype = confdeltype.decode()
     assert confdeltype == "n"
+
+
+@pytest.mark.asyncio
+async def test_init_db_flips_no_action_fk_to_set_null(db_session):
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from src.tools.db import init_db
+    from tests.conftest import _integration_database_url
+
+    # Install the pre-fix state the app DB actually has (NO ACTION).
+    await db_session.execute(
+        text(
+            "ALTER TABLE conversation "
+            "DROP CONSTRAINT conversation_persona_id_fkey"
+        )
+    )
+    await db_session.execute(
+        text(
+            "ALTER TABLE conversation "
+            "ADD CONSTRAINT conversation_persona_id_fkey "
+            "FOREIGN KEY (persona_id) REFERENCES persona(id)"
+        )
+    )
+    await db_session.commit()
+    engine = create_async_engine(_integration_database_url())
+    try:
+        await init_db(engine=engine)
+    finally:
+        await engine.dispose()
+    row = await db_session.execute(
+        text(
+            "SELECT confdeltype FROM pg_constraint "
+            "WHERE conname = 'conversation_persona_id_fkey' "
+            "AND conrelid = 'conversation'::regclass"
+        )
+    )
+    confdeltype = row.scalar_one()
+    if isinstance(confdeltype, bytes):
+        confdeltype = confdeltype.decode()
+    assert confdeltype == "n"
