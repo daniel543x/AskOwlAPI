@@ -63,9 +63,28 @@ async def test_agent_happy_path_calls_tools_then_outcome():
 
 
 @pytest.mark.asyncio
-async def test_agent_neever_accepts_free_form_responses():
+async def test_agent_salvages_repeated_free_form_as_final_answer():
     model = ScriptedToolModel(
-        responses=[AIMessage(content="I think rust is safe.")]
+        responses=[AIMessage(content="prose one."), AIMessage(content="prose two.")]
+    )
+    events = await collect(agent_logic("goal", model, make_toolbox(), big_budget()))
+
+    errors = frames_by_event(events, "error")
+    assert not errors
+    messages = [m["text"] for m in frames_by_event(events, "message")]
+    assert messages == ["prose two."]
+    done = frames_by_event(events, "done")
+    assert done == [{"status": "completed"}]
+    # Exactly one nudge round before salvage: two model calls total, and the
+    # second call saw the nudge instruction appended to the conversation.
+    assert len(model.calls) == 2
+    assert any("SubmitOutcome" in str(m) for m in model.calls[-1][-1:])
+
+
+@pytest.mark.asyncio
+async def test_agent_bare_second_free_form_still_errors():
+    model = ScriptedToolModel(
+        responses=[AIMessage(content="prose one."), AIMessage(content="")]
     )
     events = await collect(agent_logic("goal", model, make_toolbox(), big_budget()))
 

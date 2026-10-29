@@ -6,8 +6,10 @@ by a Budget (iterations, wall-clock time, estimated tokens); exhausting a
 budget degrades gracefully: whatever context the tools gathered is passed
 to one forced synthesis call, never silently dropped.
 
-Every LLM interaction is a native tool call; a free-form response is a
-contract violation and becomes an SSE ``error`` event, never parsed text.
+Every LLM interaction is a native tool call. A free-form response is a
+contract miss: the run gets one nudge to re-answer through SubmitOutcome,
+and a second free-form response is salvaged as the final answer instead of
+losing the run.
 """
 
 import json
@@ -59,6 +61,22 @@ BUDGET_NOTICE = (
     "The research agent stopped early ({reason}); no usable context was "
     "gathered, so no answer can be given."
 )
+
+# Sent once per run when the model answers in prose instead of tool calls.
+NUDGE = "You MUST respond now by calling the SubmitOutcome tool."
+
+
+def _text_of(content: Any) -> str:
+    """PlainText of a message content: joins text blocks, else stringifies."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return str(content)
 
 PERSONA_TEMPLATE = """
 
@@ -133,6 +151,7 @@ async def agent_logic(
             HumanMessage(content=goal),
         ]
 
+        nudge_sent = False
         while not budget.exhausted and budget.iterations_left:
             response = await bound.ainvoke(messages)
             budget.spend_tokens(
@@ -157,6 +176,17 @@ async def agent_logic(
 
             executable = [c for c in tool_calls if c.get("name") != "SubmitOutcome"]
             if not executable:
+                text = _text_of(response.content).strip()
+                messages.append(response)
+                if text and not nudge_sent:
+                    nudge_sent = True
+                    messages.append(HumanMessage(content=NUDGE))
+                    budget.spend_iteration()
+                    continue
+                if text:
+                    yield "message", {"text": text}
+                    yield "done", {"status": "completed"}
+                    return
                 yield (
                     "error",
                     {
