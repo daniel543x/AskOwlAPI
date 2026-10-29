@@ -12,19 +12,25 @@ and a second free-form response is salvaged as the final answer instead of
 losing the run.
 """
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
+from math import floor
+from time import monotonic
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
+from langchain_core.language_models.base import LanguageModelInput
 from langchain_core.messages import (
+    AIMessage,
     AIMessageChunk,
     BaseMessage,
     HumanMessage,
     SystemMessage,
     ToolMessage,
 )
+from langchain_core.runnables import Runnable
 
 from ....tools.settings import settings
 from ...tools.arg_stream import ToolArgStream
@@ -65,6 +71,9 @@ BUDGET_NOTICE = (
 # Sent once per run when the model answers in prose instead of tool calls.
 NUDGE = "You MUST respond now by calling the SubmitOutcome tool."
 
+# Wall-clock interval between status heartbeats while one LLM call is pending.
+HEARTBEAT_SECONDS = 15.0
+
 
 def _text_of(content: Any) -> str:
     """PlainText of a message content: joins text blocks, else stringifies."""
@@ -104,6 +113,24 @@ def persona_system_block(persona) -> str:
             domains=", ".join(persona.allowed_domains)
         )
     return block
+
+
+async def _beaten(
+    model: Runnable[LanguageModelInput, AIMessage],    messages: list[BaseMessage],
+) -> AsyncGenerator[PipelineEvent]:
+    """One `ainvoke` round, yielding a status heartbeat while it pends."""
+    started = monotonic()
+    task = asyncio.create_task(model.ainvoke(messages))
+    while True:
+        try:
+            response = await asyncio.wait_for(
+                asyncio.shield(task), timeout=HEARTBEAT_SECONDS
+            )
+            yield "__llm_done__", {"response": response}
+            return
+        except TimeoutError:
+            elapsed = floor(monotonic() - started)
+            yield "status", {"step": f"Agent thinking… ({elapsed}s)"}
 
 
 async def _run_tool(toolbox: AskToolbox, name: str, args: dict[str, Any]) -> str:
@@ -153,7 +180,11 @@ async def agent_logic(
 
         nudge_sent = False
         while not budget.exhausted and budget.iterations_left:
-            response = await bound.ainvoke(messages)
+            ticks = [tick async for tick in _beaten(bound, messages)]
+            for tick in ticks:
+                if tick[0] == "status":
+                    yield tick
+            response = ticks[-1][1]["response"]
             budget.spend_tokens(
                 str(response.content), json.dumps(response.tool_calls, default=str)
             )

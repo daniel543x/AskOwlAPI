@@ -94,6 +94,58 @@ async def test_agent_bare_second_free_form_still_errors():
 
 
 @pytest.mark.asyncio
+async def test_status_heartbeat_during_long_llm_call(monkeypatch):
+    import asyncio
+
+    from langchain_core.language_models import BaseChatModel
+    from langchain_core.outputs import ChatGeneration, ChatResult, LLMResult
+
+    import src.core.research.services.agent as agent_module
+
+    class SlowModel(BaseChatModel):
+        delay: float = 0.05
+
+        @property
+        def _llm_type(self) -> str:
+            return "slow-test"
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            return ChatResult(
+                generations=[
+                    ChatGeneration(
+                        message=tool_call("SubmitOutcome", {"answer": "ok."})
+                    )
+                ]
+            )
+
+        async def agenerate(self, messages, stop=None, callbacks=None, **kwargs):
+            await asyncio.sleep(self.delay)
+            return LLMResult(
+                generations=[
+                    [
+                        ChatGeneration(
+                            message=tool_call("SubmitOutcome", {"answer": "ok."})
+                        )
+                    ]
+                ]
+            )
+
+    monkeypatch.setattr(agent_module, "HEARTBEAT_SECONDS", 0.01)
+    events = await collect(
+        agent_logic("goal", SlowModel(), make_toolbox(), big_budget())
+    )
+
+    statuses = [d["step"] for d in frames_by_event(events, "status")]
+    assert any("Agent thinking" in s for s in statuses)
+    assert [m["text"] for m in frames_by_event(events, "message")] == ["ok."]
+    assert frames_by_event(events, "done") == [{"status": "completed"}]
+    assert not frames_by_event(events, "error")
+
+
+@pytest.mark.asyncio
 async def test_agent_empty_outcome_is_an_error():
     model = ScriptedToolModel(
         responses=[tool_call("SubmitOutcome", {"answer": "   "})]
