@@ -114,3 +114,12 @@ def test_stream_rewriter_first_citation_is_one_even_for_late_ranked_url():
         {"n": 4, "url": C},
         {"n": 5, "url": E},
     ]
+
+
+def test_empty_urls_never_get_numbers():
+    registry = build_registry(known_urls=["", A], cited_order=["", A])
+    assert "" not in registry
+    assert registry == {A: 1}
+    rewriter = CitationRewriter(known_urls=["", A])
+    out = rewriter.feed(f"[Source]({A}) [Source]()") + rewriter.flush()
+    assert out == "[1] [Source]()"

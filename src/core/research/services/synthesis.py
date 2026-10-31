@@ -1,8 +1,6 @@
 """Research synthesis: a grounded, cited report via a native tool call."""
 
-import json as _json
 import logging
-import re
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -100,12 +98,18 @@ def _report_messages(
     ]
 
 
-def _urls_in(blob: str) -> list[str]:
-    """Every URL mentioned in the gathered blob, in order of appearance."""
+def _urls_in(gathered: list[dict[str, Any]]) -> list[str]:
+    """The gathered sources' URLs, in order of appearance.
+
+    Explicit traversal: scraping URLs out of the serialized blob would
+    drag in JSON punctuation and prose fragments as fake sources.
+    """
     seen: list[str] = []
-    for url in re.findall(r"https?://[^\s)\]]+", blob):
-        if url not in seen:
-            seen.append(url)
+    for item in gathered or []:
+        for source in item.get("sources") or []:
+            url = (source or {}).get("url") if isinstance(source, dict) else None
+            if url and url not in seen:
+                seen.append(url)
     return seen
 
 
@@ -126,7 +130,7 @@ async def generate_report(
         if tool_call.get("name") == "ResearchReport":
             report = str(tool_call.get("args", {}).get("report", "")).strip()
             if report:
-                rewriter = CitationRewriter(_urls_in(_json.dumps(gathered)))
+                rewriter = CitationRewriter(_urls_in(gathered))
                 return rewriter.feed(report) + rewriter.flush()
 
     raise ToolProtocolError(
@@ -144,7 +148,7 @@ async def stream_report(
     """Stream the `report` argument of the ResearchReport tool call."""
     bound = model.bind_tools([ResearchReport])
     extractor = ToolArgStream(key="report")
-    rewriter = CitationRewriter(_urls_in(_json.dumps(gathered)))
+    rewriter = CitationRewriter(_urls_in(gathered))
 
     async for chunk in bound.astream(
         _report_messages(query, gathered, today, images)

@@ -384,6 +384,7 @@ async def search_sse_adapter(
                     ]
                     rewriter = CitationRewriter(known)
                     answer_parts: list[str] = []
+                    raw_parts: list[str] = []
                     try:
                         async for kind, delta in _stream_answer_frames(
                             data["query"], data["context"], model, history,
@@ -392,6 +393,7 @@ async def search_sse_adapter(
                             if kind == "thinking":
                                 yield frame("thinking", {"text": delta})
                                 continue
+                            raw_parts.append(delta)
                             text = rewriter.feed(delta)
                             if not text:
                                 continue
@@ -411,9 +413,11 @@ async def search_sse_adapter(
                         )
 
                         if settings.PRE_SCORE_GROUNDING_CHECK and decision_maker:
+                            # Grounding matches URLs, so it runs on the raw
+                            # answer the model produced, pre-rewrite.
                             supported = await grounding_confidence(
                                 decision_maker, data["query"], data["context"],
-                                answer_text,
+                                "".join(raw_parts),
                             )
                             if supported is not None:
                                 yield frame(
@@ -441,6 +445,8 @@ async def search_sse_adapter(
                     # PR 17: the core already streamed the answer deltas;
                     # persist the turn and terminate.
                     answer_text = data["answer"]
+                    if data.get("citations"):
+                        yield frame("citations", {"citations": data["citations"]})
                     await _save_turn(session, conversation, data["query"], answer_text)
                     if not data["context"].strip():
                         yield frame("done", {"status": "no_context"})

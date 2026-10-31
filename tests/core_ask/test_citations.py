@@ -122,3 +122,31 @@ async def test_no_sources_answer_is_unchanged(monkeypatch):
     names = [name for name, _ in events]
     assert "citations" not in names
     assert names[-1] == "done" or "error" in names
+
+
+async def test_sse_agentic_forwards_citations(monkeypatch):
+    """The agentic SSE path must expose the mapping too (docs promise it)."""
+    from langchain_core.messages import AIMessageChunk  # noqa: F401
+
+    from src.core.ask.services import search as search_module
+    from tests.core_ask.fakes import FakeSearchProvider, ScriptedToolModel, tool_call
+
+    monkeypatch.setattr(search_module.settings, "AGENTIC_SEARCH", True)
+    monkeypatch.setattr(search_module.settings, "RESULT_SANITY_FILTER", False)
+    monkeypatch.setattr(search_module.settings, "DEBUG", False)
+    model = ScriptedToolModel(
+        responses=[
+            tool_call("web_search", {"query": "rust ownership"}),
+            tool_call("CitedAnswer", {"answer": "Safe. [Source](http://example.com/a)"}),
+        ]
+    )
+    provider = FakeSearchProvider()
+    events = await _run_sse(provider, model)
+
+    names = [name for name, _ in events]
+    assert "citations" in names
+    mapping = {
+        item["n"]: item["url"]
+        for item in dict(events)["citations"]["citations"]
+    }
+    assert mapping[1] == "http://example.com/a"

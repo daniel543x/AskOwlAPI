@@ -108,3 +108,21 @@ async def test_stream_and_sync_assembly_match():
     ]
     plan = _plan(2, 1, intro="Reversed order.")
     assert assemble_note_report(notes, plan) == await _collect(notes, plan)
+
+
+async def test_fallback_report_rewrites_against_gathered_sources():
+    from src.core.research.services.synthesis import generate_report
+    from tests.core_ask.fakes import ScriptedToolModel, tool_call
+
+    gathered = [
+        {
+            "subquestion": "rust safety",
+            "sources": [{"url": UA, "title": 'Rust page, "quoted"'}],
+            "context": "Body citing [Source](https://example.com/a).",
+        }
+    ]
+    model = ScriptedToolModel(
+        responses=[tool_call("ResearchReport", {"report": f"Cites [Source]({UA})."})]
+    )
+    report = await generate_report(model, "rust", gathered)
+    assert report == "Cites [1]."

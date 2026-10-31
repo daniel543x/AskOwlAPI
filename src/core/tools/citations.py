@@ -35,6 +35,8 @@ def build_registry(
     """
     original_by_norm: dict[str, str] = {}
     for url in known_urls:
+        if not url:
+            continue
         original_by_norm.setdefault(normalize_url(url), url)
     registry: dict[str, int] = {}
     for url in cited_order:
@@ -42,7 +44,7 @@ def build_registry(
         if original is not None and original not in registry:
             registry[original] = len(registry) + 1
     for url in known_urls:
-        if url not in registry:
+        if url and url not in registry:
             registry[url] = len(registry) + 1
     return registry
 
@@ -122,6 +124,8 @@ class CitationRewriter:
         self._finalized = False
 
     def _number_for(self, url: str) -> int | None:
+        if not url:
+            return None
         normalized = normalize_url(url)
         if normalized not in self._original_by_norm:
             return None
@@ -163,8 +167,12 @@ class CitationRewriter:
                     break
                 break  # wait for the URL to close
             link = self._buffer[: url_end + 1]
-            url = MARKDOWN_LINK.match(link).group("url")  # type: ignore[union-attr]
-            number = self._number_for(url)
+            match = MARKDOWN_LINK.match(link)
+            if match is None:
+                out.append(link)  # empty or malformed target
+                self._buffer = self._buffer[url_end + 1 :]
+                continue
+            number = self._number_for(match.group("url"))
             out.append(f"[{number}]" if number is not None else link)
             self._buffer = self._buffer[url_end + 1 :]
         return "".join(out)
