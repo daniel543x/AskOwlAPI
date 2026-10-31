@@ -3,11 +3,11 @@ import uuid
 import pytest
 
 from src.modules.llm_provider.selection import (
-    EntryState,
     TIER_DEFAULT,
     TIER_PREFERENCE,
     TIER_REQUEST,
     CatalogView,
+    EntryState,
     ModelInfo,
     SelectionError,
     has_role_access,

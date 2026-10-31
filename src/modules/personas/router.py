@@ -5,9 +5,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from ...tools.db import get_session
 from ...modules.llm_provider.repository import ModelRepository
 from ...modules.llm_provider.selection import unusable_reason
+from ...tools.db import get_session
 from ..identity.auth.security import get_current_user
 from ..identity.user.model import User
 from .model import Persona, PersonaCreate, PersonaRead, PersonaUpdate

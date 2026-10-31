@@ -10,8 +10,8 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Column, DateTime
 from pydantic import field_validator
+from sqlalchemy import JSON, Column, DateTime
 from sqlmodel import Field, SQLModel
 
 DESCRIPTION_MAX_LENGTH = 300
