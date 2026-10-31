@@ -14,6 +14,12 @@ from langchain_core.messages import (
 
 from ....tools.dates import current_date_line
 from ...tools.arg_stream import ToolArgStream
+from ...tools.citations import (
+    MARKDOWN_LINK,
+    build_registry,
+    rewrite_citations,
+    validate_citations,
+)
 from ...tools.errors import ToolProtocolError
 from .contracts import ResearchReport, SubmitReport
 
@@ -203,52 +209,15 @@ async def plan_note_report(model: BaseChatModel, query: str, notes: list):
     )
 
 
-def section_source_line(note) -> str:
-    urls = list(note.sources_used or [])[:8]
-    return " ".join(f"[Source]({url})" for url in urls)
-
-
-def assemble_note_report_stream(
-    notes: list, plan
-) -> AsyncGenerator[str]:
-    """Deterministic assembly: intro, ordered note sections, Sources."""
-    if plan.intro:
-        yield f"{plan.intro}\n\n"
-    by_idx = {note.sequence: note for note in notes}
-    included = sorted(
-        (s for s in plan.sections if s.include),
-        key=lambda s: s.order,
-    )
-    for section in included:
-        note = by_idx.get(section.idx)
-        if note is None:
-            continue
-        yield f"## {note.task}\n\n"
-        if section.lead_in:
-            yield f"{section.lead_in}\n\n"
-        body = note.content.strip() or "(no content recorded)"
-        yield f"{body}\n\n"
-        source_line = section_source_line(note)
-        if source_line:
-            yield f"Citations: {source_line}\n\n"
-    all_urls: dict[str, None] = {}
-    for note in notes:
-        for url in note.sources_used or []:
-            all_urls.setdefault(url, None)
-    if all_urls:
-        yield "## Sources\n\n"
-        for url in all_urls:
-            yield f"- [Source]({url})\n"
-
-
-def assemble_note_report(notes: list, plan) -> str:
-    """Synchronous assembly (the JSON adapter path)."""
+def _report_parts(notes: list, plan) -> list[str]:
+    """Intro + section units, unnumbered (the assembly is deterministic)."""
     parts: list[str] = []
     if plan.intro:
         parts.append(f"{plan.intro}\n\n")
     by_idx = {note.sequence: note for note in notes}
     for section in sorted(
-        (s for s in plan.sections if s.include), key=lambda s: s.order
+        (s for s in plan.sections if s.include),
+        key=lambda s: s.order,
     ):
         note = by_idx.get(section.idx)
         if note is None:
@@ -258,14 +227,76 @@ def assemble_note_report(notes: list, plan) -> str:
             parts.append(f"{section.lead_in}\n\n")
         body = note.content.strip() or "(no content recorded)"
         parts.append(f"{body}\n\n")
-        source_line = section_source_line(note)
-        if source_line:
-            parts.append(f"Citations: {source_line}\n\n")
-    all_urls: dict[str, None] = {}
+        urls = list(note.sources_used or [])[:8]
+        if urls:
+            links = " ".join(f"[Source]({url})" for url in urls)
+            parts.append(f"Citations: {links}\n\n")
+    return parts
+
+
+def _numbered_report(parts: list[str], notes: list) -> tuple[str, dict[str, int]]:
+    """Rewrite the assembled parts to dense `[n]` and build `## Sources`.
+
+    Registry: first appearance of any consulted URL in the body, then
+    consulted-but-uncited URLs appended in note order — the cited prefix
+    stays dense by construction.
+    """
+    body = "".join(parts)
+    known: list[str] = []
     for note in notes:
         for url in note.sources_used or []:
-            all_urls.setdefault(url, None)
-    if all_urls:
-        parts.append("## Sources\n\n")
-        parts.extend(f"- [Source]({url})\n" for url in all_urls)
-    return "".join(parts)
+            if url not in known:
+                known.append(url)
+    cited_order: list[str] = []
+    for match in MARKDOWN_LINK.finditer(body):
+        url = match.group("url")
+        if url in known and url not in cited_order:
+            cited_order.append(url)
+    registry = build_registry(known, cited_order)
+    rewritten, _ = rewrite_citations(body, registry)
+    if registry:
+        verdict = validate_citations(body, registry)
+        logger.debug(
+            "Citation verdict: cited=%s missing=%s unresolved=%s uncited=%s",
+            verdict.cited_numbers,
+            verdict.missing_numbers,
+            verdict.unresolved_markers,
+            verdict.uncited_sources,
+        )
+        rewritten += "## Sources\n\n" + "".join(
+            f"- [{n}] {url}\n" for url, n in registry.items()
+        )
+    return rewritten, registry
+
+
+async def assemble_note_report_stream(
+    notes: list, plan
+) -> AsyncGenerator[str]:
+    """Deterministic assembly: numbered intro + sections, then Sources."""
+    parts = _report_parts(notes, plan)
+    body = "".join(parts)
+    known: list[str] = []
+    for note in notes:
+        for url in note.sources_used or []:
+            if url not in known:
+                known.append(url)
+    cited_order: list[str] = []
+    for match in MARKDOWN_LINK.finditer(body):
+        url = match.group("url")
+        if url in known and url not in cited_order:
+            cited_order.append(url)
+    registry = build_registry(known, cited_order)
+    for part in parts:
+        rewritten, _ = rewrite_citations(part, registry)
+        yield rewritten
+    if registry:
+        yield "## Sources\n\n" + "".join(
+            f"- [{n}] {url}\n" for url, n in registry.items()
+        )
+
+
+def assemble_note_report(notes: list, plan) -> str:
+    """Synchronous assembly (the JSON adapter path)."""
+    report, _ = _numbered_report(_report_parts(notes, plan), notes)
+    return report
+
