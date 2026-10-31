@@ -76,7 +76,7 @@ def _search_runner(job: Job):
         from ..search_engine.factory import SearchProviderFactory
 
         async with AsyncSession(engine, expire_on_commit=False) as session:
-            searching = await SearchProviderFactory.create_provider(session, None)
+            searching = await SearchProviderFactory.create_provider(session)
             scraper = await ScraperFactory.create(session)
             resolved_ranker = await _resolve_ranker_model(session, None)
             ranker = await RankerFactory.from_resolved(resolved_ranker)
@@ -117,7 +117,7 @@ async def _research_runner(job: Job, session: AsyncSession):
         from ..search_engine.factory import SearchProviderFactory
 
         async with AsyncSession(engine, expire_on_commit=False) as job_session:
-            searching = await SearchProviderFactory.create_provider(job_session, None)
+            searching = await SearchProviderFactory.create_provider(job_session)
             scraper = await ScraperFactory.create(job_session)
             resolved_ranker = await _resolve_ranker_model(job_session, None)
             ranker = await RankerFactory.from_resolved(resolved_ranker)
@@ -147,7 +147,7 @@ async def _research_runner(job: Job, session: AsyncSession):
                 persona=persona,
                 scout=scout,
                 reflect=reflect,
-                progress=_progress_writer(job),
+                progress=_progress_writer(job, session),
             )
         return (result.get("report") or "")[:4000]
 
@@ -167,12 +167,16 @@ async def _chat_model(session: AsyncSession, job: Job):
         requested_model_id=None,
         profile_model_id=await _profile_model_id(session, job.user_id),
     )
-    factory = ChatModelFactory(session)
+    factory = ChatModelFactory()
     return factory.create_chat_model(resolved)
 
 
-def _progress_writer(job: Job):
+def _progress_writer(job: Job, session: AsyncSession):
     """A hook the pipeline awaits to persist plan/note progress."""
+
+    def session_factory():
+        return AsyncSession(session.bind, expire_on_commit=False)
+
 
     async def hook(data: dict) -> None:
         state = dict(job.payload.get("research") or {})
@@ -185,7 +189,7 @@ def _progress_writer(job: Job):
                     existing.append(note_id)
             state["note_ids"] = existing
         job.payload = {**job.payload, "research": state}
-        async with AsyncSession(engine, expire_on_commit=False) as session:
+        async with session_factory() as session:
             await session.merge(job)
             await session.commit()
 
@@ -210,6 +214,7 @@ async def requeue_orphans(
 
     registry = registry or default_registry
 
+
     async def default_jobs():
         async with session_factory() as session:
             rows = (
@@ -231,7 +236,7 @@ async def requeue_orphans(
                 "Interrupted job %s exceeded the resume cap; failed.", job.id
             )
             continue
-        runner = registry(job)
+        runner = await registry(job)
         if runner is None:
             job.status = JobStatus.FAILED
             job.error = INTERRUPTED_MESSAGE
@@ -247,9 +252,6 @@ async def requeue_orphans(
         job.error = None
         job.started_at = None
         queue.requeue(job, runner)
-        async with session_factory() as session:
-            await session.merge(job)
-            await session.commit()
         count += 1
         logger.info(
             "Re-enqueued interrupted %s job %s (resume %d).",

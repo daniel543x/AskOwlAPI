@@ -47,7 +47,7 @@ async def test_requeue_orphans_runs_and_respects_retries(caplog):
 
     reg = RecordingRunner()
 
-    def registry(job):
+    async def registry(job):
         # Both kinds are resumable with a real DB set of deps; the
         # offline stub simply hands back a runner for each.
         return reg.runner_for(job)

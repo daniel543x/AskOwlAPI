@@ -461,6 +461,7 @@ async def research_json_adapter(
     reflect: bool = False,
     persona=None,
     turn: TurnResources | None = None,
+    progress: Callable[[dict], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Run the research pipeline and return the full result as one dict."""
     answer_data: dict[str, Any] | None = None
