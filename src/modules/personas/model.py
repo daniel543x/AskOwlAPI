@@ -69,6 +69,11 @@ class Persona(SQLModel, table=True):
     updated_at: datetime | None = Field(
         default=None, sa_type=DateTime(timezone=True)
     )
+    # Soft delete (WU-16): non-null hides the persona from every read and
+    # rejects use; the row and its conversations survive for recovery.
+    deleted_at: datetime | None = Field(
+        default=None, sa_type=DateTime(timezone=True)
+    )
 
 
 class PersonaCreate(SQLModel):

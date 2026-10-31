@@ -34,6 +34,11 @@ class Conversation(SQLModel, table=True):
             index=True,
         ),
     )
+    # Soft delete (WU-16): non-null hides the row from every read and
+    # rejects continuation; the data stays for admin-level recovery.
+    deleted_at: datetime | None = Field(
+        default=None, sa_type=DateTime(timezone=True)
+    )
 
 
 class Message(SQLModel, table=True):
