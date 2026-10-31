@@ -430,6 +430,8 @@ revisions `d4f8b2e6a9c1` + `f1c5e9a3d7b2`.
   `Persona.allowed_source_types` with write-time declared-set validation and ask-time
   narrowing (request ∩ persona), all four dispatch paths.
 - **Multi-node topology:** Redis-backed ICache + jobs outgrow single-node asyncio.
-- **Job auto-resume:** replay interrupted background runs from the last `research_note`.
+- ~~Job auto-resume~~ → done 2026-10-31 (`wu/job-resume`): startup re-enqueues interrupted
+  runs from their payloads; research runs persist plan/note ids into `Job.payload` mid-run and
+  resume from the last note (covered legs skipped, no duplicates); retry cap applies.
 - **OCR fallback for non-vision models:** out of scope for v1; would belong in a
   pre-scorer-style sidecar.
