@@ -39,6 +39,15 @@ class AskBody(BaseModel):
     attachment_ids: list[uuid.UUID] = []
     depth: Literal["quick", "research", "deep"] | None = None
     persona_id: uuid.UUID | None = None
+    allow_model_fallback: bool = Field(
+        default=False,
+        description=(
+            "Consent to continue on the standard resolution chain when the "
+            "persona's own model is unusable (webapp API-NOTES #5). Without "
+            "it, a persona turn ends with a model_confirm event (SSE) or a "
+            "409 (JSON/background) instead of silently swapping the model."
+        ),
+    )
 
 
 class CitedAnswer(BaseModel):

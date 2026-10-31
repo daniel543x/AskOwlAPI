@@ -141,7 +141,7 @@ async def test_failure_records_error_and_status():
     await queue.stop()
 
     assert job.status == JobStatus.FAILED
-    assert "boom" in (job.error or "")
+    assert job.error == "Job failed with RuntimeError."
     assert job.finished_at is not None
 
 
@@ -209,3 +209,44 @@ async def test_persistence_hook_receives_transitions():
     assert JobStatus.QUEUED in persisted
     assert JobStatus.RUNNING in persisted
     assert JobStatus.SUCCEEDED in persisted
+
+
+async def test_failed_job_error_is_sanitized():
+    queue = JobQueue(per_user_running_cap=4)
+
+    async def runner() -> str:
+        raise RuntimeError(
+            'duplicate key value violates unique constraint "chunk_content_hash_key"'
+        )
+
+    job = await queue.submit(_job(), runner)
+    queue.start()
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if job.status == JobStatus.FAILED:
+            break
+    await queue.stop()
+
+    assert job.status == JobStatus.FAILED
+    assert job.error == "Job failed with RuntimeError."
+    assert "duplicate" not in (job.error or "")
+
+
+async def test_submit_survives_persist_failure():
+    def broken_factory():
+        raise RuntimeError("database is down")
+
+    queue = JobQueue(per_user_running_cap=4, session_factory=broken_factory)
+
+    async def runner() -> str:
+        return "ok"
+
+    job = await queue.submit(_job(), runner)
+    queue.start()
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if job.status == JobStatus.SUCCEEDED:
+            break
+    await queue.stop()
+
+    assert job.status == JobStatus.SUCCEEDED

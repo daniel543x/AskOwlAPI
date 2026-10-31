@@ -289,7 +289,9 @@ async def test_init_db_flips_no_action_fk_to_set_null(db_session):
     from src.tools.db import init_db
     from tests.conftest import _integration_database_url
 
-    # Install the pre-fix state the app DB actually has (NO ACTION).
+    # Install the pre-fix state the app DB actually has: the FK predates
+    # the SET NULL change and carries a non-default constraint name, so a
+    # name-based guard cannot find it.
     await db_session.execute(
         text(
             "ALTER TABLE conversation "
@@ -299,7 +301,7 @@ async def test_init_db_flips_no_action_fk_to_set_null(db_session):
     await db_session.execute(
         text(
             "ALTER TABLE conversation "
-            "ADD CONSTRAINT conversation_persona_id_fkey "
+            "ADD CONSTRAINT fk_conversation_persona_id "
             "FOREIGN KEY (persona_id) REFERENCES persona(id)"
         )
     )
@@ -307,16 +309,397 @@ async def test_init_db_flips_no_action_fk_to_set_null(db_session):
     engine = create_async_engine(_integration_database_url())
     try:
         await init_db(engine=engine)
+        await init_db(engine=engine)
     finally:
         await engine.dispose()
     row = await db_session.execute(
         text(
-            "SELECT confdeltype FROM pg_constraint "
-            "WHERE conname = 'conversation_persona_id_fkey' "
-            "AND conrelid = 'conversation'::regclass"
+            "SELECT c.confdeltype FROM pg_constraint c "
+            "JOIN pg_attribute a ON a.attrelid = c.conrelid "
+            "AND a.attnum = ANY (c.conkey) "
+            "WHERE c.conrelid = 'conversation'::regclass "
+            "AND c.contype = 'f' "
+            "AND c.confrelid = 'persona'::regclass "
+            "AND a.attname = 'persona_id'"
         )
     )
-    confdeltype = row.scalar_one()
-    if isinstance(confdeltype, bytes):
-        confdeltype = confdeltype.decode()
-    assert confdeltype == "n"
+    types = [t.decode() if isinstance(t, bytes) else t for t in row.scalars().all()]
+    assert types and all(t == "n" for t in types)
+
+
+@pytest.mark.asyncio
+async def test_persona_description_and_tags_roundtrip(auth_client, db_session):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    created = await auth_client.post(
+        "/personas",
+        json={
+            **PERSONA_PAYLOAD,
+            "description": "Short blurb.",
+            "tags": ["rust", "systems"],
+        },
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    persona = created.json()
+    assert persona["description"] == "Short blurb."
+    assert persona["tags"] == ["rust", "systems"]
+
+    listed = (await auth_client.get("/personas", headers=headers)).json()
+    assert listed[0]["description"] == "Short blurb."
+    assert listed[0]["tags"] == ["rust", "systems"]
+
+    patched = await auth_client.patch(
+        f"/personas/{persona['id']}",
+        json={"description": "New.", "tags": ["a"]},
+        headers=headers,
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["description"] == "New."
+    assert patched.json()["tags"] == ["a"]
+
+
+@pytest.mark.asyncio
+async def test_persona_field_caps_reject(auth_client, db_session):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    created = await auth_client.post(
+        "/personas",
+        json={**PERSONA_PAYLOAD, "description": "Keep.", "tags": ["keep"]},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    persona = created.json()
+
+    for bad_body in (
+        {"tags": [f"t{i}" for i in range(9)]},
+        {"tags": ["x" * 51]},
+        {"description": "d" * 301},
+    ):
+        response = await auth_client.patch(
+            f"/personas/{persona['id']}", json=bad_body, headers=headers
+        )
+        assert response.status_code == 422, (bad_body, response.text)
+
+    unchanged = await auth_client.get(f"/personas/{persona['id']}", headers=headers)
+    assert unchanged.json()["description"] == "Keep."
+    assert unchanged.json()["tags"] == ["keep"]
+
+
+@pytest.mark.asyncio
+async def test_persona_patch_null_clears_description(auth_client, db_session):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    created = await auth_client.post(
+        "/personas",
+        json={**PERSONA_PAYLOAD, "description": "To clear."},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    persona = created.json()
+
+    cleared = await auth_client.patch(
+        f"/personas/{persona['id']}",
+        json={"description": None},
+        headers=headers,
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["description"] is None
+
+    untouched = await auth_client.patch(
+        f"/personas/{persona['id']}",
+        json={"system_context": "Still fine."},
+        headers=headers,
+    )
+    assert untouched.status_code == 200, untouched.text
+    assert untouched.json()["description"] is None
+
+
+async def _seed_chat_catalog(db_session):
+    from src.modules.llm_provider.model import ModelCatalogEntry, ModelProvider
+
+    provider = ModelProvider(
+        name=f"prov_{uuid.uuid4().hex[:8]}", provider_type="ollama"
+    )
+    db_session.add(provider)
+    await db_session.flush()
+    valid = ModelCatalogEntry(
+        provider_id=provider.id,
+        kind="chat",
+        model_name="valid-chat",
+        is_active=True,
+        required_role="user",
+        capabilities=["tools"],
+    )
+    toolless = ModelCatalogEntry(
+        provider_id=provider.id,
+        kind="chat",
+        model_name="no-tools",
+        is_active=True,
+        required_role="user",
+        capabilities=[],
+    )
+    inactive = ModelCatalogEntry(
+        provider_id=provider.id,
+        kind="chat",
+        model_name="off",
+        is_active=False,
+        required_role="user",
+        capabilities=["tools"],
+    )
+    embedding = ModelCatalogEntry(
+        provider_id=provider.id,
+        kind="embedding",
+        model_name="embed",
+        is_active=True,
+        required_role="user",
+        capabilities=["tools"],
+    )
+    db_session.add_all([valid, toolless, inactive, embedding])
+    await db_session.commit()
+    for entry in (valid, toolless, inactive, embedding):
+        await db_session.refresh(entry)
+    return valid, toolless, inactive, embedding
+
+
+@pytest.mark.asyncio
+async def test_persona_model_rejects_invalid(auth_client, db_session):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    valid, toolless, inactive, embedding = await _seed_chat_catalog(db_session)
+
+    for model_id, reason in (
+        (uuid.uuid4(), "missing"),
+        (embedding.id, "missing"),
+        (inactive.id, "inactive"),
+        (toolless.id, "lacks_tools"),
+    ):
+        response = await auth_client.post(
+            "/personas",
+            json={**PERSONA_PAYLOAD, "model": str(model_id)},
+            headers=headers,
+        )
+        assert response.status_code == 422, (model_id, response.text)
+        detail = response.json()["detail"]
+        assert detail["code"] == "persona_model_invalid", detail
+        assert detail["reason"] == reason, detail
+
+    unused = await auth_client.get(
+        "/personas", headers=headers
+    )
+    assert unused.json() == []
+
+
+@pytest.mark.asyncio
+async def test_persona_model_roundtrip(auth_client, db_session):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    valid, *_ = await _seed_chat_catalog(db_session)
+
+    created = await auth_client.post(
+        "/personas",
+        json={**PERSONA_PAYLOAD, "model": str(valid.id)},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    persona = created.json()
+    assert persona["model"] == str(valid.id)
+
+    fetched = await auth_client.get(
+        f"/personas/{persona['id']}", headers=headers
+    )
+    assert fetched.json()["model"] == str(valid.id)
+
+    cleared = await auth_client.patch(
+        f"/personas/{persona['id']}",
+        json={"model": None},
+        headers=headers,
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["model"] is None
+
+
+async def _persona_with_stale_model(auth_client, db_session, headers) -> str:
+    """A persona whose stored model id has left the catalog (ask-time only)."""
+    from src.modules.personas.model import Persona
+
+    created = await auth_client.post("/personas", json=PERSONA_PAYLOAD, headers=headers)
+    assert created.status_code == 201, created.text
+    persona_id = created.json()["id"]
+    persona_row = await db_session.get(Persona, uuid.UUID(persona_id))
+    persona_row.model = uuid.uuid4()
+    await db_session.commit()
+    return persona_id
+
+
+@pytest.mark.asyncio
+async def test_persona_ask_model_confirm_stream(auth_client, db_session):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    persona_id = await _persona_with_stale_model(auth_client, db_session, headers)
+
+    response = await auth_client.post(
+        "/ask/persona",
+        json={"query": "memory safety", "persona_id": persona_id, "depth": "quick"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert "event: model_confirm" in response.text
+    assert '"reason": "missing"' in response.text
+    assert "Persona answer." not in response.text
+    assert "event: done" not in response.text
+
+    # The confirm path must not create a conversation or persist a turn.
+    from sqlmodel import select
+
+    from src.modules.history.model import Conversation
+
+    remaining = (await db_session.exec(select(Conversation))).all()
+    assert remaining == []
+
+
+@pytest.mark.asyncio
+async def test_persona_ask_model_confirm_json_409(auth_client, db_session):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    persona_id = await _persona_with_stale_model(auth_client, db_session, headers)
+
+    response = await auth_client.post(
+        "/ask/persona",
+        json={
+            "query": "memory safety",
+            "persona_id": persona_id,
+            "depth": "quick",
+            "stream": False,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "persona_model_unusable"
+    assert detail["reason"] == "missing"
+
+
+@pytest.mark.asyncio
+async def test_persona_ask_background_model_confirm_409(auth_client, db_session):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    persona_id = await _persona_with_stale_model(auth_client, db_session, headers)
+
+    response = await auth_client.post(
+        "/ask/persona",
+        json={
+            "query": "memory safety",
+            "persona_id": persona_id,
+            "depth": "research",
+            "background": True,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 409, response.text
+
+    jobs = await auth_client.get("/jobs", headers=headers)
+    assert jobs.json() == []
+
+
+@pytest.mark.asyncio
+async def test_persona_ask_allow_model_fallback_runs(auth_client, db_session):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    persona_id = await _persona_with_stale_model(auth_client, db_session, headers)
+
+    response = await auth_client.post(
+        "/ask/persona",
+        json={
+            "query": "memory safety",
+            "persona_id": persona_id,
+            "depth": "quick",
+            "allow_model_fallback": True,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert "Persona answer." in response.text
+
+
+@pytest.mark.asyncio
+async def test_persona_patch_null_rejected_for_non_clearable_fields(
+    auth_client, db_session
+):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await auth_client.post("/personas", json=PERSONA_PAYLOAD, headers=headers)
+    assert created.status_code == 201, created.text
+    persona_id = created.json()["id"]
+
+    for field in (
+        "name",
+        "system_context",
+        "allowed_domains",
+        "allowed_engines",
+        "allowed_keywords",
+        "default_parameters",
+        "tags",
+    ):
+        response = await auth_client.patch(
+            f"/personas/{persona_id}", json={field: None}, headers=headers
+        )
+        assert response.status_code == 422, (field, response.text)
+
+    fetched = await auth_client.get(f"/personas/{persona_id}", headers=headers)
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["allowed_domains"] == ["rust-lang.org"]
+
+
+@pytest.mark.asyncio
+async def test_persona_ask_background_research_with_consent_enqueues(
+    auth_client, db_session, monkeypatch
+):
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from src.core.research import router as research_router
+    from src.modules.jobs import factory as jobs_factory
+    from tests.conftest import _integration_database_url
+
+    # Point the app's job queue and runner sessions at the test database.
+    test_engine = create_async_engine(_integration_database_url())
+    monkeypatch.setattr(jobs_factory, "engine", test_engine)
+    monkeypatch.setattr(research_router, "engine", test_engine)
+    queue = jobs_factory.get_job_queue()
+    queue.start()
+
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    persona_id = await _persona_with_stale_model(auth_client, db_session, headers)
+
+    try:
+        response = await auth_client.post(
+            "/ask/persona",
+            json={
+                "query": "memory safety",
+                "persona_id": persona_id,
+                "depth": "research",
+                "background": True,
+                "allow_model_fallback": True,
+            },
+            headers=headers,
+        )
+        assert response.status_code == 202, response.text
+        job_id = response.json()["job_id"]
+        job = None
+        for _ in range(200):
+            jobs = (await auth_client.get("/jobs", headers=headers)).json()
+            job = next(j for j in jobs if j["id"] == job_id)
+            if job["status"] in ("succeeded", "failed"):
+                break
+            await asyncio.sleep(0.05)
+        assert job is not None and job["status"] == "succeeded", job
+    finally:
+        await queue.stop()
+        jobs_factory.reset_job_queue()
+        await test_engine.dispose()
