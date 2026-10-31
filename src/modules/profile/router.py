@@ -175,6 +175,14 @@ async def put_preferences(
         data.thinking is not None or data.effort is not None
     ):
         await settings_repo.upsert(user.id, default_model_id, thinking, effort)
+    elif remembered is not None and (thinking, effort) != (
+        remembered.thinking,
+        remembered.effort,
+    ):
+        # The model's capabilities changed since the memory was written;
+        # store the re-clamped pair so the fixture never returns a value
+        # the model rejects again.
+        await settings_repo.upsert(user.id, default_model_id, thinking, effort)
 
     saved = await prefs_repo.save(
         user.id,

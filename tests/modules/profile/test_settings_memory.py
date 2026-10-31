@@ -70,9 +70,10 @@ async def test_explicit_write_refreshes_memory(client):
 
 
 async def test_switch_back_restores_remembered(client):
-    ac, _ = client
+    ac, settings_repo = client
     await put(ac, {"default_model_id": str(MODEL_ID), "thinking": True})
     await put(ac, {"default_model_id": str(MODEL_B_ID)})
+    assert (USER_ID, MODEL_B_ID) not in settings_repo.rows  # no surprise rows
     view = await put(ac, {"default_model_id": str(MODEL_ID)})
     assert view["resolved"]["thinking"] is True
 
@@ -90,4 +91,5 @@ async def test_unknown_model_cleared_without_memory_leak(client):
     await put(ac, {"default_model_id": str(MODEL_ID), "thinking": True})
     view = await put(ac, {"default_model_id": str(DEAD_ID), "thinking": False})
     assert any("Cleared default_model_id" in w for w in view["warnings"])
+    assert view["resolved"]["thinking"] is None  # stale memory never leaks
     assert (USER_ID, MODEL_ID) in settings_repo.rows
