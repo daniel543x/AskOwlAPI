@@ -45,6 +45,11 @@ class Persona(SQLModel, table=True):
     # id, validated at write time. Deliberately NO FK — a catalog deletion
     # must leave the persona intact and surface as "missing" at ask time.
     model: UUID | None = Field(default=None)
+    # Pinned web slice (source types): empty = unconstrained. Validated
+    # against the provider's declared set at write time.
+    allowed_source_types: list[str] = Field(
+        default_factory=list, sa_column=Column(JSON)
+    )
     # Free-form system context (topic, tech stack, tone) injected into the
     # agent's system prompt to bias query rewriting.
     system_context: str = Field(default="")
@@ -71,6 +76,7 @@ class PersonaCreate(SQLModel):
     description: str | None = Field(default=None, max_length=DESCRIPTION_MAX_LENGTH)
     tags: list[str] = Field(default_factory=list)
     model: UUID | None = None
+    allowed_source_types: list[str] = Field(default_factory=list)
     system_context: str = ""
     allowed_domains: list[str] = Field(default_factory=list)
     allowed_engines: list[str] = Field(default_factory=list)
@@ -90,6 +96,7 @@ class PersonaUpdate(SQLModel):
     description: str | None = Field(default=None, max_length=DESCRIPTION_MAX_LENGTH)
     tags: list[str] | None = None
     model: UUID | None = None
+    allowed_source_types: list[str] | None = None
     system_context: str | None = None
     allowed_domains: list[str] | None = None
     allowed_engines: list[str] | None = None
@@ -120,6 +127,7 @@ class PersonaRead(SQLModel):
     description: str | None
     tags: list[str]
     model: UUID | None
+    allowed_source_types: list[str]
     system_context: str
     allowed_domains: list[str]
     allowed_engines: list[str]

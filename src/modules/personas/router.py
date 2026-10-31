@@ -10,6 +10,7 @@ from ...modules.llm_provider.selection import unusable_reason
 from ...tools.db import get_session
 from ..identity.auth.security import get_current_user
 from ..identity.user.model import User
+from ..search_engine.factory import get_declared_source_types
 from .model import Persona, PersonaCreate, PersonaRead, PersonaUpdate
 from .repository import PersonaRepository
 
@@ -43,14 +44,30 @@ async def _validate_persona_model(
         )
 
 
+def _validate_persona_source_types(
+    declared: list[str], values: list[str] | None
+) -> None:
+    """Unknown source types must fail loudly, not silently re-slice."""
+    if not values:
+        return
+    bad = [t for t in values if t not in declared]
+    if bad:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "persona_source_type_invalid", "types": bad},
+        )
+
+
 @router.post("", response_model=PersonaRead, status_code=status.HTTP_201_CREATED)
 async def create_persona(
     data: PersonaCreate,
     repo: PersonaRepository = Depends(get_repository),
     model_repo: ModelRepository = Depends(get_model_repository),
     user: User = Depends(get_current_user),
+    declared: list[str] = Depends(get_declared_source_types),
 ):
     await _validate_persona_model(model_repo, user, data.model)
+    _validate_persona_source_types(declared, data.allowed_source_types)
     persona = Persona(user_id=user.id, **data.model_dump())
     return await repo.create(persona)
 
@@ -82,11 +99,13 @@ async def update_persona(
     repo: PersonaRepository = Depends(get_repository),
     model_repo: ModelRepository = Depends(get_model_repository),
     user: User = Depends(get_current_user),
+    declared: list[str] = Depends(get_declared_source_types),
 ):
     persona = await repo.get_for_user(user.id, persona_id)
     if persona is None:
         raise HTTPException(status_code=404, detail="Persona not found.")
     await _validate_persona_model(model_repo, user, changes.model)
+    _validate_persona_source_types(declared, changes.allowed_source_types)
     return await repo.update(persona, changes)
 
 
