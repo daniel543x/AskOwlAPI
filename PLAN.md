@@ -365,6 +365,34 @@ Preset table over the shared loop (toolbox + conversation history + degrade path
 - [x] PR 7 `wu/hybrid` — lexical + vector RRF fusion behind `hybrid_alpha` (default 1.0
       until measured).
 
+### 2.5 Phase 13 — Webapp API batch: persona surface + jobs fixes (branch `wu/persona-api-batch`)
+
+The accepted asks from `ref/API-NOTES.md` (items 1, 2, 4, 5, 9; item 3 parked,
+6–8 closed on the bug branch). **Schema change for the PR description:** the
+`persona` table gains `description` (VARCHAR 300, nullable), `tags` (JSON,
+default `[]`) and `model` (UUID, nullable, deliberately no FK) via Alembic
+revisions `d4f8b2e6a9c1` + `f1c5e9a3d7b2`.
+
+- [x] Persona `description` + `tags` with capped schemas (422 rejections, no
+      silent truncation); PATCH now distinguishes omitted vs explicit `null`
+      (`exclude_unset` only) so nullable fields can be cleared.
+- [x] `persona_id` exposed on `ConversationRead`/`ConversationWithMessages` +
+      `GET /history?persona_id=` filter (equality, user-scoped).
+- [x] Persona `model` column + write-time validation (`unusable_reason`:
+      missing/inactive/lacks_tools/no_role → 422 `persona_model_invalid`).
+- [x] Ask-time persona model resolution: the persona model wins over the
+      request tier; an unusable model ends the turn with SSE `model_confirm`
+      (or 409 `persona_model_unusable` for JSON/background) unless
+      `allow_model_fallback: true` re-submits onto the standard chain.
+- [x] Job queue: root-caused the reported UniqueViolationError to `job_pkey`
+      (worker woken before the queued-row persist raced it on re-runs) —
+      persist before wake + best-effort transitions; `Job.error` sanitized to
+      `"Job failed with <ExceptionType>."`; regression test
+      `tests/modules/jobs/test_rerun_regression.py` reproduces the original
+      scenario end-to-end.
+- [x] SSE contract documented (`model_confirm` + `allow_model_fallback`) in
+      `docs/api/ask_research_sse.md`.
+
 ---
 
 ## 3. Open decisions
