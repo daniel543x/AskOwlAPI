@@ -7,7 +7,7 @@ from ...tools.db import get_session
 from ..identity.auth.security import get_current_user
 from ..identity.user.model import User
 from .model import UserPreferences
-from .repository import PreferencesRepository
+from .repository import ModelSettingsRepository, PreferencesRepository
 
 
 def get_repository(session: AsyncSession = Depends(get_session)):
@@ -20,3 +20,7 @@ async def get_optional_user_preferences(
 ) -> UserPreferences | None:
     """The caller's preference row, or None when unset. Never fails."""
     return await repo.get(user.id)
+
+
+def get_settings_repository(session: AsyncSession = Depends(get_session)):
+    return ModelSettingsRepository(session)
