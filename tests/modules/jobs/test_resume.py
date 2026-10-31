@@ -1,6 +1,7 @@
 """Offline + integration tests for rebuilding and re-enqueueing runners."""
 
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -22,24 +23,26 @@ class RecordingRunner:
 
 
 @pytest.mark.asyncio
-async def test_search_job_replays_whole_turn(db_session):
+async def test_search_job_replays_whole_turn():
     """kind=search rebuilds a runner that replays the saved turn."""
+    session = SimpleNamespace(bind=None)
     from src.modules.jobs.resume import build_runner
 
     job = Job(
         user_id=uuid.uuid4(), kind="search",
         payload={"query": "rust", "conversation_id": None},
     )
-    runner = await build_runner(job, db_session)
+    runner = await build_runner(job, session)
     assert callable(runner)
 
 
 @pytest.mark.asyncio
-async def test_unknown_kind_builds_none(db_session):
+async def test_unknown_kind_builds_none():
     from src.modules.jobs.resume import build_runner
 
+    session = SimpleNamespace(bind=None)
     job = Job(user_id=uuid.uuid4(), kind="ggdeals", payload={})
-    assert await build_runner(job, db_session) is None
+    assert await build_runner(job, session) is None
 
 
 @pytest.mark.asyncio
