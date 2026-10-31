@@ -1,9 +1,13 @@
 """Offline tests for the agent loop (no network, no DB, no models)."""
 
+import asyncio
 
 import pytest
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
+from langchain_core.outputs import ChatGeneration, ChatResult, LLMResult
 
+import src.core.research.services.agent as agent_module
 from src.core.research.services.agent import agent_logic
 from src.core.research.services.budgets import Budget
 from src.core.tools.toolbox import AskToolbox
@@ -32,6 +36,44 @@ async def collect(gen):
 
 def frames_by_event(events, name):
     return [data for event, data in events if event == name]
+
+
+class SlowModel(BaseChatModel):
+    """LLM fake resolving after `delay`; records cancellation and resolution."""
+
+    delay: float = 0.05
+
+    @property
+    def _llm_type(self) -> str:
+        return "slow-test"
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        return ChatResult(
+            generations=[
+                ChatGeneration(
+                    message=tool_call("SubmitOutcome", {"answer": "ok."})
+                )
+            ]
+        )
+
+    async def agenerate(self, messages, stop=None, callbacks=None, **kwargs):
+        try:
+            await asyncio.sleep(self.delay)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        self.done = True
+        return LLMResult(
+            generations=[
+                [ChatGeneration(message=tool_call("SubmitOutcome", {"answer": "ok."}))]
+            ]
+        )
+
+    done: bool = False
+    cancelled: bool = False
 
 
 @pytest.mark.asyncio
@@ -63,15 +105,75 @@ async def test_agent_happy_path_calls_tools_then_outcome():
 
 
 @pytest.mark.asyncio
-async def test_agent_neever_accepts_free_form_responses():
+async def test_agent_salvages_repeated_free_form_as_final_answer():
     model = ScriptedToolModel(
-        responses=[AIMessage(content="I think rust is safe.")]
+        responses=[AIMessage(content="prose one."), AIMessage(content="prose two.")]
+    )
+    events = await collect(agent_logic("goal", model, make_toolbox(), big_budget()))
+
+    errors = frames_by_event(events, "error")
+    assert not errors
+    messages = [m["text"] for m in frames_by_event(events, "message")]
+    assert messages == ["prose two."]
+    done = frames_by_event(events, "done")
+    assert done == [{"status": "completed"}]
+    # Exactly one nudge round before salvage: two model calls total, and the
+    # second call saw the nudge instruction appended to the conversation.
+    assert len(model.calls) == 2
+    assert any("SubmitOutcome" in str(m) for m in model.calls[-1][-1:])
+
+
+@pytest.mark.asyncio
+async def test_agent_bare_second_free_form_still_errors():
+    model = ScriptedToolModel(
+        responses=[AIMessage(content="prose one."), AIMessage(content="")]
     )
     events = await collect(agent_logic("goal", model, make_toolbox(), big_budget()))
 
     errors = frames_by_event(events, "error")
     assert errors and "free-form" in errors[0]["error"]
     assert not frames_by_event(events, "done")
+
+
+@pytest.mark.asyncio
+async def test_status_heartbeat_during_long_llm_call(monkeypatch):
+    monkeypatch.setattr(agent_module, "HEARTBEAT_SECONDS", 0.01)
+    model = SlowModel()
+    ticks: list[str] = []
+    events = []
+    async for event, data in agent_logic(
+        "goal", model, make_toolbox(), big_budget()
+    ):
+        events.append((event, data))
+        if event == "status" and "Agent thinking" in data["step"]:
+            ticks.append("live" if not model.done else "buffered")
+
+    assert any(t == "live" for t in ticks), ticks
+    assert not model.cancelled
+    assert [m["text"] for m in frames_by_event(events, "message")] == ["ok."]
+    assert frames_by_event(events, "done") == [{"status": "completed"}]
+    assert not frames_by_event(events, "error")
+
+
+@pytest.mark.asyncio
+async def test_aborted_agent_cancels_pending_llm_call(monkeypatch):
+    import src.core.research.services.agent as agent_module
+
+    monkeypatch.setattr(agent_module, "HEARTBEAT_SECONDS", 0.01)
+    monster = SlowModel(delay=0.2)
+    agen = agent_logic("goal", monster, make_toolbox(), big_budget())
+    try:
+        async for tick in agen:
+            assert tick[0] == "status"
+            break
+    finally:
+        await agen.aclose()
+
+    for _ in range(200):
+        if monster.cancelled:
+            break
+        await asyncio.sleep(0.005)
+    assert monster.cancelled, "pending LLM task was not cancelled on abort"
 
 
 @pytest.mark.asyncio

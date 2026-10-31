@@ -211,3 +211,112 @@ async def test_agent_with_missing_persona_is_404(auth_client, db_session):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_persona_with_conversations_preserves_history(
+    auth_client, db_session
+):
+    from uuid import UUID
+
+    from src.modules.history.model import Conversation
+
+    suffix = uuid.uuid4().hex[:8]
+    user = await create_user(
+        db_session,
+        UserCreate(
+            email=f"{suffix}@example.com",
+            nickname=f"user_{suffix}",
+            password="Sup3rSecret!pass",
+        ),
+    )
+    token = create_access_token({"sub": str(user.id)})
+    headers = {"Authorization": f"Bearer {token}"}
+
+    created = await auth_client.post("/personas", json=PERSONA_PAYLOAD, headers=headers)
+    assert created.status_code == 201
+    persona_id = UUID(created.json()["id"])
+
+    conversation = Conversation(
+        user_id=user.id,
+        title="persona chat",
+        persona_id=persona_id,
+    )
+    db_session.add(conversation)
+    await db_session.commit()
+    conversation_id = conversation.id
+
+    deleted = await auth_client.delete(f"/personas/{persona_id}", headers=headers)
+    assert deleted.status_code == 204
+
+    survivor = await db_session.get(Conversation, conversation_id)
+    assert survivor is not None
+    await db_session.refresh(survivor)
+    assert survivor.persona_id is None
+
+
+@pytest.mark.asyncio
+async def test_init_db_fk_swap_is_idempotent(db_session):
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from src.tools.db import init_db
+    from tests.conftest import _integration_database_url
+
+    engine = create_async_engine(_integration_database_url())
+    try:
+        await init_db(engine=engine)
+        await init_db(engine=engine)
+    finally:
+        await engine.dispose()
+    row = await db_session.execute(
+        text(
+            "SELECT confdeltype FROM pg_constraint "
+            "WHERE conname = 'conversation_persona_id_fkey'"
+        )
+    )
+    confdeltype = row.scalar_one()
+    if isinstance(confdeltype, bytes):
+        confdeltype = confdeltype.decode()
+    assert confdeltype == "n"
+
+
+@pytest.mark.asyncio
+async def test_init_db_flips_no_action_fk_to_set_null(db_session):
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from src.tools.db import init_db
+    from tests.conftest import _integration_database_url
+
+    # Install the pre-fix state the app DB actually has (NO ACTION).
+    await db_session.execute(
+        text(
+            "ALTER TABLE conversation "
+            "DROP CONSTRAINT conversation_persona_id_fkey"
+        )
+    )
+    await db_session.execute(
+        text(
+            "ALTER TABLE conversation "
+            "ADD CONSTRAINT conversation_persona_id_fkey "
+            "FOREIGN KEY (persona_id) REFERENCES persona(id)"
+        )
+    )
+    await db_session.commit()
+    engine = create_async_engine(_integration_database_url())
+    try:
+        await init_db(engine=engine)
+    finally:
+        await engine.dispose()
+    row = await db_session.execute(
+        text(
+            "SELECT confdeltype FROM pg_constraint "
+            "WHERE conname = 'conversation_persona_id_fkey' "
+            "AND conrelid = 'conversation'::regclass"
+        )
+    )
+    confdeltype = row.scalar_one()
+    if isinstance(confdeltype, bytes):
+        confdeltype = confdeltype.decode()
+    assert confdeltype == "n"
