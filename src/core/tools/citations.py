@@ -148,7 +148,10 @@ class CitationRewriter:
                     self._buffer = ""
                     break
                 break  # wait for the label to close
-            if self._buffer[label_end + 1 : label_end + 2] != "(":
+            following = self._buffer[label_end + 1 : label_end + 2]
+            if following == "":
+                break  # "(" may still arrive in the next delta
+            if following != "(":
                 out.append(self._buffer[: label_end + 1])
                 self._buffer = self._buffer[label_end + 1 :]
                 continue

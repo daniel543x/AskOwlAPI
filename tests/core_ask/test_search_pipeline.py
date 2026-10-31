@@ -75,9 +75,9 @@ async def test_sse_happy_path_event_sequence(monkeypatch):
         "context",
         "status",  # generating answer
     ]
-    # One message event per streamed answer delta, then the terminator.
-    assert set(names[8:-1]) == {"message"}
-    assert len(names[8:-1]) >= 1
+    # Message deltas, then the citations mapping, then the terminator.
+    assert set(names[8:-1]) == {"message", "citations"}
+    assert names[-2] == "citations"
     assert names[-1] == "done"
 
 
@@ -135,7 +135,7 @@ async def test_sse_context_and_message_events():
     assert "first paragraph" in by_name["context"]["context"]
 
     message_texts = [data["text"] for name, data in events if name == "message"]
-    assert "".join(message_texts) == ANSWER_TEXT
+    assert "".join(message_texts) == "Rust is a systems programming language. [1]"
     assert by_name["done"]["status"] == "completed"
 
 
@@ -278,7 +278,12 @@ async def test_json_happy_path_returns_full_document():
 
     assert result["query"] == "what is rust?"
     assert result["optimized_query"] == "rust programming language"
-    assert result["answer"] == ANSWER_TEXT
+    assert result["answer"] == "Rust is a systems programming language. [1]"
+    # Cited source first, the consulted-but-uncited one appended.
+    assert [(c["n"], c["url"]) for c in result["citations"]] == [
+        (1, "http://example.com/a"),
+        (2, "http://example.com/b"),
+    ]
     assert [s["url"] for s in result["sources"]] == [
         "http://example.com/a",
         "http://example.com/b",

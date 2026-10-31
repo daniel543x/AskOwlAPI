@@ -97,7 +97,8 @@ async def test_agent_happy_path_calls_tools_then_outcome():
     assert any("get_context" in s for s in statuses)
 
     messages = [m["text"] for m in frames_by_event(events, "message")]
-    assert messages == ["Rust is safe. [Source](http://example.com/a)"]
+    # The persona loop now numbers citations (WU-12).
+    assert messages == ["Rust is safe. [1]"]
 
     done = frames_by_event(events, "done")
     assert done == [{"status": "completed"}]

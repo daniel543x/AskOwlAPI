@@ -1,6 +1,8 @@
 """Research synthesis: a grounded, cited report via a native tool call."""
 
+import json as _json
 import logging
+import re
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -16,6 +18,7 @@ from ....tools.dates import current_date_line
 from ...tools.arg_stream import ToolArgStream
 from ...tools.citations import (
     MARKDOWN_LINK,
+    CitationRewriter,
     build_registry,
     rewrite_citations,
     validate_citations,
@@ -97,6 +100,15 @@ def _report_messages(
     ]
 
 
+def _urls_in(blob: str) -> list[str]:
+    """Every URL mentioned in the gathered blob, in order of appearance."""
+    seen: list[str] = []
+    for url in re.findall(r"https?://[^\s)\]]+", blob):
+        if url not in seen:
+            seen.append(url)
+    return seen
+
+
 async def generate_report(
     model: BaseChatModel,
     query: str,
@@ -114,7 +126,8 @@ async def generate_report(
         if tool_call.get("name") == "ResearchReport":
             report = str(tool_call.get("args", {}).get("report", "")).strip()
             if report:
-                return report
+                rewriter = CitationRewriter(_urls_in(_json.dumps(gathered)))
+                return rewriter.feed(report) + rewriter.flush()
 
     raise ToolProtocolError(
         "The model did not return the report through the ResearchReport tool."
@@ -131,6 +144,7 @@ async def stream_report(
     """Stream the `report` argument of the ResearchReport tool call."""
     bound = model.bind_tools([ResearchReport])
     extractor = ToolArgStream(key="report")
+    rewriter = CitationRewriter(_urls_in(_json.dumps(gathered)))
 
     async for chunk in bound.astream(
         _report_messages(query, gathered, today, images)
@@ -143,11 +157,15 @@ async def stream_report(
                 continue
             delta = extractor.feed(tool_chunk.get("args") or "")
             if delta:
-                yield delta
+                text = rewriter.feed(delta)
+                if text:
+                    yield text
 
     tail = extractor.finish()
     if tail:
-        yield tail
+        text = rewriter.feed(tail) + rewriter.flush()
+        if text:
+            yield text
 
     if not extractor.saw_value:
         raise ToolProtocolError(
