@@ -562,6 +562,8 @@ async def _enqueue_research_turn(
         payload={
             "query": query,
             "persona_id": str(persona.id) if persona is not None else None,
+            "scout": bool(scout),
+            "reflect": bool(reflect),
         },
     )
 

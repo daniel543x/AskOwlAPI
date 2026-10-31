@@ -18,7 +18,7 @@ from .modules.identity.auth.repository import RefreshTokenRepository
 from .modules.identity.router import router as IdentityRouter
 from .modules.identity.user.router import admin_router as UserAdminRouter
 from .modules.jobs.factory import get_job_queue
-from .modules.jobs.repository import JobRepository
+from .modules.jobs.resume import requeue_orphans
 from .modules.jobs.router import router as JobsRouter
 from .modules.llm_provider.router import admin_router as ModelAdminRouter
 from .modules.llm_provider.router import health_router as ModelHealthRouter
@@ -78,10 +78,10 @@ async def lifespan(app: FastAPI):
     purge_task = asyncio.create_task(_purge_refresh_tokens_loop())
     job_queue = get_job_queue()
     async with AsyncSession(engine, expire_on_commit=False) as session:
-        swept = await JobRepository(session).sweep_orphans()
-        if swept:
+        requeued = await requeue_orphans(job_queue)
+        if requeued:
             logging.getLogger(__name__).warning(
-                "Startup sweep: marked %d interrupted job(s) as failed.", swept
+                "Startup sweep: re-enqueued %d interrupted job(s).", requeued
             )
         blobs = await AttachmentRepository(session).sweep_orphan_image_blobs()
         if blobs:

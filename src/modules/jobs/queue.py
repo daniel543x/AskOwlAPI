@@ -215,6 +215,15 @@ class JobQueue:
                 self._running_per_user[job.user_id] = remaining
             self._wake.set()
 
+    # <----- Re-enqueue (WU-17) ----->
+
+    def requeue(self, job: Job, runner: Runner) -> None:
+        """Pending re-entry for a rebuilt runner (no status rewrite)."""
+        job.queue_position = len(self._pending) + 1
+        self._pending.append((job, runner))
+        self._wake.set()
+        self._notify(job)
+
     # <----- Introspection (PR 13 builds routes on this) ----->
 
     def pending_snapshot(self) -> list[Job]:
