@@ -289,7 +289,9 @@ async def test_init_db_flips_no_action_fk_to_set_null(db_session):
     from src.tools.db import init_db
     from tests.conftest import _integration_database_url
 
-    # Install the pre-fix state the app DB actually has (NO ACTION).
+    # Install the pre-fix state the app DB actually has: the FK predates
+    # the SET NULL change and carries a non-default constraint name, so a
+    # name-based guard cannot find it.
     await db_session.execute(
         text(
             "ALTER TABLE conversation "
@@ -299,7 +301,7 @@ async def test_init_db_flips_no_action_fk_to_set_null(db_session):
     await db_session.execute(
         text(
             "ALTER TABLE conversation "
-            "ADD CONSTRAINT conversation_persona_id_fkey "
+            "ADD CONSTRAINT fk_conversation_persona_id "
             "FOREIGN KEY (persona_id) REFERENCES persona(id)"
         )
     )
@@ -307,16 +309,19 @@ async def test_init_db_flips_no_action_fk_to_set_null(db_session):
     engine = create_async_engine(_integration_database_url())
     try:
         await init_db(engine=engine)
+        await init_db(engine=engine)
     finally:
         await engine.dispose()
     row = await db_session.execute(
         text(
-            "SELECT confdeltype FROM pg_constraint "
-            "WHERE conname = 'conversation_persona_id_fkey' "
-            "AND conrelid = 'conversation'::regclass"
+            "SELECT c.confdeltype FROM pg_constraint c "
+            "JOIN pg_attribute a ON a.attrelid = c.conrelid "
+            "AND a.attnum = ANY (c.conkey) "
+            "WHERE c.conrelid = 'conversation'::regclass "
+            "AND c.contype = 'f' "
+            "AND c.confrelid = 'persona'::regclass "
+            "AND a.attname = 'persona_id'"
         )
     )
-    confdeltype = row.scalar_one()
-    if isinstance(confdeltype, bytes):
-        confdeltype = confdeltype.decode()
-    assert confdeltype == "n"
+    types = [t.decode() if isinstance(t, bytes) else t for t in row.scalars().all()]
+    assert types and all(t == "n" for t in types)
