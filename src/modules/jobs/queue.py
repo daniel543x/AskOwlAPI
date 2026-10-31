@@ -81,16 +81,33 @@ class JobQueue:
             await session.merge(job)
             await session.commit()
 
+    async def _persist_safe(self, job: Job) -> None:
+        """Persist a transition; a broken DB must not kill the queue."""
+        try:
+            await self._persist(job)
+        except Exception:  # noqa: BLE001 — the queue is the boundary
+            logger.warning(
+                "Job %s transition to %s could not be persisted.",
+                job.id, job.status, exc_info=True,
+            )
+
     # <----- Submission ----->
 
     async def submit(self, job: Job, runner: Runner) -> Job:
-        """Persist + enqueue one job; returns the row with its position."""
+        """Persist + enqueue one job; returns the row with its position.
+
+        The row is persisted BEFORE the worker is woken: the worker's own
+        `running` transition persists concurrently, and two merge commits
+        racing on a not-yet-committed row violate `job_pkey` (observed as
+        failed re-runs, webapp API-NOTES #9). A persist failure leaves the
+        job in the in-memory queue — the next transition re-persists it.
+        """
         job.status = JobStatus.QUEUED
         job.created_at = datetime.now(UTC)
         job.queue_position = len(self._pending) + 1
+        await self._persist_safe(job)
         self._pending.append((job, runner))
         self._wake.set()
-        await self._persist(job)
         self._notify(job)
         return job
 
@@ -155,13 +172,13 @@ class JobQueue:
             job.status = JobStatus.RUNNING
             job.started_at = datetime.now(UTC)
             job.queue_position = None
-            await self._persist(job)
+            await self._persist_safe(job)
             self._notify(job)
             summary = await runner()
             job.status = JobStatus.SUCCEEDED
             job.result_summary = summary
             job.finished_at = datetime.now(UTC)
-            await self._persist(job)
+            await self._persist_safe(job)
             self._notify(job)
         except Exception as exc:  # noqa: BLE001 — the queue is the boundary
             retry_after = _retry_after_of(exc)
@@ -179,14 +196,16 @@ class JobQueue:
                 self._pending.insert(0, (job, runner))
                 self._resequence()
                 self._wake.set()
-                await self._persist(job)
+                await self._persist_safe(job)
                 self._notify(job)
             else:
                 job.status = JobStatus.FAILED
-                job.error = str(exc)
+                # Raw driver text (SQL fragments, constraint names) must
+                # never reach clients; the full traceback is in the log.
+                job.error = f"Job failed with {type(exc).__name__}."
                 job.finished_at = datetime.now(UTC)
                 logger.exception("Job %s failed.", job.id)
-                await self._persist(job)
+                await self._persist_safe(job)
                 self._notify(job)
         finally:
             remaining = self._running_per_user.get(job.user_id, 1) - 1
