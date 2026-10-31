@@ -423,7 +423,9 @@ revisions `d4f8b2e6a9c1` + `f1c5e9a3d7b2`.
 - **Soft delete for user data:** hide-but-preserve (conversations, personas, attachments).
 - **Per-model settings memory:** remember last thinking/effort per model in the profile
   (v1 ships single active preference set + reset-on-switch).
-- **Persona-level source types:** intersect `allowed_source_types` with provider support.
+- ~~Persona-level source types~~ → done 2026-10-31 as Phase 12 PR 4 (`wu/persona-source-types`):
+  `Persona.allowed_source_types` with write-time declared-set validation and ask-time
+  narrowing (request ∩ persona), all four dispatch paths.
 - **Multi-node topology:** Redis-backed ICache + jobs outgrow single-node asyncio.
 - **Job auto-resume:** replay interrupted background runs from the last `research_note`.
 - **OCR fallback for non-vision models:** out of scope for v1; would belong in a
