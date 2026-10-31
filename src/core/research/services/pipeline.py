@@ -8,7 +8,7 @@ document — the same shape as the ask pipeline adapters.
 import json
 import logging
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import nullcontext
 from typing import Any
 
@@ -100,6 +100,7 @@ async def research_logic(
     scout: bool = False,
     reflect: bool = False,
     persona=None,
+    progress: Callable[[dict], Awaitable[None]] | None = None,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the research pipeline, yielding (event, payload) pairs.
 
@@ -108,8 +109,15 @@ async def research_logic(
     get_context) exactly like the search pipeline, minus query rewriting
     (the planner already produced search-shaped sub-questions).
 
+    `progress` (job auto-resume, WU-17): awaited with the planned tasks
+    and again after every note so the runner can persist it into the
+    job row.
+
     Errors are reported as ``error`` events, never raised.
     """
+    done_tasks = {
+        note.task for note in (note_store.notes if note_store else [])
+    }
     budget = make_budget()
     try:
         chunk_repo = ChunkRepository(session) if session is not None else None
@@ -142,12 +150,19 @@ async def research_logic(
         budget.spend_tokens(" ".join(subquestions))
 
         yield "plan", {"subquestions": subquestions, "tool_call": used_tool_call}
+        if progress is not None:
+            await progress({"planned_tasks": list(subquestions)})
         if settings.DEBUG:
             yield "debug", {"stage": "planning", "used_tool_call": used_tool_call}
 
         # <----- Per-sub-question gathering (shared tools) ----->
         gathered: list[dict[str, Any]] = []
         for index, subquestion in enumerate(subquestions, start=1):
+            if subquestion in done_tasks:
+                yield "status", {
+                    "step": f"Resuming: skipping covered task {subquestion!r}."
+                }
+                continue
             if budget.exhausted:
                 reason = budget.stop_reason() or "budget exhausted"
                 yield "status", {
@@ -193,6 +208,10 @@ async def research_logic(
                     subquestion, context, sources_used
                 )
                 yield "note", entry
+                if progress is not None:
+                    await progress({
+                        "note_ids": [str(n.id) for n in note_store.notes]
+                    })
             if context.strip():
                 gathered.append(
                     {
