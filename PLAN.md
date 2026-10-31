@@ -420,7 +420,9 @@ revisions `d4f8b2e6a9c1` + `f1c5e9a3d7b2`.
   engines" mitigation for search-egress poisoning, Phase 3 closure).
 - **API-caller tool for agent modes:** external REST calls with user-provided (encrypted)
   credentials.
-- **Soft delete for user data:** hide-but-preserve (conversations, personas, attachments).
+- ~~Soft delete for user data~~ → done 2026-10-31 (`wu/soft-delete`): nullable
+  `deleted_at` on conversation + persona; deletes hide (404 everywhere), continuation
+  rejects, rows survive for admin recovery; no undo in v1 (attachments have no delete route).
 - ~~Per-model settings memory~~ → done 2026-10-31 (`wu/model-settings-memory`):
   `usermodelsettings` table restores remembered thinking/effort on switch;
   explicit PUTs refresh memory; reset-on-switch only applies to never-remembered models.
