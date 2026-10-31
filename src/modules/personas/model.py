@@ -41,6 +41,10 @@ class Persona(SQLModel, table=True):
     description: str | None = Field(default=None, max_length=DESCRIPTION_MAX_LENGTH)
     # Card chips (webapp API-NOTES #2): UI-owned vocabulary, no registry.
     tags: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    # The persona's chat model (webapp API-NOTES #5): a modelcatalogentry
+    # id, validated at write time. Deliberately NO FK — a catalog deletion
+    # must leave the persona intact and surface as "missing" at ask time.
+    model: UUID | None = Field(default=None)
     # Free-form system context (topic, tech stack, tone) injected into the
     # agent's system prompt to bias query rewriting.
     system_context: str = Field(default="")
@@ -66,6 +70,7 @@ class PersonaCreate(SQLModel):
     name: str = Field(max_length=100)
     description: str | None = Field(default=None, max_length=DESCRIPTION_MAX_LENGTH)
     tags: list[str] = Field(default_factory=list)
+    model: UUID | None = None
     system_context: str = ""
     allowed_domains: list[str] = Field(default_factory=list)
     allowed_engines: list[str] = Field(default_factory=list)
@@ -84,6 +89,7 @@ class PersonaUpdate(SQLModel):
     name: str | None = None
     description: str | None = Field(default=None, max_length=DESCRIPTION_MAX_LENGTH)
     tags: list[str] | None = None
+    model: UUID | None = None
     system_context: str | None = None
     allowed_domains: list[str] | None = None
     allowed_engines: list[str] | None = None
@@ -101,6 +107,7 @@ class PersonaRead(SQLModel):
     name: str
     description: str | None
     tags: list[str]
+    model: UUID | None
     system_context: str
     allowed_domains: list[str]
     allowed_engines: list[str]

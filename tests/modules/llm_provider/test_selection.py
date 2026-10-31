@@ -3,6 +3,7 @@ import uuid
 import pytest
 
 from src.modules.llm_provider.selection import (
+    EntryState,
     TIER_DEFAULT,
     TIER_PREFERENCE,
     TIER_REQUEST,
@@ -11,6 +12,7 @@ from src.modules.llm_provider.selection import (
     SelectionError,
     has_role_access,
     resolve_model_id,
+    unusable_reason,
 )
 
 
@@ -160,3 +162,25 @@ def test_has_role_access_hierarchy():
     # Unknown role names now deny (F-03 least-privilege default); a user
     # carrying unknown names still passes plain entries (level defaults 0).
     assert not has_role_access(["user"], "unknown-role")
+
+
+def persona_state(**overrides):
+    base = dict(
+        id=uuid.uuid4(),
+        kind="chat",
+        is_active=True,
+        required_role="user",
+        capabilities=["tools"],
+    )
+    base.update(overrides)
+    return EntryState(**base)
+
+
+def test_unusable_reason_tokens():
+    roles = ["user"]
+    assert unusable_reason(None, roles) == "missing"
+    assert unusable_reason(persona_state(kind="embedding"), roles) == "missing"
+    assert unusable_reason(persona_state(is_active=False), roles) == "inactive"
+    assert unusable_reason(persona_state(capabilities=[]), roles) == "lacks_tools"
+    assert unusable_reason(persona_state(required_role="admin"), roles) == "no_role"
+    assert unusable_reason(persona_state(), roles) is None

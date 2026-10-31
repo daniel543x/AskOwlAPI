@@ -412,3 +412,107 @@ async def test_persona_patch_null_clears_description(auth_client, db_session):
     )
     assert untouched.status_code == 200, untouched.text
     assert untouched.json()["description"] is None
+
+
+async def _seed_chat_catalog(db_session):
+    from src.modules.llm_provider.model import ModelCatalogEntry, ModelProvider
+
+    provider = ModelProvider(
+        name=f"prov_{uuid.uuid4().hex[:8]}", provider_type="ollama"
+    )
+    db_session.add(provider)
+    await db_session.flush()
+    valid = ModelCatalogEntry(
+        provider_id=provider.id,
+        kind="chat",
+        model_name="valid-chat",
+        is_active=True,
+        required_role="user",
+        capabilities=["tools"],
+    )
+    toolless = ModelCatalogEntry(
+        provider_id=provider.id,
+        kind="chat",
+        model_name="no-tools",
+        is_active=True,
+        required_role="user",
+        capabilities=[],
+    )
+    inactive = ModelCatalogEntry(
+        provider_id=provider.id,
+        kind="chat",
+        model_name="off",
+        is_active=False,
+        required_role="user",
+        capabilities=["tools"],
+    )
+    embedding = ModelCatalogEntry(
+        provider_id=provider.id,
+        kind="embedding",
+        model_name="embed",
+        is_active=True,
+        required_role="user",
+        capabilities=["tools"],
+    )
+    db_session.add_all([valid, toolless, inactive, embedding])
+    await db_session.commit()
+    for entry in (valid, toolless, inactive, embedding):
+        await db_session.refresh(entry)
+    return valid, toolless, inactive, embedding
+
+
+@pytest.mark.asyncio
+async def test_persona_model_rejects_invalid(auth_client, db_session):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    valid, toolless, inactive, embedding = await _seed_chat_catalog(db_session)
+
+    for model_id, reason in (
+        (uuid.uuid4(), "missing"),
+        (embedding.id, "missing"),
+        (inactive.id, "inactive"),
+        (toolless.id, "lacks_tools"),
+    ):
+        response = await auth_client.post(
+            "/personas",
+            json={**PERSONA_PAYLOAD, "model": str(model_id)},
+            headers=headers,
+        )
+        assert response.status_code == 422, (model_id, response.text)
+        detail = response.json()["detail"]
+        assert detail["code"] == "persona_model_invalid", detail
+        assert detail["reason"] == reason, detail
+
+    unused = await auth_client.get(
+        "/personas", headers=headers
+    )
+    assert unused.json() == []
+
+
+@pytest.mark.asyncio
+async def test_persona_model_roundtrip(auth_client, db_session):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    valid, *_ = await _seed_chat_catalog(db_session)
+
+    created = await auth_client.post(
+        "/personas",
+        json={**PERSONA_PAYLOAD, "model": str(valid.id)},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    persona = created.json()
+    assert persona["model"] == str(valid.id)
+
+    fetched = await auth_client.get(
+        f"/personas/{persona['id']}", headers=headers
+    )
+    assert fetched.json()["model"] == str(valid.id)
+
+    cleared = await auth_client.patch(
+        f"/personas/{persona['id']}",
+        json={"model": None},
+        headers=headers,
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["model"] is None
