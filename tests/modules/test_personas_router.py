@@ -325,3 +325,90 @@ async def test_init_db_flips_no_action_fk_to_set_null(db_session):
     )
     types = [t.decode() if isinstance(t, bytes) else t for t in row.scalars().all()]
     assert types and all(t == "n" for t in types)
+
+
+@pytest.mark.asyncio
+async def test_persona_description_and_tags_roundtrip(auth_client, db_session):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    created = await auth_client.post(
+        "/personas",
+        json={**PERSONA_PAYLOAD, "description": "Short blurb.", "tags": ["rust", "systems"]},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    persona = created.json()
+    assert persona["description"] == "Short blurb."
+    assert persona["tags"] == ["rust", "systems"]
+
+    listed = (await auth_client.get("/personas", headers=headers)).json()
+    assert listed[0]["description"] == "Short blurb."
+    assert listed[0]["tags"] == ["rust", "systems"]
+
+    patched = await auth_client.patch(
+        f"/personas/{persona['id']}",
+        json={"description": "New.", "tags": ["a"]},
+        headers=headers,
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["description"] == "New."
+    assert patched.json()["tags"] == ["a"]
+
+
+@pytest.mark.asyncio
+async def test_persona_field_caps_reject(auth_client, db_session):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    created = await auth_client.post(
+        "/personas",
+        json={**PERSONA_PAYLOAD, "description": "Keep.", "tags": ["keep"]},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    persona = created.json()
+
+    for bad_body in (
+        {"tags": [f"t{i}" for i in range(9)]},
+        {"tags": ["x" * 51]},
+        {"description": "d" * 301},
+    ):
+        response = await auth_client.patch(
+            f"/personas/{persona['id']}", json=bad_body, headers=headers
+        )
+        assert response.status_code == 422, (bad_body, response.text)
+
+    unchanged = await auth_client.get(f"/personas/{persona['id']}", headers=headers)
+    assert unchanged.json()["description"] == "Keep."
+    assert unchanged.json()["tags"] == ["keep"]
+
+
+@pytest.mark.asyncio
+async def test_persona_patch_null_clears_description(auth_client, db_session):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    created = await auth_client.post(
+        "/personas",
+        json={**PERSONA_PAYLOAD, "description": "To clear."},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    persona = created.json()
+
+    cleared = await auth_client.patch(
+        f"/personas/{persona['id']}",
+        json={"description": None},
+        headers=headers,
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["description"] is None
+
+    untouched = await auth_client.patch(
+        f"/personas/{persona['id']}",
+        json={"system_context": "Still fine."},
+        headers=headers,
+    )
+    assert untouched.status_code == 200, untouched.text
+    assert untouched.json()["description"] is None

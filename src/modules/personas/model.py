@@ -11,7 +11,24 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import JSON, Column, DateTime
+from pydantic import field_validator
 from sqlmodel import Field, SQLModel
+
+DESCRIPTION_MAX_LENGTH = 300
+TAGS_MAX_ITEMS = 8
+TAG_MAX_LENGTH = 50
+
+
+def _clean_tags(tags: list[str] | None) -> list[str] | None:
+    """Trim, drop empties, then enforce the caps as rejections."""
+    if tags is None:
+        return None
+    cleaned = [tag.strip() for tag in tags if tag.strip()]
+    if len(cleaned) > TAGS_MAX_ITEMS:
+        raise ValueError(f"At most {TAGS_MAX_ITEMS} tags are allowed.")
+    if any(len(tag) > TAG_MAX_LENGTH for tag in cleaned):
+        raise ValueError(f"Each tag is limited to {TAG_MAX_LENGTH} characters.")
+    return cleaned
 
 
 class Persona(SQLModel, table=True):
@@ -20,6 +37,10 @@ class Persona(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     user_id: UUID = Field(foreign_key="user.id", index=True)
     name: str = Field(max_length=100, index=True)
+    # Card + editor copy (webapp API-NOTES #1); NULL = never written.
+    description: str | None = Field(default=None, max_length=DESCRIPTION_MAX_LENGTH)
+    # Card chips (webapp API-NOTES #2): UI-owned vocabulary, no registry.
+    tags: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     # Free-form system context (topic, tech stack, tone) injected into the
     # agent's system prompt to bias query rewriting.
     system_context: str = Field(default="")
@@ -43,25 +64,43 @@ class Persona(SQLModel, table=True):
 
 class PersonaCreate(SQLModel):
     name: str = Field(max_length=100)
+    description: str | None = Field(default=None, max_length=DESCRIPTION_MAX_LENGTH)
+    tags: list[str] = Field(default_factory=list)
     system_context: str = ""
     allowed_domains: list[str] = Field(default_factory=list)
     allowed_engines: list[str] = Field(default_factory=list)
     allowed_keywords: list[str] = Field(default_factory=list)
     default_parameters: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("tags")
+    @classmethod
+    def _validate_tags(cls, value: list[str]) -> list[str]:
+        cleaned = _clean_tags(value)
+        assert cleaned is not None
+        return cleaned
+
 
 class PersonaUpdate(SQLModel):
     name: str | None = None
+    description: str | None = Field(default=None, max_length=DESCRIPTION_MAX_LENGTH)
+    tags: list[str] | None = None
     system_context: str | None = None
     allowed_domains: list[str] | None = None
     allowed_engines: list[str] | None = None
     allowed_keywords: list[str] | None = None
     default_parameters: dict[str, Any] | None = None
 
+    @field_validator("tags")
+    @classmethod
+    def _validate_tags(cls, value: list[str] | None) -> list[str] | None:
+        return _clean_tags(value)
+
 
 class PersonaRead(SQLModel):
     id: UUID
     name: str
+    description: str | None
+    tags: list[str]
     system_context: str
     allowed_domains: list[str]
     allowed_engines: list[str]
