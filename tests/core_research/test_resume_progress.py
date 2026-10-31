@@ -75,7 +75,11 @@ def research_model(subquestions):
 
 
 async def run_pipeline(
-    note_store, query="main question", subquestions=None, progress=None
+    note_store,
+    query="main question",
+    subquestions=None,
+    progress=None,
+    resume_state=None,
 ):
     events = []
     async for event, data in research_logic(
@@ -86,6 +90,7 @@ async def run_pipeline(
         FakeRanker(),
         note_store=note_store,
         progress=progress,
+        resume_state=resume_state,
     ):
         events.append((event, data))
     return events
@@ -127,3 +132,43 @@ async def test_covered_tasks_are_skipped_but_still_synthesized():
     # The plan is still reported, and synthesis still runs to completion.
     done = [d for e, d in events if e == "answer_ready"]
     assert done and done[0]["query"] == "both covered"
+
+
+async def test_resumed_plan_is_authoritative_no_replanning():
+    passed: list = []
+
+    class PlannerSpy:
+        pass
+
+    import src.core.research.services.pipeline as pipe_mod
+
+    original = pipe_mod.plan_subquestions
+
+    async def spy(model, query, ceiling, today=None):
+        passed.append(query)
+        return original(model, query, ceiling, today=today)
+
+    store = RecordingStore(seeded=[seeded_note("cov a")])
+    await run_pipeline(
+        store,
+        query="ru",
+        subquestions=["cov a", "cov b"],
+        resume_state={"planned_tasks": ["cov a", "cov b"]},
+    )
+    assert passed == []  # the planner was never called
+
+
+
+async def test_plan_event_marks_resumed_true(monkeypatch):
+    import src.core.research.services.pipeline as pipe_mod
+
+    monkeypatch.setattr(pipe_mod.settings, "RESULT_SANITY_FILTER", False)
+    store = RecordingStore(seeded=[seeded_note("cov a")])
+    events = await run_pipeline(
+        store,
+        query="ru",
+        subquestions=["cov a"],
+        resume_state={"planned_tasks": ["cov a"]},
+    )
+    plan = next(d for e, d in events if e == "plan")
+    assert plan["resumed"] is True

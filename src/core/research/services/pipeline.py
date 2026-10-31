@@ -101,6 +101,7 @@ async def research_logic(
     reflect: bool = False,
     persona=None,
     progress: Callable[[dict], Awaitable[None]] | None = None,
+    resume_state: dict[str, Any] | None = None,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the research pipeline, yielding (event, payload) pairs.
 
@@ -143,15 +144,30 @@ async def research_logic(
             budget.spend_tokens(scout_context)
 
         # <----- Planning (native tool call) ----->
-        yield "status", {"step": "Planning sub-questions..."}
-        subquestions, used_tool_call = await plan_subquestions(
-            model, query, settings.RESEARCH_MAX_SUBQUESTIONS, today=today
-        )
-        budget.spend_tokens(" ".join(subquestions))
+        # WU-17: a persisted plan is authoritative on resume — the
+        # planner is skipped so covered tasks match exactly.
+        resumed_plan = (resume_state or {}).get("planned_tasks") or []
+        if resumed_plan:
+            subquestions = list(resumed_plan)
+            used_tool_call = False
+            budget.spend_tokens(" ".join(subquestions))
+        else:
+            yield "status", {"step": "Planning sub-questions..."}
+            subquestions, used_tool_call = await plan_subquestions(
+                model, query, settings.RESEARCH_MAX_SUBQUESTIONS, today=today
+            )
+            budget.spend_tokens(" ".join(subquestions))
 
-        yield "plan", {"subquestions": subquestions, "tool_call": used_tool_call}
+        yield "plan", {
+            "subquestions": subquestions,
+            "tool_call": used_tool_call,
+            "resumed": bool(resumed_plan),
+        }
         if progress is not None:
-            await progress({"planned_tasks": list(subquestions)})
+            try:
+                await progress({"planned_tasks": list(subquestions)})
+            except Exception as e:  # noqa: BLE001 — bookkeeping never kills a run
+                logger.warning("Progress writeback failed (plan): %s", e)
         if settings.DEBUG:
             yield "debug", {"stage": "planning", "used_tool_call": used_tool_call}
 
@@ -209,9 +225,12 @@ async def research_logic(
                 )
                 yield "note", entry
                 if progress is not None:
-                    await progress({
-                        "note_ids": [str(n.id) for n in note_store.notes]
-                    })
+                    try:
+                        await progress({
+                            "note_ids": [str(n.id) for n in note_store.notes]
+                        })
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("Progress writeback failed (note): %s", e)
             if context.strip():
                 gathered.append(
                     {
@@ -221,7 +240,11 @@ async def research_logic(
                     }
                 )
 
-        if not gathered:
+        # WU-17: seeded notes count as material — a resumed run with a
+        # covered leg synthesizes from them even when the fresh legs
+        # found nothing new this time.
+        seeded_notes = note_store.notes if note_store else []
+        if not gathered and not seeded_notes:
             yield (
                 "answer_ready",
                 {
@@ -462,6 +485,7 @@ async def research_json_adapter(
     persona=None,
     turn: TurnResources | None = None,
     progress: Callable[[dict], Awaitable[None]] | None = None,
+    resume_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the research pipeline and return the full result as one dict."""
     answer_data: dict[str, Any] | None = None
@@ -474,6 +498,7 @@ async def research_json_adapter(
                 session=session, today=today, source_types=source_types,
                 attachments=attachments, note_store=note_store,
                 scout=scout, reflect=reflect, persona=persona,
+                progress=progress, resume_state=resume_state,
             )
             async for event, data in pipeline:
                 if event == "error":
@@ -497,7 +522,9 @@ async def research_json_adapter(
                     ),
                 )
 
-            if answer_data["no_context"]:
+            if answer_data["no_context"] and not (
+                note_store is not None and note_store.notes
+            ):
                 report = NO_CONTEXT_REPORT
             elif note_store is not None and note_store.notes:
                 notes = await note_store.ordered_notes()

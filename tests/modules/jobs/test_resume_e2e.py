@@ -45,6 +45,7 @@ async def test_resumed_research_run_skips_covered_leg(env, db_session, monkeypat
     from src.modules.jobs.queue import JobQueue
     from src.modules.jobs.resume import requeue_orphans
     from src.modules.notes.model import ResearchNote
+    from tests.conftest import _integration_database_url
 
     monkeypatch.setattr(
         __import__("src.modules.jobs.resume", fromlist=["settings"]).settings,
@@ -52,6 +53,8 @@ async def test_resumed_research_run_skips_covered_leg(env, db_session, monkeypat
         3,
     )
     import asyncio
+
+    from src.tools.settings import settings
 
     covered_task = "already-gathered leg"
     note = ResearchNote(
@@ -97,11 +100,24 @@ async def test_resumed_research_run_skips_covered_leg(env, db_session, monkeypat
                 "ResearchReport",
                 {"report": "## Covered\nSynthesis from both legs."},
             ),
+            # Spare: the editorial step consumes one response on resume,
+            # the fallback report generator another.
+            tool_call(
+                "ResearchReport",
+                {"report": "## Covered\nSynthesis from both legs."},
+            ),
         ]
     )
 
+    class _StubResolved:
+        provider_id = None
+        max_concurrency = 1
+        capabilities = ["tools", "thinking"]
+        model_name = "scripted"
+        provider_type = "ollama"
+
     async def fake_chat(session, job):
-        return scripted
+        return scripted, _StubResolved()
 
     class _FakeResolved:
         pass
@@ -121,6 +137,7 @@ async def test_resumed_research_run_skips_covered_leg(env, db_session, monkeypat
             ]
 
     monkeypatch.setattr(resume_mod, "_chat_model", fake_chat)
+    monkeypatch.setattr(settings, "RESULT_SANITY_FILTER", False)
     async def _fake_scrap(session):
         return make_scraper()
 
@@ -160,6 +177,11 @@ async def test_resumed_research_run_skips_covered_leg(env, db_session, monkeypat
         staticmethod(_fake_from_resolved),
     )
 
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    test_engine = create_async_engine(_integration_database_url())
+    maker = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+
     queue = JobQueue(session_factory=lambda: db_session)
 
     async def registry(job_row):
@@ -171,7 +193,8 @@ async def test_resumed_research_run_skips_covered_leg(env, db_session, monkeypat
         return [job]
 
     requeued = await requeue_orphans(
-        queue, jobs_provider=jobs_provider, registry=registry
+        queue, session_factory=lambda: maker(), jobs_provider=jobs_provider,
+        registry=registry,
     )
     assert requeued == 1
     assert job.status == JobStatus.QUEUED
@@ -182,6 +205,9 @@ async def test_resumed_research_run_skips_covered_leg(env, db_session, monkeypat
                 break
             await asyncio.sleep(0.05)
         assert job.status == JobStatus.SUCCEEDED, (job.error, job.payload)
+        # Synthesis covers the seeded (pre-restart) note: the report is
+        # the scripted one, not the no-content fallback.
+        assert "both legs" in (job.result_summary or ""), job.result_summary
         import logging
         logging.getLogger().setLevel(logging.DEBUG)
         from sqlmodel import select as _sel
@@ -190,3 +216,4 @@ async def test_resumed_research_run_skips_covered_leg(env, db_session, monkeypat
         assert count == 1  # no duplicate note for the covered leg
     finally:
         await queue.stop()
+        await test_engine.dispose()

@@ -52,7 +52,7 @@ async def _profile_model_id(
 async def build_runner(job: Job, session: AsyncSession):
     """A runner closure for a persisted job row, or None = not resumable."""
     if job.kind == "search":
-        return _search_runner(job)
+        return _search_runner(job, session)
     if job.kind == "research":
         return await _research_runner(job, session)
     logger.warning(
@@ -61,10 +61,19 @@ async def build_runner(job: Job, session: AsyncSession):
     return None
 
 
-def _search_runner(job: Job):
+def _search_runner(job: Job, session: AsyncSession):
     payload = job.payload or {}
     query = payload.get("query") or ""
-    conversation_id = payload.get("conversation_id")
+    conversation_id = None
+    raw_conversation = payload.get("conversation_id")
+    if raw_conversation:
+        try:
+            conversation_id = uuid.UUID(str(raw_conversation))
+        except ValueError:
+            logger.warning(
+                "Job %s has an unparsable conversation_id; resuming stateless.",
+                job.id,
+            )
 
     async def runner() -> str:
         from ...core.ask.services.search import search_json_adapter
@@ -75,12 +84,17 @@ def _search_runner(job: Job):
         from ..scrapy.factory import ScraperFactory
         from ..search_engine.factory import SearchProviderFactory
 
-        async with AsyncSession(engine, expire_on_commit=False) as session:
-            searching = await SearchProviderFactory.create_provider(session)
-            scraper = await ScraperFactory.create(session)
-            resolved_ranker = await _resolve_ranker_model(session, None)
+        db_session = session
+
+        async with AsyncSession(
+            db_session.bind, expire_on_commit=False
+        ) as run_session:
+            searching = await SearchProviderFactory.create_provider(run_session)
+            scraper = await ScraperFactory.create(run_session)
+            resolved_ranker = await _resolve_ranker_model(run_session, None)
             ranker = await RankerFactory.from_resolved(resolved_ranker)
-            model = await _chat_model(session, job)
+            model = (await _chat_model(run_session, job))[0]
+            options = payload.get("options") or {}
             result = await search_json_adapter(
                 query,
                 searching,
@@ -90,6 +104,7 @@ def _search_runner(job: Job):
                 session=session,
                 user_id=job.user_id,
                 conversation_id=conversation_id,
+                source_types=options.get("source_types"),
             )
         return (result.get("answer") or "")[:4000]
 
@@ -100,7 +115,11 @@ async def _research_runner(job: Job, session: AsyncSession):
     payload = job.payload or {}
     research_state = payload.get("research") or {}
     query = payload.get("query") or ""
-    note_ids = research_state.get("note_ids") or []
+    note_ids = [
+        uuid.UUID(n)
+        for n in (research_state.get("note_ids") or [])
+        if n
+    ]
     scout = bool(payload.get("scout"))
     reflect = bool(payload.get("reflect"))
 
@@ -116,12 +135,12 @@ async def _research_runner(job: Job, session: AsyncSession):
         from ..scrapy.factory import ScraperFactory
         from ..search_engine.factory import SearchProviderFactory
 
-        async with AsyncSession(engine, expire_on_commit=False) as job_session:
+        async with AsyncSession(session.bind, expire_on_commit=False) as job_session:
             searching = await SearchProviderFactory.create_provider(job_session)
             scraper = await ScraperFactory.create(job_session)
             resolved_ranker = await _resolve_ranker_model(job_session, None)
             ranker = await RankerFactory.from_resolved(resolved_ranker)
-            model = await _chat_model(job_session, job)
+            model, resolved_stub = await _chat_model(job_session, job)
             persona = None
             persona_id = payload.get("persona_id")
             if persona_id:
@@ -136,6 +155,11 @@ async def _research_runner(job: Job, session: AsyncSession):
             note_store = NoteStore(
                 NoteRepository(job_session), job.user_id, seeded=list(seed)
             )
+            print("DIAG seeded:", len(seed), [n.task for n in note_store.notes])
+            # WU-17: resource gates still bound the resumed run.
+            turn = _turn_resources(
+                job, dep_model=resolved_stub, searching=searching
+            )
             result = await research_json_adapter(
                 query,
                 searching,
@@ -147,7 +171,12 @@ async def _research_runner(job: Job, session: AsyncSession):
                 persona=persona,
                 scout=scout,
                 reflect=reflect,
+                source_types=(payload.get("options") or {}).get("source_types"),
                 progress=_progress_writer(job, session),
+                resume_state={"planned_tasks": research_state.get("planned_tasks")}
+                if research_state.get("planned_tasks")
+                else None,
+                turn=turn,
             )
         return (result.get("report") or "")[:4000]
 
@@ -171,6 +200,30 @@ async def _chat_model(session: AsyncSession, job: Job):
     return factory.create_chat_model(resolved)
 
 
+def _turn_resources(
+    job: Job,
+    *,
+    dep_model,
+    searching,
+):
+    """Gate identity for the rebuilt run (model + search side).
+
+    No acquisition here — the adapters gate at the turn boundary.
+    """
+    from ...modules.llm_provider.selection import ResolvedModel
+    from ..llm_provider.dependency import turn_resources_for_resolved
+
+    resolved = ResolvedModel(
+        kind="chat",
+        model_name=getattr(dep_model, "model_name", "resumed"),
+        provider_type=getattr(dep_model, "provider_type", "ollama"),
+        provider_id=getattr(dep_model, "provider_id", None),
+        max_concurrency=1,
+        capabilities=list(getattr(dep_model, "capabilities", []) or []),
+    )
+    return turn_resources_for_resolved(resolved, searching)
+
+
 def _progress_writer(job: Job, session: AsyncSession):
     """A hook the pipeline awaits to persist plan/note progress."""
 
@@ -179,7 +232,7 @@ def _progress_writer(job: Job, session: AsyncSession):
 
 
     async def hook(data: dict) -> None:
-        state = dict(job.payload.get("research") or {})
+        state = dict((job.payload or {}).get("research") or {})
         if "planned_tasks" in data:
             state["planned_tasks"] = data["planned_tasks"]
         if "note_ids" in data:
@@ -188,7 +241,7 @@ def _progress_writer(job: Job, session: AsyncSession):
                 if note_id not in existing:
                     existing.append(note_id)
             state["note_ids"] = existing
-        job.payload = {**job.payload, "research": state}
+        job.payload = {**(job.payload or {}), "research": state}
         async with session_factory() as session:
             await session.merge(job)
             await session.commit()
@@ -216,9 +269,15 @@ async def requeue_orphans(
 
 
     async def default_jobs():
+        # Running rows are the sweep's classic targets; persisted QUEUED
+        # rows are rate-limit retries orphaned by the same restart.
         async with session_factory() as session:
             rows = (
-                await session.exec(select(Job).where(Job.status == JobStatus.RUNNING))
+                await session.exec(
+                    select(Job).where(
+                        Job.status.in_([JobStatus.RUNNING, JobStatus.QUEUED])
+                    )
+                )
             ).all()
             return list(rows)
 
@@ -251,6 +310,9 @@ async def requeue_orphans(
         job.retries += 1
         job.error = None
         job.started_at = None
+        async with session_factory() as session:
+            await session.merge(job)
+            await session.commit()
         queue.requeue(job, runner)
         count += 1
         logger.info(

@@ -564,6 +564,8 @@ async def _enqueue_research_turn(
             "persona_id": str(persona.id) if persona is not None else None,
             "scout": bool(scout),
             "reflect": bool(reflect),
+            # WU-17: options the resumed runner must restore.
+            "options": {"source_types": list(source_types or [])},
         },
     )
 

@@ -269,6 +269,8 @@ async def _enqueue_search_turn(
             "conversation_id": str(request.conversation_id)
             if request.conversation_id
             else None,
+            # WU-17: options the resumed runner must restore.
+            "options": {"source_types": list(request.source_types or [])},
         },
     )
 
