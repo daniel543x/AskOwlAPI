@@ -1,0 +1,27 @@
+{
+  "text": "Uses [1] and [3].",
+  "known": [
+    "https://example.com/a",
+    "https://example.com/b",
+    "https://example.com/c"
+  ],
+  "expected_text": "Uses [1] and [3].",
+  "expected_registry": {
+    "https://example.com/a": 1,
+    "https://example.com/b": 2,
+    "https://example.com/c": 3
+  },
+  "expected_verdict": {
+    "cited_numbers": [
+      1,
+      3
+    ],
+    "missing_numbers": [
+      2
+    ],
+    "unresolved_markers": [],
+    "uncited_sources": [
+      2
+    ]
+  }
+}

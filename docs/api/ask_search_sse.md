@@ -366,3 +366,18 @@ The LLM is never used without a tool call:
 
 Initial stabilized framing: `status`, `query_generated`, `message`, `error`,
 `warning`, `done`, correct `data:` framing and `\n\n` terminators. Superseded.
+
+## Numbered citations (WU-12)
+
+Answers carry dense `[n]` citations assigned after synthesis (the model
+keeps citing `[Source](URL)`; the assembler rewrites). Resolution:
+
+- SSE: a `citations` event arrives after the last `message` delta and
+  before `done`: `{"citations": [{"n": 1, "url": "..."}, ...]}` — cited
+  sources in first-appearance order, consulted-but-uncited sources
+  appended. The pre-existing `sources` event is unchanged (ranked
+  retrieval view).
+- JSON (`stream=false`): the response gains `citations` with the same
+  list. The `sources` field is unchanged.
+- Malformed or unknown citation markers are left as-is, never rewritten
+  or rejected; runs never fail over citations.

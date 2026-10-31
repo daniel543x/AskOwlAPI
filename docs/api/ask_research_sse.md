@@ -37,6 +37,14 @@ search results (host-suffix match), its engines narrow the search call, and its
 `model` field (a `chat`-kind catalog entry id, validated at write) wins over
 every other tier — see the consent flow below.
 
+## Numbered citations
+
+Report prose and the per-section `Citations:` lines carry dense `[n]`
+markers assigned at assembly; the `## Sources` section lists the
+registry (`- [n] url`). Consulted-but-uncited sources are listed after
+the cited prefix. Unknown markers are left as-is; runs never fail over
+citations.
+
 ## Persona model consent (`model_confirm`)
 
 Persona-only (any depth). If the persona's stored model has become unusable

@@ -1,0 +1,22 @@
+{
+  "text": "X [Source](https://example.com/b) then [doc](https://example.com/b) again.",
+  "known": [
+    "https://example.com/a",
+    "https://example.com/b"
+  ],
+  "expected_text": "X [1] then [1] again.",
+  "expected_registry": {
+    "https://example.com/b": 1,
+    "https://example.com/a": 2
+  },
+  "expected_verdict": {
+    "cited_numbers": [
+      1
+    ],
+    "missing_numbers": [],
+    "unresolved_markers": [],
+    "uncited_sources": [
+      2
+    ]
+  }
+}

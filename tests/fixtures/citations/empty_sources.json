@@ -1,0 +1,14 @@
+{
+  "text": "An answer with [Source](https://example.com/a) and [2].",
+  "known": [],
+  "expected_text": "An answer with [Source](https://example.com/a) and [2].",
+  "expected_registry": {},
+  "expected_verdict": {
+    "cited_numbers": [],
+    "missing_numbers": [],
+    "unresolved_markers": [
+      2
+    ],
+    "uncited_sources": []
+  }
+}
