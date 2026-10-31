@@ -29,6 +29,7 @@ from ....modules.scrapy.providers.base import IScraper
 from ....modules.search_engine.providers.base import ISearchProvider
 from ....tools.cache_flags import cache_bypass
 from ....tools.settings import settings
+from ...tools.citations import CitationRewriter
 from ...tools.pre_scores import choose_query, grounding_confidence
 from ...tools.toolbox import AskToolbox
 from .llm_steps import (
@@ -378,7 +379,12 @@ async def search_sse_adapter(
                 if event == "answer_ready":
                     yield frame("status", {"step": "Generating answer..."})
 
+                    known = [
+                        s["url"] for s in data["sources"] if s.get("url")
+                    ]
+                    rewriter = CitationRewriter(known)
                     answer_parts: list[str] = []
+                    raw_parts: list[str] = []
                     try:
                         async for kind, delta in _stream_answer_frames(
                             data["query"], data["context"], model, history,
@@ -387,18 +393,31 @@ async def search_sse_adapter(
                             if kind == "thinking":
                                 yield frame("thinking", {"text": delta})
                                 continue
-                            answer_parts.append(delta)
-                            yield frame("message", {"text": delta})
+                            raw_parts.append(delta)
+                            text = rewriter.feed(delta)
+                            if not text:
+                                continue
+                            answer_parts.append(text)
+                            yield frame("message", {"text": text})
 
+                        tail = rewriter.flush()
+                        if tail:
+                            answer_parts.append(tail)
+                            yield frame("message", {"text": tail})
                         answer_text = "".join(answer_parts)
+                        citations = rewriter.citations_payload()
+                        if citations:
+                            yield frame("citations", {"citations": citations})
                         await _save_turn(
                             session, conversation, data["query"], answer_text
                         )
 
                         if settings.PRE_SCORE_GROUNDING_CHECK and decision_maker:
+                            # Grounding matches URLs, so it runs on the raw
+                            # answer the model produced, pre-rewrite.
                             supported = await grounding_confidence(
                                 decision_maker, data["query"], data["context"],
-                                answer_text,
+                                "".join(raw_parts),
                             )
                             if supported is not None:
                                 yield frame(
@@ -426,6 +445,8 @@ async def search_sse_adapter(
                     # PR 17: the core already streamed the answer deltas;
                     # persist the turn and terminate.
                     answer_text = data["answer"]
+                    if data.get("citations"):
+                        yield frame("citations", {"citations": data["citations"]})
                     await _save_turn(session, conversation, data["query"], answer_text)
                     if not data["context"].strip():
                         yield frame("done", {"status": "no_context"})
@@ -556,6 +577,16 @@ async def search_json_adapter(
 
     await _save_turn(session, conversation, answer_data["query"], answer)
 
+    known = [
+        s["url"] for s in answer_data["sources"] if isinstance(s, dict) and s.get("url")
+    ]
+    if "citations" not in answer_data:
+        # Deterministic path: the answer is unrewritten; agentic turns
+        # arrive with their citations already attached.
+        rewriter = CitationRewriter(known)
+        answer = rewriter.feed(answer) + rewriter.flush()
+        answer_data["citations"] = rewriter.citations_payload()
+
     grounding = None
     if settings.PRE_SCORE_GROUNDING_CHECK and decision_maker:
         grounding = await grounding_confidence(
@@ -566,6 +597,7 @@ async def search_json_adapter(
         "query": answer_data["query"],
         "optimized_query": answer_data["optimized_query"],
         "sources": answer_data["sources"],
+        "citations": answer_data.get("citations", []),
         "context": context,
         "answer": answer,
         "conversation_id": str(conversation.id) if conversation else None,
