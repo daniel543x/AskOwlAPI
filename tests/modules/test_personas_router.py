@@ -552,6 +552,14 @@ async def test_persona_ask_model_confirm_stream(auth_client, db_session):
     assert "Persona answer." not in response.text
     assert "event: done" not in response.text
 
+    # The confirm path must not create a conversation or persist a turn.
+    from sqlmodel import select
+
+    from src.modules.history.model import Conversation
+
+    remaining = (await db_session.exec(select(Conversation))).all()
+    assert remaining == []
+
 
 @pytest.mark.asyncio
 async def test_persona_ask_model_confirm_json_409(auth_client, db_session):
@@ -615,3 +623,83 @@ async def test_persona_ask_allow_model_fallback_runs(auth_client, db_session):
     )
     assert response.status_code == 200
     assert "Persona answer." in response.text
+
+
+@pytest.mark.asyncio
+async def test_persona_patch_null_rejected_for_non_clearable_fields(
+    auth_client, db_session
+):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await auth_client.post("/personas", json=PERSONA_PAYLOAD, headers=headers)
+    assert created.status_code == 201, created.text
+    persona_id = created.json()["id"]
+
+    for field in (
+        "name",
+        "system_context",
+        "allowed_domains",
+        "allowed_engines",
+        "allowed_keywords",
+        "default_parameters",
+        "tags",
+    ):
+        response = await auth_client.patch(
+            f"/personas/{persona_id}", json={field: None}, headers=headers
+        )
+        assert response.status_code == 422, (field, response.text)
+
+    fetched = await auth_client.get(f"/personas/{persona_id}", headers=headers)
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["allowed_domains"] == ["rust-lang.org"]
+
+
+@pytest.mark.asyncio
+async def test_persona_ask_background_research_with_consent_enqueues(
+    auth_client, db_session, monkeypatch
+):
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from src.core.research import router as research_router
+    from src.modules.jobs import factory as jobs_factory
+    from tests.conftest import _integration_database_url
+
+    # Point the app's job queue and runner sessions at the test database.
+    test_engine = create_async_engine(_integration_database_url())
+    monkeypatch.setattr(jobs_factory, "engine", test_engine)
+    monkeypatch.setattr(research_router, "engine", test_engine)
+    queue = jobs_factory.get_job_queue()
+    queue.start()
+
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    persona_id = await _persona_with_stale_model(auth_client, db_session, headers)
+
+    try:
+        response = await auth_client.post(
+            "/ask/persona",
+            json={
+                "query": "memory safety",
+                "persona_id": persona_id,
+                "depth": "research",
+                "background": True,
+                "allow_model_fallback": True,
+            },
+            headers=headers,
+        )
+        assert response.status_code == 202, response.text
+        job_id = response.json()["job_id"]
+        job = None
+        for _ in range(200):
+            jobs = (await auth_client.get("/jobs", headers=headers)).json()
+            job = next(j for j in jobs if j["id"] == job_id)
+            if job["status"] in ("succeeded", "failed"):
+                break
+            await asyncio.sleep(0.05)
+        assert job is not None and job["status"] == "succeeded", job
+    finally:
+        await queue.stop()
+        jobs_factory.reset_job_queue()
+        await test_engine.dispose()

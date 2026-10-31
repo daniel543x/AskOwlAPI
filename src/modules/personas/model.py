@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from sqlalchemy import JSON, Column, DateTime
 from sqlmodel import Field, SQLModel
 
@@ -100,6 +100,18 @@ class PersonaUpdate(SQLModel):
     @classmethod
     def _validate_tags(cls, value: list[str] | None) -> list[str] | None:
         return _clean_tags(value)
+
+    @model_validator(mode="after")
+    def _reject_null_on_non_clearable(self) -> PersonaUpdate:
+        # Only description and model may be cleared with an explicit null;
+        # the other columns are NOT NULL, and a null there would poison
+        # the row for every later read.
+        for name, value in self.model_dump(exclude_unset=True).items():
+            if value is None and name not in ("description", "model"):
+                raise ValueError(
+                    f"{name} cannot be null; omit the field or pass an empty value."
+                )
+        return self
 
 
 class PersonaRead(SQLModel):

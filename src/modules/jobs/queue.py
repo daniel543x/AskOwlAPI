@@ -233,7 +233,7 @@ class JobQueue:
                 job.status = JobStatus.CANCELLED
                 job.finished_at = datetime.now(UTC)
                 job.queue_position = None
-                await self._persist(job)
+                await self._persist_safe(job)
                 self._notify(job)
                 return job
         return None

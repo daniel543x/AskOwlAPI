@@ -499,9 +499,17 @@ async def _enqueue_research_turn(
     images: list[bytes] | None,
     scout: bool = False,
     reflect: bool = False,
+    persona=None,
 ) -> JSONResponse:
     """Auto-convert a busy foreground research run into a job (PR 12)."""
-    job = Job(user_id=user.id, kind="research", payload={"query": query})
+    job = Job(
+        user_id=user.id,
+        kind="research",
+        payload={
+            "query": query,
+            "persona_id": str(persona.id) if persona is not None else None,
+        },
+    )
 
     async def runner() -> str:
         async with AsyncSession(engine, expire_on_commit=False) as job_session:
@@ -520,6 +528,7 @@ async def _enqueue_research_turn(
                 note_store=job_notes,
                 scout=scout,
                 reflect=reflect,
+                persona=persona,
                 turn=turn,
             )
         return (result.get("report") or "")[:4000]
