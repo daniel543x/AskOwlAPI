@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.core.ask.services.search import _resolve_conversation, _save_turn
+from src.core.ask.services.search import _resolve_conversation, _save_turn, _sse_frame
 from src.core.research.services.agent import agent_logic
 
 from ...core.ask.services.contracts import AskBody
@@ -42,12 +42,21 @@ from ...modules.jobs.gates import (
     release_gates,
 )
 from ...modules.jobs.model import Job
-from ...modules.llm_provider.dependency import get_llm_client, get_turn_resources
+from ...modules.llm_provider.dependency import (
+    get_llm_client,
+    get_llm_factory,
+    get_turn_resources,
+)
+from ...modules.llm_provider.dependency import get_repository as get_model_repository
+from ...modules.llm_provider.factory import ChatModelFactory
+from ...modules.llm_provider.repository import ModelRepository
 from ...modules.notes.repository import NoteRepository
 from ...modules.notes.store import NoteStore
 from ...modules.owl_reranker.base import IRanker
 from ...modules.owl_reranker.factory import get_ranker
 from ...modules.personas.repository import PersonaRepository
+from ...modules.profile.factory import get_optional_user_preferences
+from ...modules.profile.model import UserPreferences
 from ...modules.scrapy.factory import get_scraper
 from ...modules.scrapy.providers.base import IScraper
 from ...modules.search_engine.factory import (
@@ -59,6 +68,7 @@ from ...modules.search_engine.source_types import ensure_source_types
 from ...tools.db import engine, get_session
 from ...tools.settings import settings
 from ..tools.toolbox import AskToolbox
+from .services.persona_model import ModelConfirm, resolve_persona_model
 from .services.pipeline import (
     make_budget,
     research_json_adapter,
@@ -178,6 +188,9 @@ async def ask_persona(
     source_types: list[str] = Query(default=[]),
     turn: TurnResources = Depends(get_turn_resources),
     note_store: NoteStore = Depends(get_note_store),
+    model_repo: ModelRepository = Depends(get_model_repository),
+    factory: ChatModelFactory = Depends(get_llm_factory),
+    profile: UserPreferences | None = Depends(get_optional_user_preferences),
 ):
     """Run one persona turn at the chosen depth (decision 10).
 
@@ -194,6 +207,37 @@ async def ask_persona(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found."
         )
+
+    # The persona's chat model always wins (webapp API-NOTES #5); an
+    # unusable one ends the turn with model_confirm consent semantics.
+    outcome = await resolve_persona_model(
+        persona,
+        request.allow_model_fallback,
+        fallback_model=model,
+        fallback_turn=turn,
+        repo=model_repo,
+        factory=factory,
+        user=user,
+        profile=profile,
+        thinking=request.thinking,
+        effort=request.effort,
+        searching=searching,
+    )
+    if isinstance(outcome, ModelConfirm):
+        if request.background or not request.stream:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "persona_model_unusable", **outcome.payload()},
+            )
+
+        async def confirm_stream():
+            yield _sse_frame(1, "model_confirm", outcome.payload())
+
+        return StreamingResponse(
+            confirm_stream(), media_type="text/event-stream"
+        )
+    model, turn = outcome
+
     depth = _resolve_depth(request, persona)
     ensure_source_types(request.source_types, declared_source_types)
     refs = await resolve_for_ask(
@@ -297,7 +341,6 @@ async def _persona_quick_turn(
     budget,
 ):
     """Quick depth: the free loop over a persona-scoped conversation."""
-    from src.core.ask.services.search import _sse_frame
 
     if settings.BUSY_POLICY == "reject":
         try:

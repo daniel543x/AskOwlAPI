@@ -334,7 +334,11 @@ async def test_persona_description_and_tags_roundtrip(auth_client, db_session):
 
     created = await auth_client.post(
         "/personas",
-        json={**PERSONA_PAYLOAD, "description": "Short blurb.", "tags": ["rust", "systems"]},
+        json={
+            **PERSONA_PAYLOAD,
+            "description": "Short blurb.",
+            "tags": ["rust", "systems"],
+        },
         headers=headers,
     )
     assert created.status_code == 201, created.text
@@ -516,3 +520,98 @@ async def test_persona_model_roundtrip(auth_client, db_session):
     )
     assert cleared.status_code == 200, cleared.text
     assert cleared.json()["model"] is None
+
+
+async def _persona_with_stale_model(auth_client, db_session, headers) -> str:
+    """A persona whose stored model id has left the catalog (ask-time only)."""
+    from src.modules.personas.model import Persona
+
+    created = await auth_client.post("/personas", json=PERSONA_PAYLOAD, headers=headers)
+    assert created.status_code == 201, created.text
+    persona_id = created.json()["id"]
+    persona_row = await db_session.get(Persona, uuid.UUID(persona_id))
+    persona_row.model = uuid.uuid4()
+    await db_session.commit()
+    return persona_id
+
+
+@pytest.mark.asyncio
+async def test_persona_ask_model_confirm_stream(auth_client, db_session):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    persona_id = await _persona_with_stale_model(auth_client, db_session, headers)
+
+    response = await auth_client.post(
+        "/ask/persona",
+        json={"query": "memory safety", "persona_id": persona_id, "depth": "quick"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert "event: model_confirm" in response.text
+    assert '"reason": "missing"' in response.text
+    assert "Persona answer." not in response.text
+    assert "event: done" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_persona_ask_model_confirm_json_409(auth_client, db_session):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    persona_id = await _persona_with_stale_model(auth_client, db_session, headers)
+
+    response = await auth_client.post(
+        "/ask/persona",
+        json={
+            "query": "memory safety",
+            "persona_id": persona_id,
+            "depth": "quick",
+            "stream": False,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "persona_model_unusable"
+    assert detail["reason"] == "missing"
+
+
+@pytest.mark.asyncio
+async def test_persona_ask_background_model_confirm_409(auth_client, db_session):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    persona_id = await _persona_with_stale_model(auth_client, db_session, headers)
+
+    response = await auth_client.post(
+        "/ask/persona",
+        json={
+            "query": "memory safety",
+            "persona_id": persona_id,
+            "depth": "research",
+            "background": True,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 409, response.text
+
+    jobs = await auth_client.get("/jobs", headers=headers)
+    assert jobs.json() == []
+
+
+@pytest.mark.asyncio
+async def test_persona_ask_allow_model_fallback_runs(auth_client, db_session):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    persona_id = await _persona_with_stale_model(auth_client, db_session, headers)
+
+    response = await auth_client.post(
+        "/ask/persona",
+        json={
+            "query": "memory safety",
+            "persona_id": persona_id,
+            "depth": "quick",
+            "allow_model_fallback": True,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert "Persona answer." in response.text
