@@ -242,7 +242,7 @@ async def test_background_runner_fails_cleanly(ask_client, db_session):
                 ask_scraper,
                 ask_ranker,
                 session=session,
-                user_id=row.id,
+                user_id=user.id,
                 conversation_id=row.id,
             )
         return "unreachable"
@@ -261,3 +261,31 @@ async def test_background_runner_fails_cleanly(ask_client, db_session):
     finally:
         await queue.stop()
         await test_engine.dispose()
+
+
+async def test_deleted_conversation_rejects_persona_quick_continuation(
+    ask_client, db_session
+):
+    ac, user, headers = ask_client
+    from src.modules.personas.model import Persona
+
+    persona = Persona(user_id=user.id, name="q")
+    db_session.add(persona)
+    await db_session.commit()
+    await db_session.refresh(persona)
+    row = await _conversation(db_session, user.id)
+
+    deleted = await ac.delete(f"/history/{row.id}", headers=headers)
+    assert deleted.status_code == 204
+
+    response = await ac.post(
+        "/ask/persona",
+        json={
+            "query": "continue?",
+            "persona_id": str(persona.id),
+            "conversation_id": str(row.id),
+            "depth": "quick",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 404, response.text

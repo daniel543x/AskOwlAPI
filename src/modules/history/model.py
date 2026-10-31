@@ -24,8 +24,9 @@ class Conversation(SQLModel, table=True):
     )
     # Persona scope (PR 20): set when the conversation belongs to a
     # persona mode turn; NULL = an ordinary conversation.
-    # ON DELETE SET NULL keeps persona conversations as ordinary history
-    # when their persona is deleted (webapp API-NOTES #8).
+    # ON DELETE SET NULL applies to hard deletes (admin/recovery);
+    # app-level persona deletion is a soft delete (WU-16) and keeps the
+    # row, so conversations keep persona_id.
     persona_id: UUID | None = Field(
         default=None,
         sa_column=Column(
