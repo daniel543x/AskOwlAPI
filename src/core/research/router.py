@@ -8,6 +8,7 @@ Both are gated on an elevated role (pro/admin) per PLAN section 0.5 and
 share the ask pipeline's dependency wiring.
 """
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -74,6 +75,8 @@ from .services.pipeline import (
     research_json_adapter,
     research_sse_adapter,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ask", tags=["Research"])
 
@@ -157,6 +160,39 @@ class PersonaBody(AskBody):
     persona_id: uuid.UUID
 
 
+class SourceTypeMismatch(Exception):
+    """The request asked for a web slice the persona does not allow."""
+
+    def __init__(self, types: list[str]):
+        super().__init__(f"not allowed by the persona: {types}")
+        self.types = types
+
+
+def _effective_source_types(
+    requested: list[str], persona, declared: list[str]
+) -> list[str]:
+    """The effective web slice: request narrowed by the persona's pins.
+
+    Persona pin empty = the request governs exactly as before. A
+    request naming a pinned-away type fails loudly; persona values the
+    provider no longer declares degrade with a warning.
+    """
+    pinned = list(persona.allowed_source_types or [])
+    if pinned:
+        offending = [t for t in requested if t not in pinned]
+        if offending:
+            raise SourceTypeMismatch(offending)
+    base = requested or pinned
+    effective = [t for t in base if t in declared]
+    drifted = [t for t in pinned if t not in declared]
+    if drifted:
+        logger.warning(
+            "Persona pins the undeclared source types %s; they were dropped.",
+            drifted,
+        )
+    return effective
+
+
 def _resolve_depth(request: PersonaBody, persona) -> str:
     """Request > persona.default_parameters > settings default (clamped)."""
     if request.depth:
@@ -238,6 +274,15 @@ async def ask_persona(
         )
     model, turn = outcome
 
+    try:
+        effective = _effective_source_types(
+            request.source_types, persona, declared_source_types
+        )
+    except SourceTypeMismatch as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "persona_source_type_mismatch", "types": e.types},
+        ) from e
     depth = _resolve_depth(request, persona)
     ensure_source_types(request.source_types, declared_source_types)
     refs = await resolve_for_ask(
@@ -267,13 +312,14 @@ async def ask_persona(
         return await _persona_quick_turn(
             request, persona, model, searching, scraper, ranker,
             decision_maker, user, session, turn, att_dicts, images, budget,
+            effective,
         )
 
     # research / deep: the shared pipeline with persona constraints.
     if request.background:
         return await _enqueue_research_turn(
             request.query, searching, model, scraper, ranker, embedder,
-            session, user, request.source_types, turn, att_dicts, images,
+            session, user, effective, turn, att_dicts, images,
             scout=(depth == "deep"), reflect=(depth == "deep"), persona=persona,
         )
     if settings.BUSY_POLICY == "reject":
@@ -295,7 +341,7 @@ async def ask_persona(
                 ranker,
                 embedder=embedder,
                 session=session,
-                source_types=request.source_types,
+                source_types=effective,
                 attachments=att_dicts,
                 images=images,
                 note_store=note_store,
@@ -314,7 +360,7 @@ async def ask_persona(
         ranker,
         embedder=embedder,
         session=session,
-        source_types=request.source_types,
+        source_types=effective,
         attachments=att_dicts,
         images=images,
         note_store=note_store,
@@ -339,6 +385,7 @@ async def _persona_quick_turn(
     attachments: list[dict],
     images: list[bytes] | None,
     budget,
+    source_types: list[str],
 ):
     """Quick depth: the free loop over a persona-scoped conversation."""
 
@@ -363,6 +410,7 @@ async def _persona_quick_turn(
         searching, scraper, ranker, None, None,
         allowed_domains=persona.allowed_domains if persona else None,
         allowed_engines=persona.allowed_engines if persona else None,
+        source_types=source_types,
         attachments=attachments,
     )
 

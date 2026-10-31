@@ -774,3 +774,72 @@ async def test_persona_source_types_reject_undeclared(
         headers=headers,
     )
     assert ok.status_code == 201, ok.text
+
+
+@pytest.mark.asyncio
+async def test_persona_quick_ask_uses_persona_source_types(
+    auth_client, db_session, declared_types
+):
+    from src.modules.llm_provider.dependency import get_llm_client
+    from src.modules.search_engine.factory import get_search_provider
+    from tests.core_ask.fakes import FakeSearchProvider, ScriptedToolModel, tool_call
+
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    provider = FakeSearchProvider()
+    app.dependency_overrides[get_search_provider] = lambda: provider
+    # The quick loop only searches when the model calls web_search.
+    app.dependency_overrides[get_llm_client] = lambda: ScriptedToolModel(
+        responses=[
+            tool_call("web_search", {"query": "kestrel nesting"}),
+            tool_call("SubmitOutcome", {"answer": "ok."}),
+        ]
+    )
+
+    created = await auth_client.post(
+        "/personas",
+        json={**PERSONA_PAYLOAD, "allowed_source_types": ["news"]},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+
+    response = await auth_client.post(
+        "/ask/persona",
+        json={
+            "query": "nesting?",
+            "persona_id": created.json()["id"],
+            "depth": "quick",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert provider.last_categories == "news"
+
+
+@pytest.mark.asyncio
+async def test_persona_quick_ask_rejects_pinned_away_request(
+    auth_client, db_session, declared_types
+):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await auth_client.post(
+        "/personas",
+        json={**PERSONA_PAYLOAD, "allowed_source_types": ["news"]},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+
+    response = await auth_client.post(
+        "/ask/persona",
+        json={
+            "query": "nesting?",
+            "persona_id": created.json()["id"],
+            "depth": "quick",
+            "source_types": ["github"],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "persona_source_type_mismatch"
+    assert detail["types"] == ["github"]
