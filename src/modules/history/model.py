@@ -57,6 +57,9 @@ class MessageRead(SQLModel):
 class ConversationRead(SQLModel):
     id: UUID
     title: str
+    # Persona scope (webapp API-NOTES #4): the UI routes non-null rows
+    # into /personas/{persona_id}; NULL = ordinary chat.
+    persona_id: UUID | None
     created_at: datetime
     updated_at: datetime | None
 
