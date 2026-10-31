@@ -58,6 +58,10 @@ done). Read the current phase in `PLAN.md` before starting.
   prompt-parsed JSON as the LLM interface.
 - One PLAN phase = one branch = one PR. Tick the boxes in `PLAN.md` when a task is done and
   keep the "Open decisions" table current — do not silently decide open items.
+- Versioning: `version = 0.<PR-number>.0` in `pyproject.toml` (PR 40 → `0.40.0`). GitHub
+  assigns the number only when the PR opens, so the flow is: push the branch, `gh pr create`,
+  read N from the URL, then commit `Set version 0.N.0 (version tracks the PR number)` and
+  push again before merge. Never merge with a stale version.
 - New DB tables: until Alembic lands (PLAN Phase 6), extend the `create_all` bootstrap in
   `src/init.py` and note the schema change in the PR description.
 

@@ -404,7 +404,7 @@ revisions `d4f8b2e6a9c1` + `f1c5e9a3d7b2`.
 | 7 | ~~Profile preferences on model switch~~ **Decided 2026-10-28:** reset thinking/effort to model defaults; request > profile > model default | daniel | closed |
 | 8 | ~~Image gating~~ **Decided 2026-10-28:** 422 `model_lacks_vision` at ask time; capabilities ⊇ `{tools, vision}` | daniel | closed |
 | 9 | ~~Persona gating~~ **Decided 2026-10-28:** whole persona mode elevated (depth is a budget choice) | daniel | closed |
-| 10 | ~~Version baseline~~ **Decided 2026-10-28:** reset to 0.15.0 in PR 9; minor per merged branch; 1.0.0 at webapp GA | daniel | closed |
+| 10 | ~~Version baseline~~ **Superseded 2026-10-31:** version = `0.<PR-number>.0` in `pyproject.toml` (PR 40 → 0.40.0); set in a follow-up commit after `gh pr create` reveals N (see CRUSH.md conventions) | daniel | closed |
 | 11 | ~~z.ai effort levels~~ **Decided 2026-10-28 (round 5):** native mapping + probe-prune — adapter maps `effort` → `reasoning_effort` (`low|medium|high|max`), catalog seeds per GLM generation, live probe prunes aliased/rejected levels (decision 20) | daniel | closed |
 | 12 | ~~gg.deals~~ **Decided 2026-10-28:** official Prices API confirmed (API key; current + historical prices); exact endpoint shapes, quota and ToS verified at PR 14 implementation | daniel | closed |
 | 13 | ~~`scope` default flip~~ **Decided 2026-10-28 (round 5):** no flip — web chunks stay global, uploads conversation-scoped unconditionally, `scope=conversation` opt-in; revisit at protocol v3 (decision 21) | daniel | closed |
