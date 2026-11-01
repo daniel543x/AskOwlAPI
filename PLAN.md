@@ -463,5 +463,17 @@ revisions `d4f8b2e6a9c1` + `f1c5e9a3d7b2`.
   Covered turns: search (SSE/JSON/background), persona quick, research/deep
   background + auto-resume; `MessageRead.meta` exposes it on
   `GET /history/{id}`. Schema change noted for the PR description.
+- **Webapp verification round 3 (API-NOTES #12/#13, same PR #46 2026-11-01):**
+  #12 — the `message.meta` column now ships as alembic migration
+  `b2c7d9e4f1a3` (production bootstrap runs migrations, so the guarded
+  `init_db` ALTER alone never reached the dev/prod DB — root cause of the
+  "meta never reached the dev DB" insert failures); and every ask/research/
+  agent/persona stream terminates with an `error` event when its generator
+  raises (pre-frame crashes used to close the connection silently with
+  nothing in the logs).
+  #13 — `thinking: false` is a no-op for models with the new
+  `reasoning_always_on` catalog capability (providers that cannot disable
+  reasoning): no 422, no disable spelling on the wire; documented in the
+  ask/models docs. The UI greys out Off via the capability list.
 - **OCR fallback for non-vision models:** out of scope for v1; would belong in a
   pre-scorer-style sidecar.
