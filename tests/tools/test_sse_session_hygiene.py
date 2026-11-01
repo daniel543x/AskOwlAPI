@@ -17,7 +17,12 @@ import pytest
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.exc import SQLAlchemyError
 
-from src.core.ask.services.search import _resolve_conversation
+from src.core.ask.services.search import (
+    _resolve_conversation,
+)
+from src.core.ask.services.search import (
+    search_sse_adapter as _search_sse_adapter,
+)
 from src.modules.chunk_store.repository import ChunkRepository
 from src.modules.history.model import Conversation
 from src.modules.identity.auth.security import get_current_user
@@ -198,3 +203,47 @@ async def test_note_reads_release_the_transaction():
     assert found == [note]
     assert session.commits == 1
     assert session.rollbacks == 0
+
+
+# <----- Streams that fail before the first frame (webapp API-NOTES #12) ----->
+
+
+def _frame_event(frame: str) -> str:
+    for line in frame.splitlines():
+        if line.startswith("event: "):
+            return line.split("event: ", 1)[1]
+    return ""
+
+
+@pytest.mark.asyncio
+async def test_search_stream_failure_surfaces_as_terminal_error(monkeypatch):
+    """A pre-frame crash must reach the client as an `error` event.
+
+    Previously the generator died before its first frame, uvicorn sent the
+    200 + headers, and closed with zero frames and no log line — the UI sat
+    on "Working..." forever.
+    """
+    from tests.core_ask.fakes import FakeRanker, make_model, make_scraper
+
+    class ExplodingSession(RecordingSession):
+        async def commit(self):
+            raise RuntimeError("db gone mid-request")
+
+    from tests.core_ask.fakes import FakeSearchProvider
+
+    monkeypatch.setenv("HOME", "irrelevant")  # no-op; keeps the patch local
+    frames = [
+        frame
+        async for frame in _search_sse_adapter(
+            "what is rust?",
+            FakeSearchProvider(),
+            make_model(),
+            make_scraper(),
+            FakeRanker(),
+            session=ExplodingSession(),
+            user_id=uuid4(),
+        )
+    ]
+
+    assert frames, "the stream produced no frames at all"
+    assert _frame_event(frames[-1]) == "error"

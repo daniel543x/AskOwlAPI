@@ -508,6 +508,17 @@ async def search_sse_adapter(
         logger.info("Search turn rejected: resource gates busy (query: %s).", query)
         yield frame("error", provider_busy_detail())
         return
+    except Exception:
+        # Webapp API-NOTES #12: a crash before (or between) frames used to
+        # close the stream silently — 200 + headers, zero frames, clients
+        # sat on "Working..." forever. Always terminate with an error.
+        logger.exception(
+            "Search stream failed before completion (query: %s).", query
+        )
+        yield frame(
+            "error",
+            {"error": "This turn failed; check the server logs."},
+        )
 
 
 # <----- JSON Adapter ----->

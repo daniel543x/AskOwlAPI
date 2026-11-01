@@ -471,6 +471,16 @@ async def _persona_quick_turn(
                     yield frame(event, data)
         except GateBusy:
             yield frame("error", provider_busy_detail())
+        except Exception:
+            # Webapp API-NOTES #12: never end a stream silently.
+            logger.exception(
+                "Persona stream failed before completion (query: %s).",
+                request.query,
+            )
+            yield frame(
+                "error",
+                {"error": "This turn failed; check the server logs."},
+            )
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 

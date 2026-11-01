@@ -8,6 +8,8 @@ from fastapi import HTTPException
 from langchain_core.messages import AIMessage
 
 from src.core.research.services.pipeline import (
+    agent_sse_adapter,
+    make_budget,
     research_json_adapter,
     research_sse_adapter,
 )
@@ -287,3 +289,57 @@ async def test_research_prompts_carry_the_current_date():
     # Planner (call 0) and synthesis (last call) both carry the date line.
     assert model.calls[0][0].startswith("Current date: 2020-01-01.")
     assert model.calls[-1][0].startswith("Current date: 2020-01-01.")
+
+
+@pytest.mark.asyncio
+async def test_stream_failure_surfaces_as_terminal_error(monkeypatch):
+    """Webapp API-NOTES #12: a crash that escapes the pipeline (before or
+    between frames) must terminate the stream with an `error` event —
+    never a silent close."""
+    from src.core.research.services import pipeline as pipeline_module
+    from src.modules.jobs.gates import TurnResources
+
+    async def exploding_logic(*args, **kwargs):
+        raise RuntimeError("db gone mid-run")
+        yield  # pragma: no cover — makes this an async generator
+
+    monkeypatch.setattr(pipeline_module, "research_logic", exploding_logic)
+    frames = [
+        frame
+        async for frame in research_sse_adapter(
+            "query", model=research_model(), turn=TurnResources(keys=[]), **make_deps()
+        )
+    ]
+
+    events = parse_frames(frames)
+    assert events, "the stream produced no frames at all"
+    assert events[-1][0] == "error"
+
+
+@pytest.mark.asyncio
+async def test_agent_stream_failure_surfaces_as_terminal_error(monkeypatch):
+    from src.core.research.services import pipeline as pipeline_module
+    from src.core.tools.toolbox import AskToolbox
+    from src.modules.jobs.gates import TurnResources
+    from tests.core_ask.fakes import make_scraper
+
+    async def exploding_logic(*args, **kwargs):
+        raise RuntimeError("db gone mid-run")
+        yield  # pragma: no cover — makes this an async generator
+
+    monkeypatch.setattr(pipeline_module, "agent_logic", exploding_logic)
+    toolbox = AskToolbox(FakeSearchProvider(), make_scraper(), FakeRanker())
+    frames = [
+        frame
+        async for frame in agent_sse_adapter(
+            "goal",
+            research_model(),
+            toolbox,
+            budget=make_budget({}),
+            turn=TurnResources(keys=[]),
+        )
+    ]
+
+    events = parse_frames(frames)
+    assert events, "the stream produced no frames at all"
+    assert events[-1][0] == "error"

@@ -432,6 +432,15 @@ async def research_sse_adapter(
         logger.info("Research turn rejected: resource gates busy (query: %s).", query)
         yield frame("error", provider_busy_detail())
         return
+    except Exception:
+        # Webapp API-NOTES #12: never end a research stream silently.
+        logger.exception(
+            "Research stream failed before completion (query: %s).", query
+        )
+        yield frame(
+            "error",
+            {"error": "This turn failed; check the server logs."},
+        )
 
 
 async def agent_sse_adapter(
@@ -465,6 +474,15 @@ async def agent_sse_adapter(
         logger.info("Agent turn rejected: resource gates busy (goal: %s).", goal)
         yield frame("error", provider_busy_detail())
         return
+    except Exception:
+        # Webapp API-NOTES #12: never end an agent stream silently.
+        logger.exception(
+            "Agent stream failed before completion (goal: %s).", goal
+        )
+        yield frame(
+            "error",
+            {"error": "This turn failed; check the server logs."},
+        )
 
 
 async def research_json_adapter(
