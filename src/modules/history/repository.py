@@ -67,11 +67,22 @@ class HistoryRepository:
         return list(result.scalars().all())
 
     async def add_turn(
-        self, conversation: Conversation, user_content: str, assistant_content: str
+        self,
+        conversation: Conversation,
+        user_content: str,
+        assistant_content: str,
+        meta: dict | None = None,
     ) -> tuple[Message, Message]:
-        """Append one user+assistant turn and bump the conversation timestamp."""
+        """Append one user+assistant turn and bump the conversation timestamp.
+
+        `meta` (webapp API-NOTES #11) lands on the user message only: the
+        ask request's mode + resolved model, for the UI's turn caption.
+        """
         user_message = Message(
-            conversation_id=conversation.id, role=ROLE_USER, content=user_content
+            conversation_id=conversation.id,
+            role=ROLE_USER,
+            content=user_content,
+            meta=meta,
         )
         assistant_message = Message(
             conversation_id=conversation.id,
@@ -83,8 +94,10 @@ class HistoryRepository:
         conversation.updated_at = datetime.now(UTC)
         self.session.add(conversation)
         await self.session.commit()
-        await self.session.refresh(user_message)
-        await self.session.refresh(assistant_message)
+        # No post-commit refreshes: ids and created_at come from Python-side
+        # defaults (uuid4 / datetime.now), and a refresh would reopen a
+        # transaction that nothing then closes — the stream would end
+        # idle-in-transaction (webapp API-NOTES #10).
         return user_message, assistant_message
 
     async def delete_conversation(self, conversation: Conversation) -> None:

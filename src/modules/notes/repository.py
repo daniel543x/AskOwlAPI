@@ -61,6 +61,10 @@ class NoteRepository:
                 )
             ).all()
         }
+        # Read-transaction release (webapp API-NOTES #10): note reads run
+        # on the shared request session inside research streams; without
+        # this the read keeps a pool connection until the stream teardown.
+        await self.session.commit()
         return [found[nid] for nid in note_ids if nid in found]
 
     async def list_for_user(
