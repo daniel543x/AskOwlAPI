@@ -141,7 +141,11 @@ async def test_planner_fallback_runs_the_raw_query_as_single_subquestion():
     parsed = parse_frames(stream)
 
     plan = next(d for n, d in parsed if n == "plan")
-    assert plan == {"subquestions": ["raw query"], "tool_call": False}
+    assert plan == {
+        "subquestions": ["raw query"],
+        "tool_call": False,
+        "resumed": False,
+    }
     # The gathering still ran for that single sub-question.
     assert any(n == "sources" for n, _ in parsed)
 

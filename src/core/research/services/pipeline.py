@@ -8,7 +8,7 @@ document — the same shape as the ask pipeline adapters.
 import json
 import logging
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import nullcontext
 from typing import Any
 
@@ -100,6 +100,8 @@ async def research_logic(
     scout: bool = False,
     reflect: bool = False,
     persona=None,
+    progress: Callable[[dict], Awaitable[None]] | None = None,
+    resume_state: dict[str, Any] | None = None,
 ) -> AsyncGenerator[PipelineEvent]:
     """Run the research pipeline, yielding (event, payload) pairs.
 
@@ -108,8 +110,15 @@ async def research_logic(
     get_context) exactly like the search pipeline, minus query rewriting
     (the planner already produced search-shaped sub-questions).
 
+    `progress` (job auto-resume, WU-17): awaited with the planned tasks
+    and again after every note so the runner can persist it into the
+    job row.
+
     Errors are reported as ``error`` events, never raised.
     """
+    done_tasks = {
+        note.task for note in (note_store.notes if note_store else [])
+    }
     budget = make_budget()
     try:
         chunk_repo = ChunkRepository(session) if session is not None else None
@@ -135,19 +144,41 @@ async def research_logic(
             budget.spend_tokens(scout_context)
 
         # <----- Planning (native tool call) ----->
-        yield "status", {"step": "Planning sub-questions..."}
-        subquestions, used_tool_call = await plan_subquestions(
-            model, query, settings.RESEARCH_MAX_SUBQUESTIONS, today=today
-        )
-        budget.spend_tokens(" ".join(subquestions))
+        # WU-17: a persisted plan is authoritative on resume — the
+        # planner is skipped so covered tasks match exactly.
+        resumed_plan = (resume_state or {}).get("planned_tasks") or []
+        if resumed_plan:
+            subquestions = list(resumed_plan)
+            used_tool_call = False
+            budget.spend_tokens(" ".join(subquestions))
+        else:
+            yield "status", {"step": "Planning sub-questions..."}
+            subquestions, used_tool_call = await plan_subquestions(
+                model, query, settings.RESEARCH_MAX_SUBQUESTIONS, today=today
+            )
+            budget.spend_tokens(" ".join(subquestions))
 
-        yield "plan", {"subquestions": subquestions, "tool_call": used_tool_call}
+        yield "plan", {
+            "subquestions": subquestions,
+            "tool_call": used_tool_call,
+            "resumed": bool(resumed_plan),
+        }
+        if progress is not None:
+            try:
+                await progress({"planned_tasks": list(subquestions)})
+            except Exception as e:  # noqa: BLE001 — bookkeeping never kills a run
+                logger.warning("Progress writeback failed (plan): %s", e)
         if settings.DEBUG:
             yield "debug", {"stage": "planning", "used_tool_call": used_tool_call}
 
         # <----- Per-sub-question gathering (shared tools) ----->
         gathered: list[dict[str, Any]] = []
         for index, subquestion in enumerate(subquestions, start=1):
+            if subquestion in done_tasks:
+                yield "status", {
+                    "step": f"Resuming: skipping covered task {subquestion!r}."
+                }
+                continue
             if budget.exhausted:
                 reason = budget.stop_reason() or "budget exhausted"
                 yield "status", {
@@ -193,6 +224,13 @@ async def research_logic(
                     subquestion, context, sources_used
                 )
                 yield "note", entry
+                if progress is not None:
+                    try:
+                        await progress({
+                            "note_ids": [str(n.id) for n in note_store.notes]
+                        })
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("Progress writeback failed (note): %s", e)
             if context.strip():
                 gathered.append(
                     {
@@ -202,7 +240,11 @@ async def research_logic(
                     }
                 )
 
-        if not gathered:
+        # WU-17: seeded notes count as material — a resumed run with a
+        # covered leg synthesizes from them even when the fresh legs
+        # found nothing new this time.
+        seeded_notes = note_store.notes if note_store else []
+        if not gathered and not seeded_notes:
             yield (
                 "answer_ready",
                 {
@@ -442,6 +484,8 @@ async def research_json_adapter(
     reflect: bool = False,
     persona=None,
     turn: TurnResources | None = None,
+    progress: Callable[[dict], Awaitable[None]] | None = None,
+    resume_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the research pipeline and return the full result as one dict."""
     answer_data: dict[str, Any] | None = None
@@ -454,6 +498,7 @@ async def research_json_adapter(
                 session=session, today=today, source_types=source_types,
                 attachments=attachments, note_store=note_store,
                 scout=scout, reflect=reflect, persona=persona,
+                progress=progress, resume_state=resume_state,
             )
             async for event, data in pipeline:
                 if event == "error":
@@ -477,7 +522,9 @@ async def research_json_adapter(
                     ),
                 )
 
-            if answer_data["no_context"]:
+            if answer_data["no_context"] and not (
+                note_store is not None and note_store.notes
+            ):
                 report = NO_CONTEXT_REPORT
             elif note_store is not None and note_store.notes:
                 notes = await note_store.ordered_notes()
