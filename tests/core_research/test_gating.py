@@ -223,9 +223,11 @@ async def test_persona_route_requires_persona_and_scopes_to_it(
     # The conversation is persona-scoped.
     import json as _json
 
+    conversation_id: str | None = None
     for line in response.text.splitlines():
         if line.startswith("data:") and "conversation_id" in line:
             conversation_id = _json.loads(line[5:])["conversation_id"]
+    assert conversation_id is not None
     stored = await db_session.get(
         __import__("src.modules.history.model", fromlist=["Conversation"]).Conversation,
         uuid.UUID(conversation_id),

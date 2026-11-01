@@ -2,6 +2,7 @@
 
 import uuid
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -32,7 +33,7 @@ async def test_search_job_replays_whole_turn():
         user_id=uuid.uuid4(), kind="search",
         payload={"query": "rust", "conversation_id": None},
     )
-    runner = await build_runner(job, session)
+    runner = await build_runner(job, cast("Any", session))
     assert callable(runner)
 
 
@@ -42,7 +43,7 @@ async def test_unknown_kind_builds_none():
 
     session = SimpleNamespace(bind=None)
     job = Job(user_id=uuid.uuid4(), kind="ggdeals", payload={})
-    assert await build_runner(job, session) is None
+    assert await build_runner(job, cast("Any", session)) is None
 
 
 @pytest.mark.asyncio

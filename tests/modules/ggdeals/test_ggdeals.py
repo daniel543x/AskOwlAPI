@@ -168,6 +168,7 @@ async def test_tool_records_structured_offers(monkeypatch):
     )
     toolbox = AskToolbox(None, None, None, None, None)
     tool = next(t for t in build_tools(toolbox) if t.name == "game_offers")
+    assert tool.coroutine is not None
 
     result = await tool.coroutine(game_name="Hades")
 

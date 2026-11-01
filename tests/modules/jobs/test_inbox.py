@@ -127,6 +127,7 @@ async def test_cancel_reports_running_jobs_as_uncancellable():
     async def runner() -> str:
         started.set()
         await asyncio.sleep(3600)
+        return "never reached: running jobs are cancelled, not awaited"
 
     job = await queue.submit(_make_job_row(), runner)
     queue.start()

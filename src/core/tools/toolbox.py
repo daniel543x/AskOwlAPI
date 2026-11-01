@@ -102,9 +102,9 @@ class AskToolbox:
 
     def __init__(
         self,
-        searching: ISearchProvider,
-        scraper: IScraper,
-        ranker: IRanker,
+        searching: ISearchProvider | None = None,
+        scraper: IScraper | None = None,
+        ranker: IRanker | None = None,
         embedder: EmbedderLike | None = None,
         chunk_repo: ChunkStoreLike | None = None,
         allowed_domains: list[str] | None = None,
@@ -207,7 +207,13 @@ class AskToolbox:
         pool, apply the fusion floor (never keeping fewer than three), then
         cross-encoder rank to the URL cap with fusion as the tie-breaker.
         """
-        self.raw_results = await self.searching.search(
+        searching = self.searching
+        if searching is None:
+            raise RuntimeError(
+                "web_search needs a search provider; this toolbox was "
+                "built without one."
+            )
+        self.raw_results = await searching.search(
             query, engines=self._search_engines(), categories=self._search_categories()
         )
         return await self._rank_results(query)
@@ -219,10 +225,16 @@ class AskToolbox:
         collapses the duplicates so ranking cost does not multiply. The
         first query is the primary one (sanity filter + ranking use it).
         """
+        searching = self.searching
+        if searching is None:
+            raise RuntimeError(
+                "web_search needs a search provider; this toolbox was "
+                "built without one."
+            )
         results: list = []
         for query in queries:
             results.extend(
-                await self.searching.search(
+                await searching.search(
                     query,
                     engines=self._search_engines(),
                     categories=self._search_categories(),
@@ -232,6 +244,12 @@ class AskToolbox:
         return await self._rank_results(queries[0])
 
     async def _rank_results(self, query: str) -> str:
+        ranker = self.ranker
+        if ranker is None:
+            raise RuntimeError(
+                "web_search needs a ranker; this toolbox was built "
+                "without one."
+            )
         """Sanity, dedup+fusion, floor, and ranking over `raw_results`."""
         if self.allowed_domains:
             self.raw_results = self._filter_domains(self.raw_results)
@@ -257,7 +275,7 @@ class AskToolbox:
         )
 
         ranked = await asyncio.to_thread(
-            self.ranker.rank_web_search,
+            ranker.rank_web_search,
             query,
             [item.as_search_result() for item in merged],
             self.max_urls,
@@ -333,7 +351,13 @@ class AskToolbox:
         if not targets:
             return "No URLs to fetch."
 
-        self.pages = await self.scraper.scrape(
+        scraper = self.scraper
+        if scraper is None:
+            raise RuntimeError(
+                "fetch_pages needs a scraper; this toolbox was built "
+                "without one."
+            )
+        self.pages = await scraper.scrape(
             [{"url": url} for url in targets]
         ) or []
         self.chunks = await asyncio.to_thread(
@@ -443,8 +467,14 @@ class AskToolbox:
         else:
             pool = self.chunks
 
+        ranker = self.ranker
+        if ranker is None:
+            raise RuntimeError(
+                "get_context needs a ranker; this toolbox was built "
+                "without one."
+            )
         self.selected_chunks = await asyncio.to_thread(
-            self.ranker.rank_chunks, query, pool, settings.TOP_N_CHUNKS
+            ranker.rank_chunks, query, pool, settings.TOP_N_CHUNKS
         )
         if settings.PRE_SCORE_CHUNK_FILTER and self.decision_maker:
             self.selected_chunks = await filter_chunks(

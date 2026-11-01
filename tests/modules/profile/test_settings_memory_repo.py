@@ -44,9 +44,11 @@ async def test_settings_repo_upsert_get_overwrites(db_session):
     repo = ModelSettingsRepository(db_session)
     await repo.upsert(user_id, entry.id, True, "low")
     row = await repo.get(user_id, entry.id)
+    assert row is not None
     assert (row.thinking, row.effort) == (True, "low")
     await repo.upsert(user_id, entry.id, None, None)
     row = await repo.get(user_id, entry.id)
+    assert row is not None
     assert (row.thinking, row.effort) == (None, None)
 
 

@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from src.app import app
 from src.modules.identity.user.model import User
+from src.modules.llm_provider.repository import ModelRepository
 from src.modules.llm_provider.repository import get_repository as get_model_repo
 from src.modules.llm_provider.selection import (
     TIER_DEFAULT,
@@ -317,7 +318,8 @@ async def test_build_chat_model_profile_fills_unset_controls():
     )
 
     await build_chat_model(
-        ResolvingRepo(), factory, user, None, profile=profile
+        cast("ModelRepository", ResolvingRepo()), factory, user, None,
+        profile=profile,
     )
 
     # Request left both unset → profile values reach the adapter; the
@@ -346,7 +348,7 @@ async def test_build_chat_model_request_beats_profile_and_stays_strict():
     # Explicit request values are strict even when the profile would allow.
     with pytest.raises(HTTPException) as exc_info:
         await build_chat_model(
-            ResolvingRepo(),
+            cast("ModelRepository", ResolvingRepo()),
             factory,
             user,
             None,
@@ -356,5 +358,8 @@ async def test_build_chat_model_request_beats_profile_and_stays_strict():
     assert exc_info.value.status_code == 422
 
     # Profile-sourced values clamp silently instead.
-    await build_chat_model(ResolvingRepo(), factory, user, None, profile=profile)
+    await build_chat_model(
+        cast("ModelRepository", ResolvingRepo()), factory, user, None,
+        profile=profile,
+    )
     assert factory.created[0][1] == {}

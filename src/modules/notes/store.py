@@ -1,9 +1,24 @@
 """Run-scoped note writer the toolbox tool and pipeline share (PR 18)."""
 
 import uuid
+from typing import Protocol
 
 from .model import ResearchNote, toc_entry
-from .repository import NoteRepository
+
+
+class NoteRepositoryLike(Protocol):
+    """The store surface NoteStore needs; NoteRepository satisfies it."""
+
+    async def create(
+        self,
+        user_id: uuid.UUID,
+        task: str,
+        content: str,
+        sources_used: list[str],
+        conversation_id: uuid.UUID | None = None,
+    ) -> ResearchNote: ...
+
+    async def get_by_ids(self, note_ids: list[uuid.UUID]) -> list[ResearchNote]: ...
 
 
 class NoteStore:
@@ -11,7 +26,7 @@ class NoteStore:
 
     def __init__(
         self,
-        repo: NoteRepository,
+        repo: NoteRepositoryLike,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID | None = None,
         seeded: list[ResearchNote] | None = None,

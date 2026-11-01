@@ -41,10 +41,11 @@ class FakeNoteRepo(NoteRepository):
     def __init__(self):
         self.rows: list = []
 
-    async def create(self, user_id, task, content, sources, conversation_id=None):
+    async def create(self, user_id, task, content, sources_used,
+                     conversation_id=None):
         note = ResearchNote(
             id=uuid.uuid4(), user_id=user_id, sequence=len(self.rows) + 1,
-            task=task, content=content, sources_used=list(sources),
+            task=task, content=content, sources_used=list(sources_used),
         )
         self.rows.append(note)
         return note

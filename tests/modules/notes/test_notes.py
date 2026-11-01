@@ -83,6 +83,7 @@ async def test_note_store_persists_and_returns_toc_entries():
 
 def test_toc_block_hides_contents():
     note = ResearchNote(
+        user_id=USER_ID,
         sequence=1, task="ownership", content="SECRET" * 100,
         sources_used=["u1"],
     )
@@ -102,6 +103,7 @@ async def test_note_write_tool_persists_and_returns_toc():
     repo = FakeNoteRepo()
     toolbox = _make_toolbox(note_store=NoteStore(repo, USER_ID))
     tool = next(t for t in build_tools(toolbox) if t.name == "note_write")
+    assert tool.coroutine is not None
 
     result = await tool.coroutine(
         task="ownership", content="Grounded facts.", sources_used=["u1"]

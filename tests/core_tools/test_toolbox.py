@@ -272,6 +272,14 @@ class PreStoredChunkRepo:
         self.stored_chunks.extend(chunks)
         return len(chunks)
 
+    async def fts_candidates(self, query: str, k: int):
+        return []
+
+    async def conversation_chunks_strict(
+        self, conversation_id, query_embedding, k: int
+    ):
+        raise AssertionError("attachment retrieval is not under test here")
+
     async def vector_candidates(self, query_embedding, k, conversation_id=None):
         return []
 
@@ -440,6 +448,12 @@ class RecordingVectorRepo:
 
     async def existing_hashes(self, hashes):
         return set()
+
+    async def fts_candidates(self, query, k):
+        return []
+
+    async def conversation_chunks_strict(self, conversation_id, query_embedding, k):
+        raise AssertionError("attachment retrieval is not under test here")
 
     async def vector_candidates(self, query_embedding, k, conversation_id=None):
         self.query_conversation_id = conversation_id

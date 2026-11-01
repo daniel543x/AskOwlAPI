@@ -6,15 +6,19 @@ at the module seam (it has its own suite) so no provider is touched.
 
 import uuid
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
+from langchain_core.language_models import BaseChatModel
 
 from src.core.research.services import persona_model
 from src.core.research.services.persona_model import (
     ModelConfirm,
     resolve_persona_model,
 )
+from src.modules.identity.user.model import User
 from src.modules.jobs.gates import TurnResources, model_gate, search_gate
+from src.modules.llm_provider.factory import ChatModelFactory
 from src.modules.llm_provider.selection import EntryState, ResolvedModel
 
 
@@ -82,11 +86,11 @@ async def run_resolve(monkeypatch, persona_, repo, allow=False):
     outcome = await resolve_persona_model(
         persona_,
         allow,
-        fallback_model=fallback,
+        fallback_model=cast("BaseChatModel", fallback),
         fallback_turn=fallback_turn,
         repo=repo,
-        factory=None,
-        user=the_user(),
+        factory=cast("ChatModelFactory", None),
+        user=cast("User", the_user()),
         profile=None,
         thinking=None,
         effort=None,
@@ -141,6 +145,7 @@ async def test_usable_model_rebuilds_client_and_turn(monkeypatch):
     outcome, fallback, _, built, seen = await run_resolve(
         monkeypatch, persona(model_id), repo
     )
+    assert not isinstance(outcome, ModelConfirm)
     model, turn = outcome
     assert model is built
     assert seen["request_model_id"] == model_id

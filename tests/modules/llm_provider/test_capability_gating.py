@@ -53,7 +53,8 @@ class FakeRepo(ModelRepository):
         self.resolved_with = None
 
     async def resolve_model(
-        self, kind, user_id, user_roles, requested_model_id=None, **kwargs
+        self, kind, user_id, user_roles,
+        requested_model_id=None, profile_model_id=None,
     ):
         self.resolved_with = (kind, requested_model_id)
         return self.resolved

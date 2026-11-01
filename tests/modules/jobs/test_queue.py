@@ -2,8 +2,10 @@
 
 import asyncio
 import uuid
+from typing import cast
 
 import pytest
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.modules.jobs.gates import (
     GateBusy,
@@ -199,7 +201,7 @@ async def test_retry_persists_queued_before_waking_the_worker(monkeypatch):
             async def __aexit__(self, *args):
                 return False
 
-        return FakeSession()
+        return cast("AsyncSession", FakeSession())
 
     queue = JobQueue(per_user_running_cap=4, session_factory=session_factory)
     attempts: list[int] = []
@@ -248,7 +250,7 @@ async def test_persistence_hook_receives_transitions():
             async def __aexit__(self, *args):
                 return False
 
-        return FakeSession()
+        return cast("AsyncSession", FakeSession())
 
     queue = JobQueue(per_user_running_cap=4, session_factory=session_factory)
 
