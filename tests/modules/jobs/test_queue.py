@@ -174,6 +174,63 @@ async def test_rate_limited_error_is_retried_then_succeeds(monkeypatch):
     assert job.retries == 1
 
 
+async def test_retry_persists_queued_before_waking_the_worker(monkeypatch):
+    """The rate-limit retry must land its QUEUED persist before the worker
+    can re-pick the job (API-NOTES #9 class): waking first lets the worker's
+    RUNNING persist overwrite the shared row object, so the queued state is
+    never durably recorded (stale status on restart)."""
+    from src.tools.settings import settings
+
+    monkeypatch.setattr(settings, "JOB_RETRY_DELAY_S", 0.0)
+    persisted: list[str] = []
+
+    def session_factory():
+        class FakeSession:
+            async def merge(self, job):
+                await asyncio.sleep(0)  # a real DB yields before writing
+                persisted.append(job.status)
+
+            async def commit(self):
+                return None
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+        return FakeSession()
+
+    queue = JobQueue(per_user_running_cap=4, session_factory=session_factory)
+    attempts: list[int] = []
+
+    class RateLimited(Exception):
+        status_code = 429
+
+    async def runner() -> str:
+        attempts.append(1)
+        if len(attempts) < 2:
+            raise RateLimited("slow down")
+        return "ok"
+
+    job = await queue.submit(_job(), runner)
+    queue.start()
+    for _ in range(300):
+        await asyncio.sleep(0.01)
+        if job.status == JobStatus.SUCCEEDED:
+            break
+    await queue.stop()
+
+    assert attempts == [1, 1]
+    assert persisted == [
+        "queued",   # submit
+        "running",  # first attempt starts
+        "queued",   # retry transition, durably persisted BEFORE re-enqueue
+        "running",  # resumed attempt
+        "succeeded",
+    ]
+
+
 async def test_persistence_hook_receives_transitions():
     persisted: list[str] = []
 

@@ -1,11 +1,14 @@
 """Job rows persisted queue state (PR 12 / decision 19; routes in PR 13)."""
 
+import logging
 import uuid
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy import DateTime
 from sqlmodel import JSON, Column, Field, SQLModel
+
+logger = logging.getLogger(__name__)
 
 
 class JobStatus:
@@ -47,3 +50,28 @@ class Job(SQLModel, table=True):
     finished_at: datetime | None = Field(
         default=None, sa_type=DateTime(timezone=True)
     )
+
+
+def link_conversation(
+    job: Job,
+    result: dict[str, Any] | None,
+    fallback: uuid.UUID | None = None,
+) -> None:
+    """Stamp the run's conversation onto the job row (webapp API-NOTES #10).
+
+    The runner result's `conversation_id` (the conversation the turn was
+    actually saved to) wins; `fallback` is the requested conversation for
+    runs that reuse one. The queue persists the row with the succeeded
+    transition, so the InBox can link to the full answer conversation.
+    """
+    raw = (result or {}).get("conversation_id")
+    if raw:
+        try:
+            job.conversation_id = uuid.UUID(str(raw))
+            return
+        except ValueError:
+            logger.warning(
+                "Job %s result carried an unparsable conversation_id.",
+                job.id,
+            )
+    job.conversation_id = fallback

@@ -14,15 +14,24 @@ underlying factories build the toolbox pieces from the rebuilt session.
 
 import logging
 import uuid
+from typing import TYPE_CHECKING, Any
 
-from sqlmodel import select
+from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from ...core.ask.services.search import (
+    _resolve_conversation,
+    _save_turn,
+    build_turn_meta,
+)
 from ...tools.db import engine
 from ...tools.settings import settings
 from ..identity.role.model import Role, UserRole
-from ..jobs.model import Job, JobStatus
+from ..jobs.model import Job, JobStatus, link_conversation
 from ..profile.model import UserPreferences
+
+if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +102,7 @@ def _search_runner(job: Job, session: AsyncSession):
             scraper = await ScraperFactory.create(run_session)
             resolved_ranker = await _resolve_ranker_model(run_session, None)
             ranker = await RankerFactory.from_resolved(resolved_ranker)
-            model = (await _chat_model(run_session, job))[0]
+            model, _resolved = await _chat_model(run_session, job)
             options = payload.get("options") or {}
             result = await search_json_adapter(
                 query,
@@ -106,6 +115,7 @@ def _search_runner(job: Job, session: AsyncSession):
                 conversation_id=conversation_id,
                 source_types=options.get("source_types"),
             )
+        link_conversation(job, result, conversation_id)
         return (result.get("answer") or "")[:4000]
 
     return runner
@@ -115,6 +125,15 @@ async def _research_runner(job: Job, session: AsyncSession):
     payload = job.payload or {}
     research_state = payload.get("research") or {}
     query = payload.get("query") or ""
+    raw_conversation = payload.get("conversation_id")
+    try:
+        conversation_id = uuid.UUID(str(raw_conversation)) if raw_conversation else None
+    except ValueError:
+        logger.warning(
+            "Job %s has an unparsable conversation_id; resuming stateless.",
+            job.id,
+        )
+        conversation_id = None
     note_ids = [
         uuid.UUID(n)
         for n in (research_state.get("note_ids") or [])
@@ -155,7 +174,6 @@ async def _research_runner(job: Job, session: AsyncSession):
             note_store = NoteStore(
                 NoteRepository(job_session), job.user_id, seeded=list(seed)
             )
-            print("DIAG seeded:", len(seed), [n.task for n in note_store.notes])
             # WU-17: resource gates still bound the resumed run.
             turn = _turn_resources(
                 job, dep_model=resolved_stub, searching=searching
@@ -178,12 +196,26 @@ async def _research_runner(job: Job, session: AsyncSession):
                 else None,
                 turn=turn,
             )
-        return (result.get("report") or "")[:4000]
+            report = (result.get("report") or "")[:4000]
+            conversation, _history, _created = await _resolve_conversation(
+                job_session, job.user_id, conversation_id, query
+            )
+            await _save_turn(
+                job_session,
+                conversation,
+                query,
+                report,
+                meta=build_turn_meta("deep_research" if scout else "research", model),
+            )
+        link_conversation(job, None, conversation.id if conversation else None)
+        return report
 
     return runner
 
 
-async def _chat_model(session: AsyncSession, job: Job):
+async def _chat_model(
+    session: AsyncSession, job: Job
+) -> tuple[BaseChatModel, Any]:
     from ..llm_provider.factory import ChatModelFactory
     from ..llm_provider.model import ModelKind
     from ..llm_provider.repository import ModelRepository
@@ -197,7 +229,7 @@ async def _chat_model(session: AsyncSession, job: Job):
         profile_model_id=await _profile_model_id(session, job.user_id),
     )
     factory = ChatModelFactory()
-    return factory.create_chat_model(resolved)
+    return factory.create_chat_model(resolved), resolved
 
 
 def _turn_resources(
@@ -275,7 +307,7 @@ async def requeue_orphans(
             rows = (
                 await session.exec(
                     select(Job).where(
-                        Job.status.in_([JobStatus.RUNNING, JobStatus.QUEUED])
+                        col(Job.status).in_([JobStatus.RUNNING, JobStatus.QUEUED])
                     )
                 )
             ).all()
