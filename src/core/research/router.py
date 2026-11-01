@@ -399,9 +399,15 @@ async def _persona_quick_turn(
             ) from e
         release_gates(turn.keys)
 
-    conversation, history, created = await _resolve_conversation(
-        session, user.id, request.conversation_id, request.query
-    )
+    try:
+        conversation, history, created = await _resolve_conversation(
+            session, user.id, request.conversation_id, request.query
+        )
+    except KeyError as e:
+        # Deleted (or unknown) conversations are 404 on every ask route.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(e).strip("'")
+        ) from e
     conversation.persona_id = persona.id
     session.add(conversation)
     await session.commit()

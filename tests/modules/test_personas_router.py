@@ -249,10 +249,15 @@ async def test_delete_persona_with_conversations_preserves_history(
     deleted = await auth_client.delete(f"/personas/{persona_id}", headers=headers)
     assert deleted.status_code == 204
 
+    # Soft delete (WU-16): the persona row survives hidden, so the
+    # conversation keeps its persona_id; the conversation itself stays
+    # listed and lives on in general history.
     survivor = await db_session.get(Conversation, conversation_id)
     assert survivor is not None
-    await db_session.refresh(survivor)
-    assert survivor.persona_id is None
+    assert survivor.deleted_at is None
+    assert survivor.persona_id == persona_id
+    listed = (await auth_client.get("/history", headers=headers)).json()
+    assert str(conversation_id) in {c["id"] for c in listed}
 
 
 @pytest.mark.asyncio

@@ -22,7 +22,11 @@ class HistoryRepository:
         self, user_id: UUID, conversation_id: UUID
     ) -> Conversation | None:
         conversation = await self.session.get(Conversation, conversation_id)
-        if conversation is None or conversation.user_id != user_id:
+        if (
+            conversation is None
+            or conversation.user_id != user_id
+            or conversation.deleted_at is not None
+        ):
             return None
         return conversation
 
@@ -38,12 +42,15 @@ class HistoryRepository:
     async def list_conversations(
         self, user_id: UUID, persona_id: UUID | None = None
     ) -> list[Conversation]:
-        """The caller's conversations, newest first.
+        """The caller's conversations, newest first; soft-deleted hidden.
 
         With `persona_id` (webapp API-NOTES #4), only conversations scoped
         to that persona (NULL rows excluded).
         """
-        statement = select(Conversation).where(Conversation.user_id == user_id)
+        statement = select(Conversation).where(
+            Conversation.user_id == user_id,
+            Conversation.deleted_at.is_(None),  # type: ignore[attr-defined]
+        )
         if persona_id is not None:
             statement = statement.where(Conversation.persona_id == persona_id)
         statement = statement.order_by(col(Conversation.created_at).desc())
@@ -81,10 +88,7 @@ class HistoryRepository:
         return user_message, assistant_message
 
     async def delete_conversation(self, conversation: Conversation) -> None:
-        statement = select(Message).where(Message.conversation_id == conversation.id)
-        for message in (await self.session.execute(statement)).scalars():
-            await self.session.delete(message)
-        # Flush so the child DELETEs precede the parent DELETE (FK order).
-        await self.session.flush()
-        await self.session.delete(conversation)
+        """Soft delete: the row (and its messages) survives, hidden."""
+        conversation.deleted_at = datetime.now(UTC)
+        self.session.add(conversation)
         await self.session.commit()

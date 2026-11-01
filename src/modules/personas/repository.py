@@ -23,14 +23,22 @@ class PersonaRepository:
         return persona
 
     async def list_for_user(self, user_id: UUID) -> list[Persona]:
-        statement = select(Persona).where(Persona.user_id == user_id)
+        statement = select(Persona).where(
+            Persona.user_id == user_id,
+            Persona.deleted_at.is_(None),  # type: ignore[attr-defined]
+        )
         result = await self.session.execute(statement)
         return list(result.scalars().all())
 
     async def get_for_user(self, user_id: UUID, persona_id: UUID) -> Persona | None:
         persona = await self.session.get(Persona, persona_id)
-        if persona is None or persona.user_id != user_id:
-            # Other users' personas are indistinguishable from missing ones.
+        if (
+            persona is None
+            or persona.user_id != user_id
+            or persona.deleted_at is not None
+        ):
+            # Other users' (or deleted) personas are indistinguishable
+            # from missing ones.
             return None
         return persona
 
@@ -49,5 +57,7 @@ class PersonaRepository:
         return persona
 
     async def delete(self, persona: Persona) -> None:
-        await self.session.delete(persona)
+        """Soft delete: the row survives hidden, conversations keep persona_id."""
+        persona.deleted_at = datetime.now(UTC)
+        self.session.add(persona)
         await self.session.commit()
