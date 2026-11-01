@@ -475,5 +475,16 @@ revisions `d4f8b2e6a9c1` + `f1c5e9a3d7b2`.
   `reasoning_always_on` catalog capability (providers that cannot disable
   reasoning): no 422, no disable spelling on the wire; documented in the
   ask/models docs. The UI greys out Off via the capability list.
+- **Retrieval bug (user report, same PR 2026-11-01):** "Who is Elon Musk?"
+  produced an intro about an earlier Polish search ("Ucz mnie"). NOT a
+  cache bug — search/page caches key on the query/URL. Root cause: with a
+  live embedder, a successful global-store lookup REPLACED the rerank
+  pool (`pool = candidates`), dropping the turn's freshly fetched chunks;
+  the store (scope=global, F-06) held 7.2k chunks from prior searches
+  including garbage PDF rows, so answers were built from foreign content.
+  Fix: retrieval now unions the store candidates with the turn's own
+  chunks (dedup by content hash) — retrieval refines, never replaces.
+  Regression: `tests/core_tools/test_toolbox.py::
+  test_get_context_always_includes_the_turns_own_chunks`.
 - **OCR fallback for non-vision models:** out of scope for v1; would belong in a
   pre-scorer-style sidecar.

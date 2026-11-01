@@ -463,7 +463,27 @@ class AskToolbox:
 
         if candidates is not None:
             self.used_vector_retrieval = True
-            pool = candidates
+            # Retrieval refines, never replaces: the current turn's freshly
+            # fetched chunks always join the rerank pool (deduped by
+            # content hash), so stale or garbage rows from the shared
+            # store cannot crowd out this turn's own evidence.
+            seen = {
+                chunk_hash(
+                    (c.get("metadata") or {}).get("url", "") or c.get("url", ""),
+                    c["content"],
+                )
+                for c in candidates
+            }
+            pool = list(candidates)
+            pool.extend(
+                c
+                for c in self.chunks
+                if chunk_hash(
+                    (c.get("metadata") or {}).get("url", "") or c.get("url", ""),
+                    c["content"],
+                )
+                not in seen
+            )
         else:
             pool = self.chunks
 
