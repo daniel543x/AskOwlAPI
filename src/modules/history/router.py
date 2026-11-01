@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...tools.db import get_session
@@ -22,10 +22,12 @@ def get_repository(
 
 @router.get("", response_model=list[ConversationRead])
 async def list_conversations(
+    persona_id: UUID | None = Query(default=None),
     repo: HistoryRepository = Depends(get_repository),
     user: User = Depends(get_current_user),
 ):
-    return await repo.list_conversations(user.id)
+    """The caller's conversations; `?persona_id=` scopes to one persona."""
+    return await repo.list_conversations(user.id, persona_id)
 
 
 @router.get("/{conversation_id}", response_model=ConversationWithMessages)
@@ -42,6 +44,7 @@ async def get_conversation(
     return ConversationWithMessages(
         id=conversation.id,
         title=conversation.title,
+        persona_id=conversation.persona_id,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
         messages=[

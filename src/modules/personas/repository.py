@@ -37,7 +37,9 @@ class PersonaRepository:
     async def update(
         self, persona: Persona, changes: PersonaUpdate
     ) -> Persona:
-        data = changes.model_dump(exclude_unset=True, exclude_none=True)
+        # exclude_unset only: an explicit null clears a nullable field, an
+        # omitted field means "no change" (webapp API-NOTES #1).
+        data = changes.model_dump(exclude_unset=True)
         for key, value in data.items():
             setattr(persona, key, value)
         persona.updated_at = datetime.now(UTC)

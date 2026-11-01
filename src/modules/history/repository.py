@@ -35,12 +35,18 @@ class HistoryRepository:
         await self.session.refresh(conversation)
         return conversation
 
-    async def list_conversations(self, user_id: UUID) -> list[Conversation]:
-        statement = (
-            select(Conversation)
-            .where(Conversation.user_id == user_id)
-            .order_by(col(Conversation.created_at).desc())
-        )
+    async def list_conversations(
+        self, user_id: UUID, persona_id: UUID | None = None
+    ) -> list[Conversation]:
+        """The caller's conversations, newest first.
+
+        With `persona_id` (webapp API-NOTES #4), only conversations scoped
+        to that persona (NULL rows excluded).
+        """
+        statement = select(Conversation).where(Conversation.user_id == user_id)
+        if persona_id is not None:
+            statement = statement.where(Conversation.persona_id == persona_id)
+        statement = statement.order_by(col(Conversation.created_at).desc())
         result = await self.session.execute(statement)
         return list(result.scalars().all())
 
