@@ -16,7 +16,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.core.ask.services.search import _resolve_conversation, _save_turn, _sse_frame
+from src.core.ask.services.search import (
+    _resolve_conversation,
+    _save_turn,
+    _sse_frame,
+    build_turn_meta,
+)
 from src.core.research.services.agent import agent_logic
 
 from ...core.ask.services.contracts import AskBody
@@ -42,7 +47,7 @@ from ...modules.jobs.gates import (
     provider_busy_detail,
     release_gates,
 )
-from ...modules.jobs.model import Job
+from ...modules.jobs.model import Job, link_conversation
 from ...modules.llm_provider.dependency import (
     get_llm_client,
     get_llm_factory,
@@ -55,6 +60,7 @@ from ...modules.notes.repository import NoteRepository
 from ...modules.notes.store import NoteStore
 from ...modules.owl_reranker.base import IRanker
 from ...modules.owl_reranker.factory import get_ranker
+from ...modules.personas.model import Persona
 from ...modules.personas.repository import PersonaRepository
 from ...modules.profile.factory import get_optional_user_preferences
 from ...modules.profile.model import UserPreferences
@@ -157,7 +163,10 @@ class ResearchBody(AskBody):
 class PersonaBody(AskBody):
     """Body of POST /ask/persona: the v3 base + required persona_id."""
 
-    persona_id: uuid.UUID
+    # Deliberate narrowing: the base allows omission; persona turns do not
+    # (missing persona_id is a schema 422). Pydantic accepts the override;
+    # pyright flags it without the pydantic plugin.
+    persona_id: uuid.UUID  # pyright: ignore[reportGeneralTypeIssues, reportIncompatibleVariableOverride]
 
 
 class SourceTypeMismatch(Exception):
@@ -266,6 +275,10 @@ async def ask_persona(
                 detail={"code": "persona_model_unusable", **outcome.payload()},
             )
 
+        # Release the request-phase read transaction before streaming
+        # (webapp API-NOTES #10).
+        await session.commit()
+
         async def confirm_stream():
             yield _sse_frame(1, "model_confirm", outcome.payload())
 
@@ -321,6 +334,7 @@ async def ask_persona(
             request.query, searching, model, scraper, ranker, embedder,
             session, user, effective, turn, att_dicts, images,
             scout=(depth == "deep"), reflect=(depth == "deep"), persona=persona,
+            conversation_id=request.conversation_id,
         )
     if settings.BUSY_POLICY == "reject":
         try:
@@ -332,6 +346,9 @@ async def ask_persona(
             ) from e
         release_gates(turn.keys)
     if request.stream:
+        # Release the request-phase read transaction before streaming
+        # (webapp API-NOTES #10).
+        await session.commit()
         return StreamingResponse(
             research_sse_adapter(
                 request.query,
@@ -373,7 +390,7 @@ async def ask_persona(
 
 async def _persona_quick_turn(
     request: PersonaBody,
-    persona,
+    persona: Persona,
     model: BaseChatModel,
     searching: ISearchProvider,
     scraper: IScraper,
@@ -408,6 +425,7 @@ async def _persona_quick_turn(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(e).strip("'")
         ) from e
+    assert conversation is not None  # KeyError above rules out a miss
     conversation.persona_id = persona.id
     session.add(conversation)
     await session.commit()
@@ -448,6 +466,7 @@ async def _persona_quick_turn(
                         await _save_turn(
                             session, conversation, request.query,
                             "".join(parts),
+                            meta=build_turn_meta("persona", model),
                         )
                     yield frame(event, data)
         except GateBusy:
@@ -489,6 +508,7 @@ async def _research_turn(
             body.query, searching, model, scraper, ranker, embedder,
             session, user, body.source_types, turn, att_dicts, images,
             scout=scout, reflect=reflect,
+            conversation_id=body.conversation_id,
         )
     if settings.BUSY_POLICY == "reject":
         try:
@@ -500,6 +520,9 @@ async def _research_turn(
             ) from e
         release_gates(turn.keys)
     if body.stream:
+        # Release the request-phase read transaction before streaming
+        # (webapp API-NOTES #10).
+        await session.commit()
         return StreamingResponse(
             research_sse_adapter(
                 body.query,
@@ -554,13 +577,25 @@ async def _enqueue_research_turn(
     scout: bool = False,
     reflect: bool = False,
     persona=None,
+    conversation_id: uuid.UUID | None = None,
+    queue=None,
+    run_engine=None,
 ) -> JSONResponse:
-    """Auto-convert a busy foreground research run into a job (PR 12)."""
+    """Auto-convert a busy foreground research run into a job (PR 12).
+
+    The finished report is persisted as a turn on `conversation_id`
+    (a new conversation when omitted) and the job row carries the link
+    so the InBox can open the full answer conversation (webapp
+    API-NOTES #10).
+    """
     job = Job(
         user_id=user.id,
         kind="research",
         payload={
             "query": query,
+            "conversation_id": str(conversation_id)
+            if conversation_id
+            else None,
             "persona_id": str(persona.id) if persona is not None else None,
             "scout": bool(scout),
             "reflect": bool(reflect),
@@ -570,7 +605,9 @@ async def _enqueue_research_turn(
     )
 
     async def runner() -> str:
-        async with AsyncSession(engine, expire_on_commit=False) as job_session:
+        async with AsyncSession(
+            run_engine or engine, expire_on_commit=False
+        ) as job_session:
             job_notes = NoteStore(NoteRepository(job_session), user.id)
             result = await research_json_adapter(
                 query,
@@ -589,9 +626,23 @@ async def _enqueue_research_turn(
                 persona=persona,
                 turn=turn,
             )
-        return (result.get("report") or "")[:4000]
+            report = (result.get("report") or "")[:4000]
+            conversation, _history, _created = await _resolve_conversation(
+                job_session, user.id, conversation_id, query
+            )
+            await _save_turn(
+                job_session,
+                conversation,
+                query,
+                report,
+                meta=build_turn_meta(
+                    "deep_research" if scout else "research", model
+                ),
+            )
+        link_conversation(job, None, conversation.id if conversation else None)
+        return report
 
-    saved = await get_job_queue().submit(job, runner)
+    saved = await (queue or get_job_queue()).submit(job, runner)
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
         content={

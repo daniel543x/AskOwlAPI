@@ -9,6 +9,7 @@ switch resets thinking/effort" contract.
 
 import logging
 import uuid
+from typing import Literal, cast
 
 from fastapi import APIRouter, Depends, Query
 
@@ -175,9 +176,10 @@ async def put_preferences(
         data.thinking is not None or data.effort is not None
     ):
         await settings_repo.upsert(user.id, default_model_id, thinking, effort)
-    elif remembered is not None and (thinking, effort) != (
-        remembered.thinking,
-        remembered.effort,
+    elif (
+        remembered is not None
+        and default_model_id is not None
+        and (thinking, effort) != (remembered.thinking, remembered.effort)
     ):
         # The model's capabilities changed since the memory was written;
         # store the re-clamped pair so the fixture never returns a value
@@ -190,7 +192,10 @@ async def put_preferences(
             default_model_id=default_model_id,
             default_mode=data.default_mode,
             thinking=thinking,
-            effort=effort,
+            # clamp_to_model only ever returns a level from the model's
+            # validated effort_levels (or None); str is the DB round-trip
+            # widening, the request schema is the Literal.
+            effort=cast("Literal['low', 'medium', 'high', 'max'] | None", effort),
             source_types=source_types,
         ),
     )

@@ -381,3 +381,23 @@ keeps citing `[Source](URL)`; the assembler rewrites). Resolution:
   list. The `sources` field is unchanged.
 - Malformed or unknown citation markers are left as-is, never rewritten
   or rejected; runs never fail over citations.
+
+## Turn metadata in history (webapp API-NOTES #11)
+
+The user message of every persisted turn carries a `meta` object filled
+at turn creation from the ask request's mode and its resolved chat model:
+`{"mode": "search", "mode_label": "Search", "model": "<catalog entry id
+or null>", "model_label": "<display name or model name>",
+"model_provider": "<provider name or type>"}`. `GET /history/{id}`
+returns it on `MessageRead.meta`; assistant messages and legacy rows
+carry `meta: null`. Protocol note: no SSE change — live streams already
+render the caption from the request context.
+
+## Session hygiene on streaming routes (webapp API-NOTES #10)
+
+Streaming endpoints no longer hold a DB transaction for the stream's
+lifetime: the auth read commits immediately, conversation/history reads
+and store reads release their transactions when done, and streaming
+routes end the request-phase transaction before the first frame. A
+long-lived SSE client (e.g. reconnecting `GET /jobs/events`) can no
+longer park idle-in-transaction connections until the pool saturates.

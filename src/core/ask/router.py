@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
 from pydantic import Field
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ...modules.attachments.service import (
     ensure_vision,
@@ -35,7 +35,7 @@ from ...modules.jobs.gates import (
     provider_busy_detail,
     release_gates,
 )
-from ...modules.jobs.model import Job
+from ...modules.jobs.model import Job, link_conversation
 from ...modules.llm_provider.dependency import get_llm_client, get_turn_resources
 from ...modules.owl_reranker.base import IRanker
 from ...modules.owl_reranker.factory import get_ranker
@@ -50,7 +50,7 @@ from ...modules.search_engine.source_types import ensure_source_types
 from ...tools.db import engine, get_session
 from ...tools.settings import settings
 from .services.contracts import AskBody
-from .services.search import search_json_adapter, search_sse_adapter
+from .services.search import build_turn_meta, search_json_adapter, search_sse_adapter
 
 router = APIRouter(prefix="/ask", tags=["Asks"])
 
@@ -186,6 +186,10 @@ async def ask_search(
             ) from e
         release_gates(turn.keys)
     if request.stream:
+        # End the request-phase read transaction before streaming (webapp
+        # API-NOTES #10): the session would otherwise stay
+        # idle-in-transaction for the whole stream.
+        await session.commit()
         return StreamingResponse(
             search_sse_adapter(
                 request.query,
@@ -213,6 +217,7 @@ async def ask_search(
                 images=images,
                 rewrite=request.rewrite,
                 hybrid_alpha=request.hybrid_alpha,
+                turn_meta=build_turn_meta("search", model),
             ),
             media_type="text/event-stream",
         )
@@ -243,6 +248,7 @@ async def ask_search(
         images=images,
         rewrite=request.rewrite,
         hybrid_alpha=request.hybrid_alpha,
+        turn_meta=build_turn_meta("search", model),
     )
     return {"answer": answer}
 
@@ -257,8 +263,14 @@ async def _enqueue_search_turn(
     decision_maker: IDecisionMaker | None,
     user: User,
     turn: TurnResources,
+    queue=None,
+    run_engine=None,
 ) -> JSONResponse:
-    """Auto-convert a busy foreground ask into a queued job (PR 12)."""
+    """Auto-convert a busy foreground ask into a queued job (PR 12).
+
+    The job row is stamped with the turn's conversation (webapp
+    API-NOTES #10) so the InBox can link to the full answer.
+    """
     from sqlalchemy.ext.asyncio import AsyncSession
 
     job = Job(
@@ -275,7 +287,9 @@ async def _enqueue_search_turn(
     )
 
     async def runner() -> str:
-        async with AsyncSession(engine, expire_on_commit=False) as session:
+        async with AsyncSession(
+            run_engine or engine, expire_on_commit=False
+        ) as session:
             result = await search_json_adapter(
                 request.query,
                 searching,
@@ -293,11 +307,15 @@ async def _enqueue_search_turn(
                 scope=request.scope,
                 recency_bias=request.recency_bias,
                 source_types=request.source_types,
+                rewrite=request.rewrite,
+                hybrid_alpha=request.hybrid_alpha,
                 turn=turn,
+                turn_meta=build_turn_meta("search", model),
             )
+        link_conversation(job, result, request.conversation_id)
         return (result.get("answer") or "")[:4000]
 
-    saved = await get_job_queue().submit(job, runner)
+    saved = await (queue or get_job_queue()).submit(job, runner)
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
         content={

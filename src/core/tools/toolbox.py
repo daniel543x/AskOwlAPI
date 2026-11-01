@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, Protocol
 from urllib.parse import urlparse
@@ -52,7 +53,7 @@ class ChunkStoreLike(Protocol):
     async def store_chunks(
         self,
         chunks: list[dict[str, Any]],
-        embeddings: list[list[float]],
+        embeddings: Sequence[Sequence[float | None] | None],
         conversation_id: uuid.UUID | None = None,
     ) -> int: ...
 
@@ -67,6 +68,13 @@ class ChunkStoreLike(Protocol):
         query_embedding: list[float],
         k: int,
         conversation_id: uuid.UUID | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    async def conversation_chunks_strict(
+        self,
+        conversation_id: uuid.UUID,
+        query_embedding: list[float],
+        k: int,
     ) -> list[dict[str, Any]]: ...
 
 

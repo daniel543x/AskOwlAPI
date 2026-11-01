@@ -9,7 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app import app
-from src.modules.history.model import Conversation
+from src.modules.history.model import Conversation, Message
 from src.modules.identity.auth.service import create_access_token
 from src.modules.identity.user.model import UserCreate
 from src.modules.identity.user.service import create_user
@@ -118,3 +118,34 @@ async def test_history_filter_is_user_scoped(auth_client, db_session):
     )
     assert as_b.status_code == 200, as_b.text
     assert as_b.json() == []
+
+
+@pytest.mark.asyncio
+async def test_history_messages_carry_turn_meta(auth_client, db_session):
+    """The 'mode · model' caption must survive reloads (API-NOTES #11)."""
+    token, user = await make_user(db_session)
+    headers = {"Authorization": f"Bearer {token}"}
+    conversation = await add_conversation(db_session, user.id)
+    db_session.add(
+        Message(
+            conversation_id=conversation.id,
+            role="user",
+            content="what is rust?",
+            meta={"mode": "search", "model_label": "qwen3.5"},
+        )
+    )
+    db_session.add(
+        Message(conversation_id=conversation.id, role="assistant", content="safe.")
+    )
+    await db_session.commit()
+
+    detail = await auth_client.get(
+        f"/history/{conversation.id}", headers=headers
+    )
+    assert detail.status_code == 200, detail.text
+    messages = detail.json()["messages"]
+    assert messages[0]["meta"] == {
+        "mode": "search",
+        "model_label": "qwen3.5",
+    }
+    assert messages[1]["meta"] is None

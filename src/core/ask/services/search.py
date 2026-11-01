@@ -50,6 +50,33 @@ NO_CONTEXT_ANSWER = (
     "so no answer can be given."
 )
 
+# Human labels for the persisted turn captions (webapp API-NOTES #11).
+MODE_LABELS = {
+    "search": "Search",
+    "research": "Research",
+    "deep_research": "Deep research",
+    "persona": "Persona",
+}
+
+
+def build_turn_meta(mode: str, model: BaseChatModel | None) -> dict[str, Any]:
+    """The user-message caption payload for one persisted turn.
+
+    Reads the catalog provenance the chat factory stamps onto every built
+    model (`catalog_entry_id`/`catalog_label`/`catalog_provider`); models
+    without it (built-in defaults, scripted test fakes) fall back to the
+    provider-native model name and a null catalog id.
+    """
+    metadata = getattr(model, "metadata", None) or {}
+    return {
+        "mode": mode,
+        "mode_label": MODE_LABELS.get(mode, mode),
+        "model": metadata.get("catalog_entry_id"),
+        "model_label": metadata.get("catalog_label")
+        or getattr(model, "model_name", None),
+        "model_provider": metadata.get("catalog_provider"),
+    }
+
 
 @asynccontextmanager
 async def _stage(name: str):
@@ -103,13 +130,11 @@ async def search_logic(
     deterministic body (decision 8).
     """
     if settings.AGENTIC_SEARCH:
-        try:
-            from ..agentic import (
-                AgentDegraded,
-                agentic_search_logic,
-                search_budget,
-            )
+        # Imported lazily (settings-gated), but outside the try so the
+        # except clause references a bound name.
+        from .. import agentic as agentic_module
 
+        try:
             pre_toolbox = AskToolbox(
                 searching, scraper, ranker, embedder, None,
                 decision_maker=decision_maker,
@@ -117,12 +142,12 @@ async def search_logic(
                 attachments=attachments,
                 hybrid_alpha=hybrid_alpha,
             )
-            async for event, data in agentic_search_logic(
-                query, model, pre_toolbox, search_budget(), history
+            async for event, data in agentic_module.agentic_search_logic(
+                query, model, pre_toolbox, agentic_module.search_budget(), history
             ):
                 yield event, data
             return
-        except AgentDegraded as e:
+        except agentic_module.AgentDegraded as e:
             logger.warning("Agentic search degraded: %s", e)
             yield "degraded", {"reason": str(e)}
     try:
@@ -204,7 +229,7 @@ async def search_logic(
             context = await toolbox.get_context(query)
 
         if attachments:
-            from sqlalchemy.ext.asyncio import AsyncSession as _AS
+            from sqlmodel.ext.asyncio.session import AsyncSession as _AS
 
             from ....modules.attachments.service import attachment_context
             from ....tools.db import engine as _engine
@@ -280,6 +305,10 @@ async def _resolve_conversation(
     if conversation_id is not None:
         conversation = await repo.get_conversation_for_user(user_id, conversation_id)
         if conversation is None:
+            # Release the read transaction before bailing out (webapp
+            # API-NOTES #10): the session is shared with the stream that
+            # is about to start.
+            await session.commit()
             raise KeyError("Conversation not found.")
         created = False
     else:
@@ -288,14 +317,23 @@ async def _resolve_conversation(
 
     messages = await repo.get_messages(conversation.id)
     history = [(message.role, message.content) for message in messages]
+    # End the read transaction now (webapp API-NOTES #10): without this,
+    # the conversation load keeps the shared session idle-in-transaction
+    # for the whole search/scrape/synthesis pipeline. Safe on loaded
+    # objects: sessions are built with expire_on_commit=False.
+    await session.commit()
     return conversation, history, created
 
 
-async def _save_turn(session, conversation, query: str, answer: str) -> None:
+async def _save_turn(
+    session, conversation, query: str, answer: str, meta: dict | None = None
+) -> None:
     if conversation is None:
         return
     try:
-        await HistoryRepository(session).add_turn(conversation, query, answer)
+        await HistoryRepository(session).add_turn(
+            conversation, query, answer, meta=meta
+        )
     except Exception:
         # Persistence must never kill a finished answer stream.
         logger.exception("Failed to persist conversation turn.")
@@ -325,6 +363,7 @@ async def search_sse_adapter(
     rewrite: str = "standalone",
     hybrid_alpha: float = 1.0,
     turn: TurnResources | None = None,
+    turn_meta: dict[str, Any] | None = None,
 ) -> AsyncGenerator[str]:
     """Translate pipeline events into an SSE stream (protocol v2).
 
@@ -334,6 +373,7 @@ async def search_sse_adapter(
     With `session` and `user_id`, the turn is persisted to the caller's
     conversation (`conversation_id`, or a new conversation when omitted);
     prior turns are injected as chat history into the answer step.
+    `turn_meta` (webapp API-NOTES #11) is stored on the user message.
 
     `turn` (PR 12) holds the resource gates for the whole stream: the
     first frame is delayed until the gates free up, and a busy gate that
@@ -409,7 +449,8 @@ async def search_sse_adapter(
                         if citations:
                             yield frame("citations", {"citations": citations})
                         await _save_turn(
-                            session, conversation, data["query"], answer_text
+                            session, conversation, data["query"], answer_text,
+                            meta=turn_meta,
                         )
 
                         if settings.PRE_SCORE_GROUNDING_CHECK and decision_maker:
@@ -447,7 +488,10 @@ async def search_sse_adapter(
                     answer_text = data["answer"]
                     if data.get("citations"):
                         yield frame("citations", {"citations": data["citations"]})
-                    await _save_turn(session, conversation, data["query"], answer_text)
+                    await _save_turn(
+                        session, conversation, data["query"], answer_text,
+                        meta=turn_meta,
+                    )
                     if not data["context"].strip():
                         yield frame("done", {"status": "no_context"})
                     else:
@@ -490,11 +534,13 @@ async def search_json_adapter(
     rewrite: str = "standalone",
     hybrid_alpha: float = 1.0,
     turn: TurnResources | None = None,
+    turn_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the pipeline and return the full result as one JSON-ready dict.
 
     With `session` and `user_id` the turn is persisted to a conversation
-    (see `search_sse_adapter`); an unknown `conversation_id` is a 404."""
+    (see `search_sse_adapter`); an unknown `conversation_id` is a 404.
+    `turn_meta` (webapp API-NOTES #11) is stored on the user message."""
     answer_data: dict[str, Any] | None = None
     error_detail: str | None = None
 
@@ -575,7 +621,9 @@ async def search_json_adapter(
                 status_code=500, detail=f"Answer generation failed: {str(e)}"
             ) from e
 
-    await _save_turn(session, conversation, answer_data["query"], answer)
+    await _save_turn(
+        session, conversation, answer_data["query"], answer, meta=turn_meta
+    )
 
     known = [
         s["url"] for s in answer_data["sources"] if isinstance(s, dict) and s.get("url")

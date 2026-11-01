@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column, DateTime, ForeignKey
+from sqlalchemy import JSON, Column, DateTime, ForeignKey
 from sqlmodel import Field, SQLModel
 
 ROLE_USER = "user"
@@ -51,6 +51,14 @@ class Message(SQLModel, table=True):
         default_factory=lambda: datetime.now(UTC),
         sa_type=DateTime(timezone=True),
     )
+    # Turn metadata (webapp API-NOTES #11): only the user message of a
+    # turn carries it — the ask request's mode and its resolved chat
+    # model, so the UI can restore the "mode · model" caption after a
+    # reload. NULL for legacy rows and assistant messages.
+    meta: dict | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
 
 
 class MessageRead(SQLModel):
@@ -58,6 +66,7 @@ class MessageRead(SQLModel):
     role: str
     content: str
     created_at: datetime
+    meta: dict | None = None
 
 
 class ConversationRead(SQLModel):

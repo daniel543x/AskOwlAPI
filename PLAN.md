@@ -433,5 +433,35 @@ revisions `d4f8b2e6a9c1` + `f1c5e9a3d7b2`.
 - ~~Job auto-resume~~ → done 2026-10-31 (`wu/job-resume`): startup re-enqueues interrupted
   runs from their payloads; research runs persist plan/note ids into `Job.payload` mid-run and
   resume from the last note (covered legs skipped, no duplicates); retry cap applies.
+- **Webapp verification round (API-NOTES #9/#10, fixed on `wu/job-resume` 2026-11-01):**
+  #9 — the raw `UniqueViolationError` leak was verified against `main`, which predates
+  `e8f4f1b` (persist-before-wake submit + sanitized `Job.error`); this branch also closes
+  the same ordering hole in the rate-limit retry path (queued persist lands before
+  re-enqueue; `test_retry_persists_queued_before_waking_the_worker`).
+  #10 — succeeded jobs now carry `conversation_id`: runners stamp the row via
+  `link_conversation` (search jobs reuse/resolve the turn's conversation), and background
+  research runs persist their report as a turn on a resolved-or-new conversation
+  (payload carries the id for resume parity); InBox `JobRead.conversation_id` now links.
+  Regression vehicles: `tests/modules/jobs/test_job_conversation_link.py` (integration).
+  Found on the way: the background search runner dropped `rewrite`/`hybrid_alpha`
+  (silently defaulting to "standalone") and the resume `_chat_model` tuple unpack was
+  latent-crash; both fixed.
+- **Webapp verification round 2 (API-NOTES #10/#11, same branch 2026-11-01):**
+  #10 — streaming routes no longer hold a DB transaction for the stream's
+  lifetime: the auth read commits in `get_current_user`, the conversation
+  read (`_resolve_conversation`) and every chunk/note store read release
+  their transaction when done (commit-safe: all sessions run with
+  `expire_on_commit=False`; a rollback would expire loaded rows and hit
+  MissingGreenlet), and the ask/research/persona routes commit before the
+  first SSE frame. Offline regressions in `tests/tools/test_sse_session_hygiene.py`,
+  live ones in `tests/core_ask/test_stream_transaction.py`.
+  #11 — persisted user messages now carry `meta` `{mode, mode_label, model,
+  model_label, model_provider}` from the ask mode + resolved chat model
+  (`Message.meta` JSON column, guarded bootstrap `ALTER TABLE ... ADD COLUMN
+  IF NOT EXISTS`; chat models carry catalog provenance via factory-stamped
+  metadata; built-ins fall back to the native model name with null id).
+  Covered turns: search (SSE/JSON/background), persona quick, research/deep
+  background + auto-resume; `MessageRead.meta` exposes it on
+  `GET /history/{id}`. Schema change noted for the PR description.
 - **OCR fallback for non-vision models:** out of scope for v1; would belong in a
   pre-scorer-style sidecar.

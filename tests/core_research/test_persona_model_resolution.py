@@ -148,4 +148,4 @@ async def test_usable_model_rebuilds_client_and_turn(monkeypatch):
         model_gate(mine.provider_id, 2),
         search_gate("s1", 3),
     ]
-    assert turn.model_capabilities == ["tools"]
+    assert turn.model_capabilities == ("tools",)

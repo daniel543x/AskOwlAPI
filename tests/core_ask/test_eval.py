@@ -179,6 +179,12 @@ class FakeChunkRepo:
     async def existing_hashes(self, hashes):
         return set()  # nothing pre-stored: everything is embedded anew
 
+    async def fts_candidates(self, query, k):
+        return []  # the offline fake has no lexical leg
+
+    async def conversation_chunks_strict(self, conversation_id, query_embedding, k):
+        raise AssertionError("attachment retrieval is not under eval here")
+
     async def vector_candidates(self, query_embedding, k, conversation_id=None):
         def cosine(a, b):
             dot = sum(x * y for x, y in zip(a, b, strict=True))

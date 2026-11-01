@@ -157,6 +157,8 @@ class ModelRepository:
             effort_levels=list(entry.effort_levels or []),
             vector_dims=entry.vector_dims,
             entry_id=entry.id,
+            display_name=entry.display_name or "",
+            provider_name=provider.name if provider else None,
             provider_id=provider.id if provider else None,
             max_concurrency=self._provider_concurrency(provider),
             source=tier,

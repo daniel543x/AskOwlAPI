@@ -182,7 +182,7 @@ def turn_resources_for_resolved(
                 ),
             ),
         ],
-        model_capabilities=resolved.capabilities,
+        model_capabilities=tuple(resolved.capabilities),
     )
 
 
