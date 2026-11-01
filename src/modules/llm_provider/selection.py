@@ -69,6 +69,37 @@ class ModelInfo:
     is_active: bool
 
 
+@dataclass(frozen=True)
+class EntryState:
+    """What persona-model validation needs from one catalog entry."""
+
+    id: uuid.UUID
+    kind: str
+    is_active: bool
+    required_role: str
+    capabilities: list[str]
+
+
+def unusable_reason(
+    state: EntryState | None, user_roles: list[str]
+) -> str | None:
+    """Why a persona's stored model cannot run an agent turn.
+
+    None = usable (chat kind, active, tool-capable, role-accessible).
+    The token order pins the answer when several checks fail:
+    missing (absent or wrong kind) -> inactive -> lacks_tools -> no_role.
+    """
+    if state is None or state.kind != "chat":
+        return "missing"
+    if not state.is_active:
+        return "inactive"
+    if "tools" not in state.capabilities:
+        return "lacks_tools"
+    if not has_role_access(user_roles, state.required_role):
+        return "no_role"
+    return None
+
+
 @dataclass
 class CatalogView:
     """Everything selection needs, pre-fetched from the database."""

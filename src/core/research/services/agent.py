@@ -6,23 +6,32 @@ by a Budget (iterations, wall-clock time, estimated tokens); exhausting a
 budget degrades gracefully: whatever context the tools gathered is passed
 to one forced synthesis call, never silently dropped.
 
-Every LLM interaction is a native tool call; a free-form response is a
-contract violation and becomes an SSE ``error`` event, never parsed text.
+Every LLM interaction is a native tool call. A free-form response is a
+contract miss: the run gets one nudge to re-answer through SubmitOutcome,
+and a second free-form response is salvaged as the final answer instead of
+losing the run.
 """
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
+from contextlib import aclosing
+from math import floor
+from time import monotonic
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
+from langchain_core.language_models.base import LanguageModelInput
 from langchain_core.messages import (
+    AIMessage,
     AIMessageChunk,
     BaseMessage,
     HumanMessage,
     SystemMessage,
     ToolMessage,
 )
+from langchain_core.runnables import Runnable
 
 from ....tools.settings import settings
 from ...tools.arg_stream import ToolArgStream
@@ -60,6 +69,25 @@ BUDGET_NOTICE = (
     "gathered, so no answer can be given."
 )
 
+# Sent once per run when the model answers in prose instead of tool calls.
+NUDGE = "You MUST respond now by calling the SubmitOutcome tool."
+
+# Wall-clock interval between status heartbeats while one LLM call is pending.
+HEARTBEAT_SECONDS = 15.0
+
+
+def _text_of(content: Any) -> str:
+    """PlainText of a message content: joins text blocks, else stringifies."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return str(content)
+
 PERSONA_TEMPLATE = """
 
 --- Active user persona: "{name}" ---
@@ -86,6 +114,37 @@ def persona_system_block(persona) -> str:
             domains=", ".join(persona.allowed_domains)
         )
     return block
+
+
+async def _beaten(
+    model: Runnable[LanguageModelInput, AIMessage],
+    messages: list[BaseMessage],
+) -> AsyncGenerator[PipelineEvent]:
+    """One `ainvoke` round, yielding a status heartbeat while it pends.
+
+    Ticks stream out as they occur; the pending task is cancelled if the
+    consumer abandons the generator mid-call.
+    """
+    started = monotonic()
+    task: asyncio.Task[AIMessage] = asyncio.create_task(model.ainvoke(messages))
+    try:
+        while True:
+            try:
+                response = await asyncio.wait_for(
+                    asyncio.shield(task), timeout=HEARTBEAT_SECONDS
+                )
+                yield "__llm_done__", {"response": response}
+                return
+            except TimeoutError:
+                elapsed = floor(monotonic() - started)
+                yield "status", {"step": f"Agent thinking… ({elapsed}s)"}
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except BaseException:  # noqa: BLE001 - task cleanup, any outcome
+                pass
 
 
 async def _run_tool(toolbox: AskToolbox, name: str, args: dict[str, Any]) -> str:
@@ -133,8 +192,19 @@ async def agent_logic(
             HumanMessage(content=goal),
         ]
 
+        nudge_sent = False
         while not budget.exhausted and budget.iterations_left:
-            response = await bound.ainvoke(messages)
+            response: AIMessage | None = None
+            async with aclosing(_beaten(bound, messages)) as beat:
+                async for tick in beat:
+                    if tick[0] == "status":
+                        yield tick
+                    else:
+                        response = tick[1]["response"]
+            if response is None:
+                raise ToolProtocolError(
+                    "The agent LLM call ended without a response."
+                )
             budget.spend_tokens(
                 str(response.content), json.dumps(response.tool_calls, default=str)
             )
@@ -157,6 +227,17 @@ async def agent_logic(
 
             executable = [c for c in tool_calls if c.get("name") != "SubmitOutcome"]
             if not executable:
+                text = _text_of(response.content).strip()
+                messages.append(response)
+                if text and not nudge_sent:
+                    nudge_sent = True
+                    messages.append(HumanMessage(content=NUDGE))
+                    budget.spend_iteration()
+                    continue
+                if text:
+                    yield "message", {"text": text}
+                    yield "done", {"status": "completed"}
+                    return
                 yield (
                     "error",
                     {

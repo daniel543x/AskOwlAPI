@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime
+from sqlalchemy import Column, DateTime, ForeignKey
 from sqlmodel import Field, SQLModel
 
 ROLE_USER = "user"
@@ -24,8 +24,15 @@ class Conversation(SQLModel, table=True):
     )
     # Persona scope (PR 20): set when the conversation belongs to a
     # persona mode turn; NULL = an ordinary conversation.
+    # ON DELETE SET NULL keeps persona conversations as ordinary history
+    # when their persona is deleted (webapp API-NOTES #8).
     persona_id: UUID | None = Field(
-        default=None, foreign_key="persona.id", index=True
+        default=None,
+        sa_column=Column(
+            ForeignKey("persona.id", ondelete="SET NULL"),
+            nullable=True,
+            index=True,
+        ),
     )
 
 
@@ -50,6 +57,9 @@ class MessageRead(SQLModel):
 class ConversationRead(SQLModel):
     id: UUID
     title: str
+    # Persona scope (webapp API-NOTES #4): the UI routes non-null rows
+    # into /personas/{persona_id}; NULL = ordinary chat.
+    persona_id: UUID | None
     created_at: datetime
     updated_at: datetime | None
 

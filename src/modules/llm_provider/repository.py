@@ -24,6 +24,7 @@ from .model import (
 from .selection import (
     TIER_BUILTIN,
     CatalogView,
+    EntryState,
     ModelInfo,
     ResolvedModel,
     SelectionError,
@@ -72,6 +73,23 @@ class ModelRepository:
             return builtin
 
         return await self._resolved_from_entry(model_id, tier)
+
+    async def entry_state(self, model_id: uuid.UUID) -> EntryState | None:
+        """The persona-model validation view of one entry; None = absent."""
+        entry = (
+            await self.session.exec(
+                select(ModelCatalogEntry).where(ModelCatalogEntry.id == model_id)
+            )
+        ).first()
+        if entry is None:
+            return None
+        return EntryState(
+            id=entry.id,
+            kind=entry.kind,
+            is_active=entry.is_active,
+            required_role=entry.required_role,
+            capabilities=list(entry.capabilities or []),
+        )
 
     async def _catalog_view(self, user_id: uuid.UUID) -> CatalogView:
         entries = (await self.session.exec(select(ModelCatalogEntry))).all()
