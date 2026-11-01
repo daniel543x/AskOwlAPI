@@ -72,14 +72,48 @@ class TrafilturaScraper(IScraper):
         url = item.get("url", "")
         try:
             async with semaphore:
-                response = await client.get(url)
-            if response.status_code != 200:
-                logger.warning(
-                    "Failed to fetch '%s': HTTP %d", url, response.status_code
-                )
-                return {"content": "", "url": url}
+                # Streamed with a hard byte cap: reading a huge PDF or page
+                # whole used to spike RSS until the kernel OOM-killed the
+                # API and containers (user report 2026-11-01).
+                async with client.stream("GET", url) as response:
+                    if response.status_code != 200:
+                        logger.warning(
+                            "Failed to fetch '%s': HTTP %d",
+                            url,
+                            response.status_code,
+                        )
+                        return {"content": "", "url": url}
 
-            parts = await asyncio.to_thread(self._extract_parts, response.text)
+                    content_type = response.headers.get(
+                        "content-type", ""
+                    ).split(";")[0].strip().lower()
+                    if content_type and not content_type.startswith(
+                        ("text/", "application/xhtml", "application/json")
+                    ):
+                        logger.debug(
+                            "Skipping '%s': non-text content type '%s'.",
+                            url,
+                            content_type,
+                        )
+                        return {"content": "", "url": url}
+
+                    received = 0
+                    parts_bytes: list[bytes] = []
+                    async for part in response.aiter_bytes():
+                        received += len(part)
+                        if received > settings.SCRAPER_MAX_BYTES:
+                            logger.warning(
+                                "Aborted '%s': response exceeds "
+                                "SCRAPER_MAX_BYTES (%d).",
+                                url,
+                                settings.SCRAPER_MAX_BYTES,
+                            )
+                            return {"content": "", "url": url}
+                        parts_bytes.append(part)
+            html = b"".join(parts_bytes).decode(
+                response.encoding or "utf-8", errors="replace"
+            )
+            parts = await asyncio.to_thread(self._extract_parts, html)
             return {
                 "content": parts["content"],
                 "url": url,

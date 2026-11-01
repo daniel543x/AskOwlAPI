@@ -100,6 +100,10 @@ class Settings(BaseSettings):
     # <----- Scraping ----->
     SCRAPER_CONCURRENCY: int = 5
     SCRAPER_TIMEOUT: float = 30.0
+    # Per-page download cap (bytes): responses larger than this are
+    # aborted unread — a huge PDF used to balloon RSS until the kernel
+    # OOM-killed the API and containers (user report 2026-11-01).
+    SCRAPER_MAX_BYTES: int = 5_000_000
 
     # <----- LLM bootstrap defaults ----->
     OLLAMA_BASE_URL: str = "http://localhost:11434"

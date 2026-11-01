@@ -158,3 +158,64 @@ def test_registrable_domain():
     assert registrable_domain("https://a.b.example/x") == "b.example"
     assert registrable_domain("https://www.example.com") == "example.com"
     assert registrable_domain("http://localhost:3000/x") == "localhost"
+
+
+# <----- Download guards (OOM fix, user report 2026-11-01) ----->
+
+
+async def test_non_html_content_types_return_empty_content(monkeypatch):
+    """PDFs/binary files are skipped entirely: downloading and 'extracting'
+    raw bytes produced mojibake chunks and ballooned memory."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b"%PDF-1.7 \xd0\xcf\x11\xe0 binary garbage",
+            headers={"Content-Type": "application/pdf"},
+        )
+
+    _install_mock_transport(monkeypatch, handler)
+    scraper = TrafilturaScraper(config={"concurrency": 1})
+    pages = await scraper.scrape([{"url": "https://example.com/paper.pdf"}])
+    assert pages is not None
+    assert pages[0]["content"] == ""
+    assert pages[0]["url"] == "https://example.com/paper.pdf"
+
+
+async def test_oversized_downloads_are_aborted(monkeypatch):
+    """A body larger than SCRAPER_MAX_BYTES must not be read into memory."""
+    from src.tools.settings import settings
+
+    monkeypatch.setattr(settings, "SCRAPER_MAX_BYTES", 64)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b"x" * (64 * 1024),  # 64 KiB body vs 64-byte cap
+            headers={"Content-Type": "text/html"},
+        )
+
+    _install_mock_transport(monkeypatch, handler)
+    scraper = TrafilturaScraper(config={"concurrency": 1})
+    pages = await scraper.scrape([{"url": "https://example.com/huge"}])
+    assert pages is not None
+    assert pages[0]["content"] == ""
+    assert pages[0]["url"] == "https://example.com/huge"
+
+
+async def test_html_pages_within_the_cap_still_scrape(monkeypatch):
+    from src.tools.settings import settings
+
+    monkeypatch.setattr(settings, "SCRAPER_MAX_BYTES", 64 * 1024)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text="<html><body><h1>Elon Musk</h1><p>CEO of Tesla.</p></body></html>",
+            headers={"Content-Type": "text/html; charset=utf-8"},
+        )
+
+    _install_mock_transport(monkeypatch, handler)
+    scraper = TrafilturaScraper(config={"concurrency": 1})
+    pages = await scraper.scrape([{"url": "https://example.com/musk"}])
+    assert pages is not None
+    assert pages[0]["content"].strip() != ""
