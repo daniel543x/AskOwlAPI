@@ -421,8 +421,9 @@ revisions `d4f8b2e6a9c1` + `f1c5e9a3d7b2`.
 - **API-caller tool for agent modes:** external REST calls with user-provided (encrypted)
   credentials.
 - **Soft delete for user data:** hide-but-preserve (conversations, personas, attachments).
-- **Per-model settings memory:** remember last thinking/effort per model in the profile
-  (v1 ships single active preference set + reset-on-switch).
+- ~~Per-model settings memory~~ → done 2026-10-31 (`wu/model-settings-memory`):
+  `usermodelsettings` table restores remembered thinking/effort on switch;
+  explicit PUTs refresh memory; reset-on-switch only applies to never-remembered models.
 - ~~Persona-level source types~~ → done 2026-10-31 as Phase 12 PR 4 (`wu/persona-source-types`):
   `Persona.allowed_source_types` with write-time declared-set validation and ask-time
   narrowing (request ∩ persona), all four dispatch paths.

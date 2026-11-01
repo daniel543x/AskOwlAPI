@@ -22,6 +22,9 @@ from src.modules.llm_provider.selection import (
 )
 from src.modules.profile import router as profile_router
 from src.modules.profile.factory import get_repository as get_prefs_repo
+from src.modules.profile.factory import (
+    get_settings_repository as get_settings_repo_instance,
+)
 from src.modules.profile.model import UserPreferences
 from src.modules.profile.service import clamp_to_model, validate_sources
 from tests.modules.llm_provider.test_router import FakeUser
@@ -111,6 +114,17 @@ async def client():
     app.dependency_overrides[get_model_repo] = lambda: model_repo
     app.dependency_overrides[get_prefs_repo] = lambda: prefs_repo
     app.dependency_overrides[profile_router.get_current_user] = regular_user
+
+    class _NoMemorySettingsRepo:
+        async def get(self, user_id, model_id):
+            return None
+
+        async def upsert(self, user_id, model_id, thinking, effort):
+            return None
+
+    app.dependency_overrides[get_settings_repo_instance] = (
+        lambda: _NoMemorySettingsRepo()
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:

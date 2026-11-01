@@ -80,3 +80,22 @@ class PreferencesResolved(SQLModel):
     thinking: bool | None
     effort: str | None
     source_types: list[str]
+
+
+class UserModelSettings(SQLModel, table=True):
+    """One remembered thinking/effort pair per (user, model).
+
+    Memory only feeds the profile row on a model switch (decision 12's
+    reset-on-switch becomes restore-when-remembered); asks stay stateless.
+    Rows store clamped values only: never what the model rejects.
+    """
+
+    user_id: uuid.UUID = Field(primary_key=True, foreign_key="user.id")
+    model_id: uuid.UUID = Field(
+        primary_key=True, foreign_key="modelcatalogentry.id"
+    )
+    thinking: bool | None = Field(default=None)
+    effort: str | None = Field(default=None)
+    updated_at: datetime | None = Field(
+        default=None, sa_type=DateTime(timezone=True)
+    )
