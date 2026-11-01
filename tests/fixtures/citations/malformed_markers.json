@@ -1,0 +1,22 @@
+{
+  "text": "Claims [0], [4] and [99] appear.",
+  "known": [
+    "https://example.com/a"
+  ],
+  "expected_text": "Claims [0], [4] and [99] appear.",
+  "expected_registry": {
+    "https://example.com/a": 1
+  },
+  "expected_verdict": {
+    "cited_numbers": [],
+    "missing_numbers": [],
+    "unresolved_markers": [
+      0,
+      4,
+      99
+    ],
+    "uncited_sources": [
+      1
+    ]
+  }
+}

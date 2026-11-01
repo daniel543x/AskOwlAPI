@@ -358,8 +358,11 @@ Preset table over the shared loop (toolbox + conversation history + degrade path
 
 ### 2.4 Phase 12 — Retrieval upgrades (carried from Phase 9, unscheduled)
 
-- [ ] PR 3 `wu/citations` — numbered `[n]` citations + validator + offline fixture eval
-      (feeds the Note assembler's Sources section).
+- [x] PR 3 `wu/numbered-citations` — numbered `[n]` citations assigned after the
+      fact by a shared registry/rewriter/validator (`src/core/tools/citations.py`),
+      applied to search (SSE `citations` event + JSON `citations` field), agentic,
+      persona, and the no-notes fallback; research reports cite `## Sources` as the
+      numbered registry; offline fixture eval under `tests/fixtures/citations/`.
 - [x] PR 4 `wu/rewrite` — history-aware standalone rewriting (default flip:
       `"standalone"`).
 - [x] PR 7 `wu/hybrid` — lexical + vector RRF fusion behind `hybrid_alpha` (default 1.0

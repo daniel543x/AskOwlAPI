@@ -178,8 +178,9 @@ def test_assembly_is_deterministic_and_ordered():
     assert report.startswith("Intro.")
     assert report.index("Borrow content.") < report.index("Ownership content.")
     assert "Start here:" in report
-    assert "## Sources" in report and "[Source](u3)" in report
-    assert "u1" in report and "u2" in report
+    assert "## Sources" in report
+    # borrows (idx 2) appears first, so u3 numbers ahead of u1/u2.
+    assert "- [1] u3" in report and "- [2] u1" in report and "- [3] u2" in report
     # Unknown idx (3) is skipped, never invented.
     assert "None" not in report
 

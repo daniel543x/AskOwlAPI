@@ -1,0 +1,18 @@
+{
+  "text": "[Source](https://example.com/a) [1](https://example.com/a) [anything](https://example.com/a)",
+  "known": [
+    "https://example.com/a"
+  ],
+  "expected_text": "[1] [1] [1]",
+  "expected_registry": {
+    "https://example.com/a": 1
+  },
+  "expected_verdict": {
+    "cited_numbers": [
+      1
+    ],
+    "missing_numbers": [],
+    "unresolved_markers": [],
+    "uncited_sources": []
+  }
+}
