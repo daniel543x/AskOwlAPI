@@ -29,6 +29,7 @@ class FakeSearchProvider(ISearchProvider):
             ]
         self.results = results
         self.last_engines: list[str] | None = None
+        self.last_categories: str | None = None
 
     async def search(
         self,

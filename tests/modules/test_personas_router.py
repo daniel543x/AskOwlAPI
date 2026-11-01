@@ -703,3 +703,143 @@ async def test_persona_ask_background_research_with_consent_enqueues(
         await queue.stop()
         jobs_factory.reset_job_queue()
         await test_engine.dispose()
+
+
+@pytest.fixture
+def declared_types():
+    from src.modules.search_engine.factory import get_declared_source_types
+
+    app.dependency_overrides[get_declared_source_types] = lambda: [
+        "github",
+        "docs",
+        "news",
+    ]
+    yield
+    app.dependency_overrides.pop(get_declared_source_types, None)
+
+
+@pytest.mark.asyncio
+async def test_persona_source_types_crud(auth_client, db_session, declared_types):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    created = await auth_client.post(
+        "/personas",
+        json={**PERSONA_PAYLOAD, "allowed_source_types": ["github", "docs"]},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    persona = created.json()
+    assert persona["allowed_source_types"] == ["github", "docs"]
+
+    cleared = await auth_client.patch(
+        f"/personas/{persona['id']}",
+        json={"allowed_source_types": []},
+        headers=headers,
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["allowed_source_types"] == []
+
+    untouched = await auth_client.patch(
+        f"/personas/{persona['id']}",
+        json={"system_context": "Still fine."},
+        headers=headers,
+    )
+    assert untouched.json()["allowed_source_types"] == []
+
+
+@pytest.mark.asyncio
+async def test_persona_source_types_reject_undeclared(
+    auth_client, db_session, declared_types
+):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = await auth_client.post(
+        "/personas",
+        json={
+            **PERSONA_PAYLOAD,
+            "allowed_source_types": ["github", "not_a_type"],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "persona_source_type_invalid"
+    assert detail["types"] == ["not_a_type"]
+
+    ok = await auth_client.post(
+        "/personas",
+        json={**PERSONA_PAYLOAD, "allowed_source_types": []},
+        headers=headers,
+    )
+    assert ok.status_code == 201, ok.text
+
+
+@pytest.mark.asyncio
+async def test_persona_quick_ask_uses_persona_source_types(
+    auth_client, db_session, declared_types
+):
+    from src.modules.llm_provider.dependency import get_llm_client
+    from src.modules.search_engine.factory import get_search_provider
+    from tests.core_ask.fakes import FakeSearchProvider, ScriptedToolModel, tool_call
+
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    provider = FakeSearchProvider()
+    app.dependency_overrides[get_search_provider] = lambda: provider
+    # The quick loop only searches when the model calls web_search.
+    app.dependency_overrides[get_llm_client] = lambda: ScriptedToolModel(
+        responses=[
+            tool_call("web_search", {"query": "kestrel nesting"}),
+            tool_call("SubmitOutcome", {"answer": "ok."}),
+        ]
+    )
+
+    created = await auth_client.post(
+        "/personas",
+        json={**PERSONA_PAYLOAD, "allowed_source_types": ["news"]},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+
+    response = await auth_client.post(
+        "/ask/persona",
+        json={
+            "query": "nesting?",
+            "persona_id": created.json()["id"],
+            "depth": "quick",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert provider.last_categories == "news"
+
+
+@pytest.mark.asyncio
+async def test_persona_quick_ask_rejects_pinned_away_request(
+    auth_client, db_session, declared_types
+):
+    token = await make_user(db_session, role_name="research")
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await auth_client.post(
+        "/personas",
+        json={**PERSONA_PAYLOAD, "allowed_source_types": ["news"]},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+
+    response = await auth_client.post(
+        "/ask/persona",
+        json={
+            "query": "nesting?",
+            "persona_id": created.json()["id"],
+            "depth": "quick",
+            "source_types": ["github"],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "persona_source_type_mismatch"
+    assert detail["types"] == ["github"]
