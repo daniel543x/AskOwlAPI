@@ -1,9 +1,24 @@
 """Run-scoped note writer the toolbox tool and pipeline share (PR 18)."""
 
 import uuid
+from typing import Protocol
 
 from .model import ResearchNote, toc_entry
-from .repository import NoteRepository
+
+
+class NoteRepositoryLike(Protocol):
+    """The store surface NoteStore needs; NoteRepository satisfies it."""
+
+    async def create(
+        self,
+        user_id: uuid.UUID,
+        task: str,
+        content: str,
+        sources_used: list[str],
+        conversation_id: uuid.UUID | None = None,
+    ) -> ResearchNote: ...
+
+    async def get_by_ids(self, note_ids: list[uuid.UUID]) -> list[ResearchNote]: ...
 
 
 class NoteStore:
@@ -11,14 +26,17 @@ class NoteStore:
 
     def __init__(
         self,
-        repo: NoteRepository,
+        repo: NoteRepositoryLike,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID | None = None,
+        seeded: list[ResearchNote] | None = None,
     ):
+        """`seeded` pre-loads notes written by the interrupted attempt
+        (job auto-resume, WU-17): the run continues where it stopped."""
         self.repo = repo
         self.user_id = user_id
         self.conversation_id = conversation_id
-        self.notes: list[ResearchNote] = []
+        self.notes: list[ResearchNote] = list(seeded or [])
 
     async def write(
         self, task: str, content: str, sources_used: list[str]
@@ -33,5 +51,7 @@ class NoteStore:
         return entry
 
     async def ordered_notes(self) -> list[ResearchNote]:
-        """The run's notes in creation (sequence) order."""
-        return await self.repo.get_by_ids([n.id for n in self.notes])
+        """The run's notes (seeded + fresh) in creation (sequence) order."""
+        ids = [n.id for n in self.notes]
+        rows = {row.id: row for row in await self.repo.get_by_ids(ids)}
+        return [rows.get(id, note) for id, note in zip(ids, self.notes, strict=False)]

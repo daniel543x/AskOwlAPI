@@ -29,6 +29,7 @@ from ....modules.scrapy.providers.base import IScraper
 from ....modules.search_engine.providers.base import ISearchProvider
 from ....tools.cache_flags import cache_bypass
 from ....tools.settings import settings
+from ...tools.citations import CitationRewriter
 from ...tools.pre_scores import choose_query, grounding_confidence
 from ...tools.toolbox import AskToolbox
 from .llm_steps import (
@@ -48,6 +49,33 @@ NO_CONTEXT_ANSWER = (
     "No relevant content could be extracted from the search results, "
     "so no answer can be given."
 )
+
+# Human labels for the persisted turn captions (webapp API-NOTES #11).
+MODE_LABELS = {
+    "search": "Search",
+    "research": "Research",
+    "deep_research": "Deep research",
+    "persona": "Persona",
+}
+
+
+def build_turn_meta(mode: str, model: BaseChatModel | None) -> dict[str, Any]:
+    """The user-message caption payload for one persisted turn.
+
+    Reads the catalog provenance the chat factory stamps onto every built
+    model (`catalog_entry_id`/`catalog_label`/`catalog_provider`); models
+    without it (built-in defaults, scripted test fakes) fall back to the
+    provider-native model name and a null catalog id.
+    """
+    metadata = getattr(model, "metadata", None) or {}
+    return {
+        "mode": mode,
+        "mode_label": MODE_LABELS.get(mode, mode),
+        "model": metadata.get("catalog_entry_id"),
+        "model_label": metadata.get("catalog_label")
+        or getattr(model, "model_name", None),
+        "model_provider": metadata.get("catalog_provider"),
+    }
 
 
 @asynccontextmanager
@@ -102,13 +130,11 @@ async def search_logic(
     deterministic body (decision 8).
     """
     if settings.AGENTIC_SEARCH:
-        try:
-            from ..agentic import (
-                AgentDegraded,
-                agentic_search_logic,
-                search_budget,
-            )
+        # Imported lazily (settings-gated), but outside the try so the
+        # except clause references a bound name.
+        from .. import agentic as agentic_module
 
+        try:
             pre_toolbox = AskToolbox(
                 searching, scraper, ranker, embedder, None,
                 decision_maker=decision_maker,
@@ -116,12 +142,12 @@ async def search_logic(
                 attachments=attachments,
                 hybrid_alpha=hybrid_alpha,
             )
-            async for event, data in agentic_search_logic(
-                query, model, pre_toolbox, search_budget(), history
+            async for event, data in agentic_module.agentic_search_logic(
+                query, model, pre_toolbox, agentic_module.search_budget(), history
             ):
                 yield event, data
             return
-        except AgentDegraded as e:
+        except agentic_module.AgentDegraded as e:
             logger.warning("Agentic search degraded: %s", e)
             yield "degraded", {"reason": str(e)}
     try:
@@ -203,7 +229,7 @@ async def search_logic(
             context = await toolbox.get_context(query)
 
         if attachments:
-            from sqlalchemy.ext.asyncio import AsyncSession as _AS
+            from sqlmodel.ext.asyncio.session import AsyncSession as _AS
 
             from ....modules.attachments.service import attachment_context
             from ....tools.db import engine as _engine
@@ -279,6 +305,10 @@ async def _resolve_conversation(
     if conversation_id is not None:
         conversation = await repo.get_conversation_for_user(user_id, conversation_id)
         if conversation is None:
+            # Release the read transaction before bailing out (webapp
+            # API-NOTES #10): the session is shared with the stream that
+            # is about to start.
+            await session.commit()
             raise KeyError("Conversation not found.")
         created = False
     else:
@@ -287,14 +317,23 @@ async def _resolve_conversation(
 
     messages = await repo.get_messages(conversation.id)
     history = [(message.role, message.content) for message in messages]
+    # End the read transaction now (webapp API-NOTES #10): without this,
+    # the conversation load keeps the shared session idle-in-transaction
+    # for the whole search/scrape/synthesis pipeline. Safe on loaded
+    # objects: sessions are built with expire_on_commit=False.
+    await session.commit()
     return conversation, history, created
 
 
-async def _save_turn(session, conversation, query: str, answer: str) -> None:
+async def _save_turn(
+    session, conversation, query: str, answer: str, meta: dict | None = None
+) -> None:
     if conversation is None:
         return
     try:
-        await HistoryRepository(session).add_turn(conversation, query, answer)
+        await HistoryRepository(session).add_turn(
+            conversation, query, answer, meta=meta
+        )
     except Exception:
         # Persistence must never kill a finished answer stream.
         logger.exception("Failed to persist conversation turn.")
@@ -324,6 +363,7 @@ async def search_sse_adapter(
     rewrite: str = "standalone",
     hybrid_alpha: float = 1.0,
     turn: TurnResources | None = None,
+    turn_meta: dict[str, Any] | None = None,
 ) -> AsyncGenerator[str]:
     """Translate pipeline events into an SSE stream (protocol v2).
 
@@ -333,6 +373,7 @@ async def search_sse_adapter(
     With `session` and `user_id`, the turn is persisted to the caller's
     conversation (`conversation_id`, or a new conversation when omitted);
     prior turns are injected as chat history into the answer step.
+    `turn_meta` (webapp API-NOTES #11) is stored on the user message.
 
     `turn` (PR 12) holds the resource gates for the whole stream: the
     first frame is delayed until the gates free up, and a busy gate that
@@ -378,7 +419,12 @@ async def search_sse_adapter(
                 if event == "answer_ready":
                     yield frame("status", {"step": "Generating answer..."})
 
+                    known = [
+                        s["url"] for s in data["sources"] if s.get("url")
+                    ]
+                    rewriter = CitationRewriter(known)
                     answer_parts: list[str] = []
+                    raw_parts: list[str] = []
                     try:
                         async for kind, delta in _stream_answer_frames(
                             data["query"], data["context"], model, history,
@@ -387,18 +433,32 @@ async def search_sse_adapter(
                             if kind == "thinking":
                                 yield frame("thinking", {"text": delta})
                                 continue
-                            answer_parts.append(delta)
-                            yield frame("message", {"text": delta})
+                            raw_parts.append(delta)
+                            text = rewriter.feed(delta)
+                            if not text:
+                                continue
+                            answer_parts.append(text)
+                            yield frame("message", {"text": text})
 
+                        tail = rewriter.flush()
+                        if tail:
+                            answer_parts.append(tail)
+                            yield frame("message", {"text": tail})
                         answer_text = "".join(answer_parts)
+                        citations = rewriter.citations_payload()
+                        if citations:
+                            yield frame("citations", {"citations": citations})
                         await _save_turn(
-                            session, conversation, data["query"], answer_text
+                            session, conversation, data["query"], answer_text,
+                            meta=turn_meta,
                         )
 
                         if settings.PRE_SCORE_GROUNDING_CHECK and decision_maker:
+                            # Grounding matches URLs, so it runs on the raw
+                            # answer the model produced, pre-rewrite.
                             supported = await grounding_confidence(
                                 decision_maker, data["query"], data["context"],
-                                answer_text,
+                                "".join(raw_parts),
                             )
                             if supported is not None:
                                 yield frame(
@@ -426,7 +486,12 @@ async def search_sse_adapter(
                     # PR 17: the core already streamed the answer deltas;
                     # persist the turn and terminate.
                     answer_text = data["answer"]
-                    await _save_turn(session, conversation, data["query"], answer_text)
+                    if data.get("citations"):
+                        yield frame("citations", {"citations": data["citations"]})
+                    await _save_turn(
+                        session, conversation, data["query"], answer_text,
+                        meta=turn_meta,
+                    )
                     if not data["context"].strip():
                         yield frame("done", {"status": "no_context"})
                     else:
@@ -443,6 +508,17 @@ async def search_sse_adapter(
         logger.info("Search turn rejected: resource gates busy (query: %s).", query)
         yield frame("error", provider_busy_detail())
         return
+    except Exception:
+        # Webapp API-NOTES #12: a crash before (or between) frames used to
+        # close the stream silently — 200 + headers, zero frames, clients
+        # sat on "Working..." forever. Always terminate with an error.
+        logger.exception(
+            "Search stream failed before completion (query: %s).", query
+        )
+        yield frame(
+            "error",
+            {"error": "This turn failed; check the server logs."},
+        )
 
 
 # <----- JSON Adapter ----->
@@ -469,11 +545,13 @@ async def search_json_adapter(
     rewrite: str = "standalone",
     hybrid_alpha: float = 1.0,
     turn: TurnResources | None = None,
+    turn_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the pipeline and return the full result as one JSON-ready dict.
 
     With `session` and `user_id` the turn is persisted to a conversation
-    (see `search_sse_adapter`); an unknown `conversation_id` is a 404."""
+    (see `search_sse_adapter`); an unknown `conversation_id` is a 404.
+    `turn_meta` (webapp API-NOTES #11) is stored on the user message."""
     answer_data: dict[str, Any] | None = None
     error_detail: str | None = None
 
@@ -554,7 +632,19 @@ async def search_json_adapter(
                 status_code=500, detail=f"Answer generation failed: {str(e)}"
             ) from e
 
-    await _save_turn(session, conversation, answer_data["query"], answer)
+    await _save_turn(
+        session, conversation, answer_data["query"], answer, meta=turn_meta
+    )
+
+    known = [
+        s["url"] for s in answer_data["sources"] if isinstance(s, dict) and s.get("url")
+    ]
+    if "citations" not in answer_data:
+        # Deterministic path: the answer is unrewritten; agentic turns
+        # arrive with their citations already attached.
+        rewriter = CitationRewriter(known)
+        answer = rewriter.feed(answer) + rewriter.flush()
+        answer_data["citations"] = rewriter.citations_payload()
 
     grounding = None
     if settings.PRE_SCORE_GROUNDING_CHECK and decision_maker:
@@ -566,6 +656,7 @@ async def search_json_adapter(
         "query": answer_data["query"],
         "optimized_query": answer_data["optimized_query"],
         "sources": answer_data["sources"],
+        "citations": answer_data.get("citations", []),
         "context": context,
         "answer": answer,
         "conversation_id": str(conversation.id) if conversation else None,

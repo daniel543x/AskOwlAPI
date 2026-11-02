@@ -78,6 +78,16 @@ async def init_db(engine: AsyncEngine) -> None:
                 "END $$;"
             )
         )
+        # message.meta (webapp API-NOTES #11): turn metadata on stored user
+        # messages. create_all cannot add columns to existing tables, so
+        # the guarded ALTER keeps databases created before this change
+        # bootable; legacy rows read back as NULL.
+        await conn.execute(
+            text(
+                "ALTER TABLE message "
+                "ADD COLUMN IF NOT EXISTS meta JSON;"
+            )
+        )
 
 
 # For Dependency

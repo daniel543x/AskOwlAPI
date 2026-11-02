@@ -2,7 +2,7 @@ import hashlib
 import inspect
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 from fastapi import Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -146,9 +146,12 @@ class SearchProviderFactory:
 
         provider = cls._provider_for(provider_type, settings_to_apply)
         # Resource-gate identity (PR 12): the search gate is keyed per
-        # provider config; concurrency comes from the settings blob.
-        provider.search_resource_id = str(config.id) if config else None
-        provider.search_max_concurrency = int(
+        # provider config; concurrency comes from the settings blob. The
+        # gate attributes are stamped onto whatever concrete provider the
+        # factory built; ISearchProvider itself stays gate-agnostic.
+        gateable = cast("Any", provider)
+        gateable.search_resource_id = str(config.id) if config else None
+        gateable.search_max_concurrency = int(
             (config.settings.get("max_concurrency") if config else None)
             or settings.DEFAULT_PROVIDER_MAX_CONCURRENCY
         )

@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from src.app import app
 from src.modules.identity.user.model import User
+from src.modules.llm_provider.repository import ModelRepository
 from src.modules.llm_provider.repository import get_repository as get_model_repo
 from src.modules.llm_provider.selection import (
     TIER_DEFAULT,
@@ -22,6 +23,9 @@ from src.modules.llm_provider.selection import (
 )
 from src.modules.profile import router as profile_router
 from src.modules.profile.factory import get_repository as get_prefs_repo
+from src.modules.profile.factory import (
+    get_settings_repository as get_settings_repo_instance,
+)
 from src.modules.profile.model import UserPreferences
 from src.modules.profile.service import clamp_to_model, validate_sources
 from tests.modules.llm_provider.test_router import FakeUser
@@ -111,6 +115,17 @@ async def client():
     app.dependency_overrides[get_model_repo] = lambda: model_repo
     app.dependency_overrides[get_prefs_repo] = lambda: prefs_repo
     app.dependency_overrides[profile_router.get_current_user] = regular_user
+
+    class _NoMemorySettingsRepo:
+        async def get(self, user_id, model_id):
+            return None
+
+        async def upsert(self, user_id, model_id, thinking, effort):
+            return None
+
+    app.dependency_overrides[get_settings_repo_instance] = (
+        lambda: _NoMemorySettingsRepo()
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -303,7 +318,8 @@ async def test_build_chat_model_profile_fills_unset_controls():
     )
 
     await build_chat_model(
-        ResolvingRepo(), factory, user, None, profile=profile
+        cast("ModelRepository", ResolvingRepo()), factory, user, None,
+        profile=profile,
     )
 
     # Request left both unset → profile values reach the adapter; the
@@ -332,7 +348,7 @@ async def test_build_chat_model_request_beats_profile_and_stays_strict():
     # Explicit request values are strict even when the profile would allow.
     with pytest.raises(HTTPException) as exc_info:
         await build_chat_model(
-            ResolvingRepo(),
+            cast("ModelRepository", ResolvingRepo()),
             factory,
             user,
             None,
@@ -342,5 +358,8 @@ async def test_build_chat_model_request_beats_profile_and_stays_strict():
     assert exc_info.value.status_code == 422
 
     # Profile-sourced values clamp silently instead.
-    await build_chat_model(ResolvingRepo(), factory, user, None, profile=profile)
+    await build_chat_model(
+        cast("ModelRepository", ResolvingRepo()), factory, user, None,
+        profile=profile,
+    )
     assert factory.created[0][1] == {}

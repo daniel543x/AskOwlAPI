@@ -44,6 +44,11 @@ class ResolvedModel:
     effort_levels: list[str] = field(default_factory=list)
     vector_dims: int | None = None
     entry_id: uuid.UUID | None = None
+    # Catalog provenance (webapp API-NOTES #11): surfaced on the built
+    # model's metadata so persisted turns can carry a "mode · model"
+    # caption.
+    display_name: str = ""
+    provider_name: str | None = None
     # Resource-gate identity (PR 12): the model gate is keyed per provider.
     provider_id: uuid.UUID | None = None
     max_concurrency: int = 1

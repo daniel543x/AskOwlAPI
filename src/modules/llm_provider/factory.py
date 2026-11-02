@@ -46,7 +46,7 @@ class ChatModelFactory:
             )
 
         try:
-            return init_chat_model(
+            model = init_chat_model(
                 model=resolved.model_name,
                 model_provider=model_provider,
                 **params,
@@ -57,6 +57,18 @@ class ChatModelFactory:
                 f"Can't init chat model '{resolved.model_name}' for provider "
                 f"type '{resolved.provider_type}': {e}"
             ) from e
+
+        # Catalog provenance (webapp API-NOTES #11): persisted turns read
+        # these to restore the "mode · model" caption after a reload.
+        model.metadata = {
+            "catalog_entry_id": str(resolved.entry_id)
+            if resolved.entry_id
+            else None,
+            "catalog_label": resolved.display_name or resolved.model_name,
+            "catalog_provider": resolved.provider_name
+            or resolved.provider_type,
+        }
+        return model
 
 
 # Dependency

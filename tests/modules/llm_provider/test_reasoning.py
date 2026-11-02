@@ -145,3 +145,38 @@ def test_catalog_accepts_valid_effort_levels():
         effort_levels=["low", "medium", "high", "max"],
     )
     assert entry.effort_levels == ["low", "medium", "high", "max"]
+
+
+# <----- Always-reasoning models (webapp API-NOTES #13) ----->
+
+
+def test_thinking_false_is_a_noop_for_always_on_models():
+    """Providers that cannot disable reasoning must not 422 on Off.
+
+    The request is ignored (no error, no degraded answer), so the UI can
+    keep the Off stop visible until it greys it out via the catalog
+    capability.
+    """
+    capabilities = ["tools", "reasoning_always_on"]
+    validate_reasoning(capabilities, [], False, None)
+
+    params = adapter_wire_params(
+        resolved("zai", capabilities), False, None
+    )
+    assert params == {}  # no disable spelling reaches the provider
+
+
+def test_thinking_true_is_valid_for_always_on_models():
+    capabilities = ["tools", "reasoning_always_on"]
+    validate_reasoning(capabilities, [], True, None)
+
+    params = adapter_wire_params(
+        resolved("zai", capabilities), True, None
+    )
+    assert params == {"extra_body": {"thinking": {"type": "enabled"}}}
+
+
+def test_thinking_false_still_422s_without_any_reasoning_capability():
+    with pytest.raises(ReasoningError) as exc_info:
+        validate_reasoning(["tools"], [], False, None)
+    assert exc_info.value.code == CODE_MODEL_LACKS_THINKING

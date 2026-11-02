@@ -1,6 +1,7 @@
 """Offline tests for provider-declared source types (PR 11 / decision 13)."""
 
 import uuid
+from typing import Any, cast
 
 import pytest
 from fastapi import HTTPException
@@ -73,7 +74,7 @@ class _NoConfigSession:
 
 
 async def test_missing_config_degrades_to_the_full_set():
-    declared = await declared_source_types(_NoConfigSession())
+    declared = await declared_source_types(cast("Any", _NoConfigSession()))
     assert declared == list(KNOWN_SOURCE_TYPES)
 
 

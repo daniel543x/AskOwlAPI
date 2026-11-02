@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 
 import pytest
 
@@ -165,7 +166,7 @@ def test_has_role_access_hierarchy():
 
 
 def persona_state(**overrides):
-    base = dict(
+    base: dict[str, Any] = dict(
         id=uuid.uuid4(),
         kind="chat",
         is_active=True,

@@ -165,12 +165,32 @@ async def test_search_files_uses_strict_conversation_scope(monkeypatch):
     captured = {}
 
     class FakeEmbedder:
+        @property
+        def dims(self):
+            return 4
+
         async def embed_texts(self, texts):
             return [[0.1] * 4]
 
     class FakeChunkRepo:
-        async def conversation_chunks_strict(self, cid, embedding, k):
-            captured["cid"] = cid
+        async def store_chunks(self, chunks, embeddings, conversation_id=None):
+            return 0
+
+        async def fts_candidates(self, query, k):
+            return []
+
+        async def existing_hashes(self, hashes):
+            return set()
+
+        async def vector_candidates(
+            self, query_embedding, k, conversation_id=None
+        ):
+            return []
+
+        async def conversation_chunks_strict(
+            self, conversation_id, query_embedding, k
+        ):
+            captured["cid"] = conversation_id
             captured["k"] = k
             return [
                 {"content": "passage", "metadata": {"title": "notes.md"}}
@@ -187,6 +207,8 @@ async def test_search_files_uses_strict_conversation_scope(monkeypatch):
         ],
     )
     tool = next(t for t in build_tools(toolbox) if t.name == "search_files")
+    assert tool.coroutine is not None
+
     result = await tool.coroutine(query="ownership")
 
     assert captured["cid"] == conversation_id

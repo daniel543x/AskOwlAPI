@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column, DateTime, ForeignKey
+from sqlalchemy import JSON, Column, DateTime, ForeignKey
 from sqlmodel import Field, SQLModel
 
 ROLE_USER = "user"
@@ -24,8 +24,9 @@ class Conversation(SQLModel, table=True):
     )
     # Persona scope (PR 20): set when the conversation belongs to a
     # persona mode turn; NULL = an ordinary conversation.
-    # ON DELETE SET NULL keeps persona conversations as ordinary history
-    # when their persona is deleted (webapp API-NOTES #8).
+    # ON DELETE SET NULL applies to hard deletes (admin/recovery);
+    # app-level persona deletion is a soft delete (WU-16) and keeps the
+    # row, so conversations keep persona_id.
     persona_id: UUID | None = Field(
         default=None,
         sa_column=Column(
@@ -33,6 +34,11 @@ class Conversation(SQLModel, table=True):
             nullable=True,
             index=True,
         ),
+    )
+    # Soft delete (WU-16): non-null hides the row from every read and
+    # rejects continuation; the data stays for admin-level recovery.
+    deleted_at: datetime | None = Field(
+        default=None, sa_type=DateTime(timezone=True)
     )
 
 
@@ -45,6 +51,14 @@ class Message(SQLModel, table=True):
         default_factory=lambda: datetime.now(UTC),
         sa_type=DateTime(timezone=True),
     )
+    # Turn metadata (webapp API-NOTES #11): only the user message of a
+    # turn carries it — the ask request's mode and its resolved chat
+    # model, so the UI can restore the "mode · model" caption after a
+    # reload. NULL for legacy rows and assistant messages.
+    meta: dict | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
 
 
 class MessageRead(SQLModel):
@@ -52,6 +66,7 @@ class MessageRead(SQLModel):
     role: str
     content: str
     created_at: datetime
+    meta: dict | None = None
 
 
 class ConversationRead(SQLModel):

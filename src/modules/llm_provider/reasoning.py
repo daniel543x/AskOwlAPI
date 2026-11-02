@@ -30,6 +30,13 @@ CODE_MODEL_LACKS_THINKING = "model_lacks_thinking"
 CODE_MODEL_LACKS_EFFORT = "model_lacks_effort"
 CODE_UNSUPPORTED_EFFORT_LEVEL = "unsupported_effort_level"
 
+# Catalog capability (webapp API-NOTES #13): the provider cannot turn
+# reasoning off (e.g. z.ai GLM-5.3+ thinking models). `thinking: false` is
+# a no-op on such models -- no 422, no disable spelling on the wire -- and
+# `thinking: true` is always valid. The UI reads the capability from the
+# catalog entry to grey out its Off control.
+CAPABILITY_REASONING_ALWAYS_ON = "reasoning_always_on"
+
 
 class ReasoningError(Exception):
     """A requested thinking/effort combination the model does not support."""
@@ -46,8 +53,13 @@ def validate_reasoning(
     thinking: bool | None,
     effort: str | None,
 ) -> None:
-    """Raise `ReasoningError` for impossible combinations (422 mapping)."""
-    if thinking is not None and "thinking" not in capabilities:
+    """Raise `ReasoningError` for impossible combinations (422 mapping).
+
+    Models with the `reasoning_always_on` capability always think: both
+    `thinking` values are accepted (false is a no-op, not an error).
+    """
+    always_on = CAPABILITY_REASONING_ALWAYS_ON in capabilities
+    if thinking is not None and "thinking" not in capabilities and not always_on:
         raise ReasoningError(
             CODE_MODEL_LACKS_THINKING,
             "Model does not support the 'thinking' control; omit it or pick "
@@ -82,7 +94,19 @@ def adapter_wire_params(
 
     Returns construction kwargs merged over the catalog `default_params`
     (request wins). Providers without a runtime toggle return `{}`.
+
+    `thinking: false` on an always-reasoning model is ignored entirely:
+    a disable spelling the provider cannot honor must never reach it.
     """
+    if (
+        thinking is False
+        and CAPABILITY_REASONING_ALWAYS_ON in resolved.capabilities
+    ):
+        logger.debug(
+            "thinking=false ignored: '%s' cannot disable reasoning.",
+            resolved.model_name,
+        )
+        thinking = None
     provider = resolved.provider_type.lower()
     if thinking is None and effort is None:
         return {}
@@ -115,8 +139,8 @@ def adapter_wire_params(
     if provider == "zai":
         # z.ai native fields over the OpenAI-compatible endpoint: GLM <= 5.2
         # accepts {type: disabled}; GLM-5.3+ cannot disable thinking, which
-        # the catalog expresses by omitting the 'thinking' capability (the
-        # gate above rejects the request before we get here).
+        # the catalog expresses with the `reasoning_always_on` capability
+        # (thinking=false is stripped above and never reaches this spell).
         body: dict[str, Any] = {}
         if thinking is not None:
             body["thinking"] = {"type": "enabled" if thinking else "disabled"}

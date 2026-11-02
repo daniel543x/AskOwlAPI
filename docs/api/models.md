@@ -42,7 +42,7 @@ Returns `ModelEntry[]`:
 |---|---|---|
 | `model_name` | string | Identifier sent to the provider. |
 | `display_name` | string | Human label (may be empty). |
-| `capabilities` | string[] | e.g. `tools` (required by the ask pipeline), `embedding`. |
+| `capabilities` | string[] | e.g. `tools` (required by the ask pipeline), `thinking`, `effort`, `embedding`, `reasoning_always_on` (provider cannot turn reasoning off — see the ask docs). |
 | `vector_dims` | int \| null | Embedding entries only (e.g. 1024). |
 | `provider_name` / `provider_type` | string | Denormalized from the provider. |
 
@@ -141,3 +141,9 @@ that single call:
 
 A chat model without the `tools` capability is rejected with 422 before the
 pipeline runs; when nothing is resolvable at all the routes answer 503.
+
+`reasoning_always_on` (webapp API-NOTES #13) marks chat models whose
+provider cannot turn reasoning off (e.g. z.ai GLM-5.3+ thinking models).
+On those, `thinking: false` is a no-op — no 422, no disable spelling on
+the wire — and `thinking: true` is always valid; clients read the
+capability from this list to grey out the Off control.

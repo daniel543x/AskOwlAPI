@@ -50,6 +50,12 @@ async def get_current_user(
                             detail="User account is disabled.",
                         )
                     await session.refresh(user, attribute_names=["roles"])
+                    # End the auth read transaction immediately (webapp
+                    # API-NOTES #10): the session is shared with streaming
+                    # routes, and a transaction left open here parks one
+                    # pool connection idle-in-transaction for the whole
+                    # stream until the post-stream teardown.
+                    await session.commit()
                     # JWT sessions are not scope-limited (role gates apply).
                     request.state.api_key_scopes = None
                     return user

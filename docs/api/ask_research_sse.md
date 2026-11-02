@@ -37,6 +37,14 @@ search results (host-suffix match), its engines narrow the search call, and its
 `model` field (a `chat`-kind catalog entry id, validated at write) wins over
 every other tier — see the consent flow below.
 
+## Numbered citations
+
+Report prose and the per-section `Citations:` lines carry dense `[n]`
+markers assigned at assembly; the `## Sources` section lists the
+registry (`- [n] url`). Consulted-but-uncited sources are listed after
+the cited prefix. Unknown markers are left as-is; runs never fail over
+citations.
+
 ## Persona model consent (`model_confirm`)
 
 Persona-only (any depth). If the persona's stored model has become unusable
@@ -115,3 +123,16 @@ event: status        -> Agent tool: get_context(...)
 event: message       -> {"text": "full SubmitOutcome answer"}
 event: done          -> {"status": "completed"}
 ```
+
+## Always-reasoning models and terminal errors (webapp API-NOTES #12/#13)
+
+- `thinking: false` on models whose provider cannot disable reasoning
+  (catalog capability `reasoning_always_on`, e.g. z.ai GLM-5.3+ thinking
+  models) is a **no-op**: no 422, no degraded answer, and no disable
+  spelling is sent to the provider. `thinking: true` is always valid on
+  such models; the catalog entry's `capabilities` list carries the flag
+  so clients can grey out the Off control.
+- Streams that fail before (or between) frames now always terminate with
+  an `error` event (`{"error": "This turn failed; check the server
+  logs."}`) instead of closing the connection silently. Unknown/error
+  handling is unchanged otherwise.

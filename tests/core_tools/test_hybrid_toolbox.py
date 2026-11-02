@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Any
 
 from src.core.tools.toolbox import AskToolbox
@@ -95,7 +96,7 @@ async def test_get_context_falls_back_when_vector_retrieval_fails():
         async def store_chunks(
             self,
             chunks: list[dict[str, Any]],
-            embeddings: list[list[float]],
+            embeddings: Sequence[Sequence[float | None] | None],
             conversation_id=None,
         ) -> int:
             return 0
@@ -110,6 +111,11 @@ async def test_get_context_falls_back_when_vector_retrieval_fails():
             self, query_embedding: list[float], k: int, conversation_id=None
         ) -> list[dict[str, Any]]:
             raise RuntimeError("pgvector unavailable")
+
+        async def conversation_chunks_strict(
+            self, conversation_id, query_embedding: list[float], k: int
+        ) -> list[dict[str, Any]]:
+            raise AssertionError("attachment retrieval is not under test here")
 
     toolbox = AskToolbox(
         FakeSearchProvider(),

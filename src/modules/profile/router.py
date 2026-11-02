@@ -9,6 +9,7 @@ switch resets thinking/effort" contract.
 
 import logging
 import uuid
+from typing import Literal, cast
 
 from fastapi import APIRouter, Depends, Query
 
@@ -21,6 +22,7 @@ from ...modules.llm_provider.repository import (
 )
 from ...modules.llm_provider.selection import ResolvedModel, SelectionError
 from .factory import get_repository as get_prefs_repository
+from .factory import get_settings_repository
 from .model import (
     PreferencesResolved,
     PreferencesStored,
@@ -28,7 +30,7 @@ from .model import (
     PreferencesView,
     UserPreferences,
 )
-from .repository import PreferencesRepository
+from .repository import ModelSettingsRepository, PreferencesRepository
 from .service import clamp_to_model, validate_sources
 
 logger = logging.getLogger(__name__)
@@ -120,9 +122,10 @@ async def put_preferences(
     data: PreferencesUpdate,
     model_repo: ModelRepository = Depends(get_model_repository),
     prefs_repo: PreferencesRepository = Depends(get_prefs_repository),
+    settings_repo: ModelSettingsRepository = Depends(get_settings_repository),
     user: User = Depends(get_current_user),
 ):
-    """Validate against the catalog, clamp on save, return normalized."""
+    """Validate against the catalog, clamp on save, remember per model."""
     warnings: list[str] = []
     source_types, source_warnings = validate_sources(data.source_types or [])
     warnings.extend(source_warnings)
@@ -144,10 +147,44 @@ async def put_preferences(
     levels: list[str] = []
     if resolved is not None:
         capabilities, levels = await effective_reasoning_state(resolved)
+    # WU-15: an actual switch with both omitted restores the remembered
+    # pair for the incoming model; explicit values win and refresh memory.
+    remembered = None
+    stored = await prefs_repo.get(user.id)
+    if (
+        default_model_id is not None
+        and data.thinking is None
+        and data.effort is None
+        and stored is not None
+        and stored.default_model_id != default_model_id
+    ):
+        remembered = await settings_repo.get(user.id, default_model_id)
     thinking, effort, clamp_warnings = clamp_to_model(
-        capabilities, levels, data.thinking, data.effort, default_model_id
+        capabilities,
+        levels,
+        data.thinking
+        if data.thinking is not None
+        else (remembered.thinking if remembered else None),
+        data.effort
+        if data.effort is not None
+        else (remembered.effort if remembered else None),
+        default_model_id,
     )
     warnings.extend(clamp_warnings)
+
+    if default_model_id is not None and (
+        data.thinking is not None or data.effort is not None
+    ):
+        await settings_repo.upsert(user.id, default_model_id, thinking, effort)
+    elif (
+        remembered is not None
+        and default_model_id is not None
+        and (thinking, effort) != (remembered.thinking, remembered.effort)
+    ):
+        # The model's capabilities changed since the memory was written;
+        # store the re-clamped pair so the fixture never returns a value
+        # the model rejects again.
+        await settings_repo.upsert(user.id, default_model_id, thinking, effort)
 
     saved = await prefs_repo.save(
         user.id,
@@ -155,7 +192,10 @@ async def put_preferences(
             default_model_id=default_model_id,
             default_mode=data.default_mode,
             thinking=thinking,
-            effort=effort,
+            # clamp_to_model only ever returns a level from the model's
+            # validated effort_levels (or None); str is the DB round-trip
+            # widening, the request schema is the Literal.
+            effort=cast("Literal['low', 'medium', 'high', 'max'] | None", effort),
             source_types=source_types,
         ),
     )

@@ -49,7 +49,11 @@ async def get_conversation(
         updated_at=conversation.updated_at,
         messages=[
             MessageRead(
-                id=m.id, role=m.role, content=m.content, created_at=m.created_at
+                id=m.id,
+                role=m.role,
+                content=m.content,
+                created_at=m.created_at,
+                meta=m.meta,
             )
             for m in messages
         ],

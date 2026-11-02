@@ -1,0 +1,27 @@
+{
+  "chunks": [
+    "Late [Sou",
+    "rce](https://example.com/b) then [x](https://example.com/a) and [b](https://example.com/c)."
+  ],
+  "known": [
+    "https://example.com/a",
+    "https://example.com/b",
+    "https://example.com/c"
+  ],
+  "expected_text": "Late [1] then [2] and [3].",
+  "expected_registry": {
+    "https://example.com/b": 1,
+    "https://example.com/a": 2,
+    "https://example.com/c": 3
+  },
+  "expected_verdict": {
+    "cited_numbers": [
+      1,
+      2,
+      3
+    ],
+    "missing_numbers": [],
+    "unresolved_markers": [],
+    "uncited_sources": []
+  }
+}

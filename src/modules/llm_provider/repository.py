@@ -3,6 +3,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import Depends
+from sqlalchemy import text as sqlalchemy_text
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -156,6 +157,8 @@ class ModelRepository:
             effort_levels=list(entry.effort_levels or []),
             vector_dims=entry.vector_dims,
             entry_id=entry.id,
+            display_name=entry.display_name or "",
+            provider_name=provider.name if provider else None,
             provider_id=provider.id if provider else None,
             max_concurrency=self._provider_concurrency(provider),
             source=tier,
@@ -421,6 +424,16 @@ class ModelRepository:
         ).all()
         for default_row in defaults:
             await self.session.delete(default_row)
+
+        # Per-(user, model) memory rows FK-reference the entry; without
+        # this cleanup, deletion would IntegrityError once any user has
+        # remembered thinking/effort for the model.
+        await self.session.execute(
+            sqlalchemy_text(
+                "DELETE FROM usermodelsettings WHERE model_id = :model_id"
+            ),
+            {"model_id": model_id},
+        )
 
         await self.session.delete(entry)
         await self.session.commit()

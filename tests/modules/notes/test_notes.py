@@ -83,6 +83,7 @@ async def test_note_store_persists_and_returns_toc_entries():
 
 def test_toc_block_hides_contents():
     note = ResearchNote(
+        user_id=USER_ID,
         sequence=1, task="ownership", content="SECRET" * 100,
         sources_used=["u1"],
     )
@@ -102,6 +103,7 @@ async def test_note_write_tool_persists_and_returns_toc():
     repo = FakeNoteRepo()
     toolbox = _make_toolbox(note_store=NoteStore(repo, USER_ID))
     tool = next(t for t in build_tools(toolbox) if t.name == "note_write")
+    assert tool.coroutine is not None
 
     result = await tool.coroutine(
         task="ownership", content="Grounded facts.", sources_used=["u1"]
@@ -178,8 +180,9 @@ def test_assembly_is_deterministic_and_ordered():
     assert report.startswith("Intro.")
     assert report.index("Borrow content.") < report.index("Ownership content.")
     assert "Start here:" in report
-    assert "## Sources" in report and "[Source](u3)" in report
-    assert "u1" in report and "u2" in report
+    assert "## Sources" in report
+    # borrows (idx 2) appears first, so u3 numbers ahead of u1/u2.
+    assert "- [1] u3" in report and "- [2] u1" in report and "- [3] u2" in report
     # Unknown idx (3) is skipped, never invented.
     assert "None" not in report
 

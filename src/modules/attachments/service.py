@@ -9,7 +9,9 @@ through `asyncio.to_thread`.
 import asyncio
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Any, cast
 
 from fastapi import HTTPException, status
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -82,7 +84,7 @@ async def ingest_upload(
 
 
 async def resolve_for_ask(
-    session: AsyncSession,
+    session: AsyncSession | None,
     user_id: uuid.UUID,
     conversation_id: uuid.UUID | None,
     attachment_ids: list[uuid.UUID],
@@ -106,9 +108,11 @@ async def resolve_for_ask(
                 "conversation the files were uploaded to."
             ),
         )
-    found = await AttachmentRepository(session).resolve_refs(
-        user_id, attachment_ids
-    )
+    # Validation paths may run sessionless (test doubles patch the repo
+    # methods); the real repo is only touched with a live session.
+    found = await AttachmentRepository(
+        cast("AsyncSession", session)
+    ).resolve_refs(user_id, attachment_ids)
     missing = [str(a) for a in attachment_ids if a not in found]
     if missing:
         raise HTTPException(
@@ -141,7 +145,7 @@ async def resolve_for_ask(
 
 
 def ensure_vision(
-    model_capabilities: list[str], refs: list[AttachmentRef]
+    model_capabilities: Sequence[str], refs: list[AttachmentRef]
 ) -> None:
     """Coded 422 when image attachments meet a non-vision model (decision 14).
 
@@ -182,16 +186,20 @@ async def fetch_image_blobs(
 
 
 async def attachment_context(
-    session: AsyncSession,
-    refs: list[AttachmentRef],
+    session: AsyncSession | None,
+    refs: Sequence[dict[str, Any] | AttachmentRef],
     max_chars: int | None = None,
 ) -> str:
-    """Flat text block for the deterministic pipeline's context."""
+    """Flat text block for the deterministic pipeline's context.
+
+    `refs` accepts the typed `AttachmentRef` rows or the plain dicts the
+    ask pipeline carries (id/filename/conversation_id)."""
     if not refs:
         return ""
     limit = max_chars or settings.ATTACHMENT_CONTEXT_MAX_CHARS
     ids = [ref["id"] if isinstance(ref, dict) else ref.id for ref in refs]
-    chunks = await AttachmentRepository(session).chunks_for_attachments(
+    repo = AttachmentRepository(cast("AsyncSession", session))
+    chunks = await repo.chunks_for_attachments(
         ids, settings.ATTACHMENT_SEARCH_K * 4
     )
     parts: list[str] = []

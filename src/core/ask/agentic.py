@@ -29,6 +29,7 @@ from ...tools.settings import settings
 from ..research.services.agent import _gathered_context, _run_tool
 from ..research.services.budgets import Budget
 from ..tools.arg_stream import ToolArgStream
+from ..tools.citations import CitationRewriter
 from ..tools.errors import ToolProtocolError
 from ..tools.toolbox import AskToolbox, build_tools
 from .services.contracts import CitedAnswer
@@ -83,7 +84,7 @@ def _history_block(history: list[tuple[str, str]] | None) -> str:
 
 
 async def _stream_cited_answer(
-    bound, messages: list, model: BaseChatModel
+    bound, messages: list, model: BaseChatModel, rewriter: CitationRewriter
 ) -> AsyncGenerator[PipelineEvent]:
     """Stream the CitedAnswer answer argument as message events.
 
@@ -104,10 +105,13 @@ async def _stream_cited_answer(
                 continue
             delta = extractor.feed(tool_chunk.get("args") or "")
             if delta:
-                yield "message", {"text": delta}
+                text = rewriter.feed(delta)
+                if text:
+                    yield "message", {"text": text}
     tail = extractor.finish()
-    if tail:
-        yield "message", {"text": tail}
+    text = rewriter.feed(tail) + rewriter.flush()
+    if text:
+        yield "message", {"text": text}
     if not extractor.saw_value:
         raise ToolProtocolError(
             "The model did not stream the answer through the CitedAnswer tool."
@@ -137,6 +141,7 @@ async def agentic_search_logic(
         extractor = ToolArgStream(key="answer")
         merged: AIMessageChunk | None = None
         streamed: list[str] = []
+        rewriter: CitationRewriter | None = None
         async for chunk in bound.astream(messages):
             reasoning = extract_reasoning_delta(chunk)
             if reasoning:
@@ -150,17 +155,27 @@ async def agentic_search_logic(
                     continue
                 delta = extractor.feed(tool_chunk.get("args") or "")
                 if delta:
-                    streamed.append(delta)
-                    yield "message", {"text": delta}
+                    if rewriter is None:
+                        rewriter = CitationRewriter(
+                            [s["url"] for s in toolbox.ranked_sources]
+                        )
+                    text = rewriter.feed(delta)
+                    if text:
+                        streamed.append(text)
+                        yield "message", {"text": text}
         if merged is None:
             raise AgentDegraded("the model produced an empty response")
         answer_streamed = extractor.saw_value
         if answer_streamed:
             yield "status", {"step": "Generating answer..."}
-            tail = extractor.finish()
+            tail = ""
+            if rewriter is not None:
+                tail = rewriter.flush()
             if tail:
+                streamed.append(tail)
                 yield "message", {"text": tail}
             context = await _gathered_context(toolbox)
+            citations = rewriter.citations_payload() if rewriter else []
             yield (
                 "agentic_answer",
                 {
@@ -168,6 +183,7 @@ async def agentic_search_logic(
                     "optimized_query": query,
                     "context": context,
                     "sources": toolbox.ranked_sources,
+                    "citations": citations,
                     "answer": "".join(streamed),
                 },
             )
@@ -223,7 +239,10 @@ async def agentic_search_logic(
     yield "status", {"step": "Tool budget exhausted; synthesizing..."}
     messages.append(SystemMessage(content=FORCED_SYNTHESIS_NOTICE))
     forced_parts: list[str] = []
-    async for event, data in _stream_cited_answer(bound, messages, model):
+    rewriter = CitationRewriter([s["url"] for s in toolbox.ranked_sources])
+    async for event, data in _stream_cited_answer(
+        bound, messages, model, rewriter
+    ):
         if event == "message":
             forced_parts.append(data["text"])
         yield event, data
@@ -234,6 +253,7 @@ async def agentic_search_logic(
             "optimized_query": query,
             "context": context,
             "sources": toolbox.ranked_sources,
+            "citations": rewriter.citations_payload(),
             "answer": "".join(forced_parts),
         },
     )

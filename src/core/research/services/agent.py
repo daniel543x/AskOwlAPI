@@ -35,6 +35,7 @@ from langchain_core.runnables import Runnable
 
 from ....tools.settings import settings
 from ...tools.arg_stream import ToolArgStream
+from ...tools.citations import CitationRewriter
 from ...tools.errors import ToolProtocolError
 from ...tools.toolbox import AskToolbox, build_tools
 from .budgets import Budget
@@ -221,6 +222,9 @@ async def agent_logic(
                         {"error": "SubmitOutcome arrived with an empty answer."},
                     )
                     return
+                known = [s["url"] for s in toolbox.ranked_sources]
+                rewriter = CitationRewriter(known)
+                answer = rewriter.feed(answer) + rewriter.flush()
                 yield "message", {"text": answer}
                 yield "done", {"status": "completed"}
                 return

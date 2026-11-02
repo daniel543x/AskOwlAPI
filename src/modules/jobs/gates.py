@@ -138,7 +138,7 @@ class TurnResources:
     """
 
     keys: list[GateKey]
-    model_capabilities: list[str] = ()
+    model_capabilities: tuple[str, ...] = ()
 
     def gated(self, wait_timeout: float | None = None):
         return gated_turn(self.keys, wait_timeout=wait_timeout)

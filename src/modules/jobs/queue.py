@@ -193,10 +193,14 @@ class JobQueue:
                     job.id, job.retries, settings.JOB_MAX_RETRIES, delay,
                 )
                 await asyncio.sleep(delay)
+                # Same ordering as submit (API-NOTES #9): the queued-row
+                # persist must land BEFORE the worker can re-pick the job,
+                # or the running transition overwrites the shared row and
+                # the queued state is never durably recorded.
+                await self._persist_safe(job)
                 self._pending.insert(0, (job, runner))
                 self._resequence()
                 self._wake.set()
-                await self._persist_safe(job)
                 self._notify(job)
             else:
                 job.status = JobStatus.FAILED
@@ -215,10 +219,19 @@ class JobQueue:
                 self._running_per_user[job.user_id] = remaining
             self._wake.set()
 
+    # <----- Re-enqueue (WU-17) ----->
+
+    def requeue(self, job: Job, runner: Runner) -> None:
+        """Pending re-entry for a rebuilt runner (no status rewrite)."""
+        job.queue_position = len(self._pending) + 1
+        self._pending.append((job, runner))
+        self._wake.set()
+        self._notify(job)
+
     # <----- Introspection (PR 13 builds routes on this) ----->
 
     def pending_snapshot(self) -> list[Job]:
-        return list(self._pending)
+        return [job for job, _ in self._pending]
 
     def queued_jobs(self) -> list[Job]:
         return [job for job, _ in self._pending]

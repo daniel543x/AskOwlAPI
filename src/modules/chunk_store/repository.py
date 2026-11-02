@@ -1,5 +1,6 @@
 import logging
 import uuid
+from collections.abc import Sequence
 from typing import Any, cast
 
 from sqlalchemy import text
@@ -22,7 +23,7 @@ class ChunkRepository:
     async def store_chunks(
         self,
         chunks: list[dict[str, Any]],
-        embeddings: list[list[float] | None],
+        embeddings: Sequence[Sequence[float | None] | None],
         conversation_id: uuid.UUID | None = None,
     ) -> int:
         """Insert chunks with their embeddings; duplicates are skipped.
@@ -90,7 +91,7 @@ class ChunkRepository:
         except SQLAlchemyError:
             await self.session.rollback()
             raise
-        return [
+        rows = [
             {
                 "content": row.content,
                 "metadata": dict(row.metadata or {}),
@@ -98,6 +99,12 @@ class ChunkRepository:
             }
             for row in result
         ]
+        # Release the read transaction (webapp API-NOTES #10): these reads
+        # run on the shared request session inside long-lived streams, and
+        # an open transaction would park a pool connection until the next
+        # write. Rows are materialized above, so the commit is safe.
+        await self.session.commit()
+        return rows
 
     async def chunks_by_attachment_ids(
         self, attachment_ids: list[uuid.UUID], limit: int
@@ -118,7 +125,7 @@ class ChunkRepository:
         except SQLAlchemyError:
             await self.session.rollback()
             raise
-        return [
+        rows = [
             {
                 "content": row.content,
                 "metadata": dict(row.metadata or {}),
@@ -126,6 +133,10 @@ class ChunkRepository:
             }
             for row in result
         ]
+        # Read-transaction release (webapp API-NOTES #10); see
+        # conversation_chunks_strict.
+        await self.session.commit()
+        return rows
 
     async def existing_hashes(self, hashes: list[str]) -> set[str]:
         """Which of the given content hashes are already stored (embed-skip)."""
@@ -141,7 +152,11 @@ class ChunkRepository:
             # session stays usable; the caller re-embeds everything.
             await self.session.rollback()
             raise
-        return {row.content_hash for row in result}
+        known = {row.content_hash for row in result}
+        # Read-transaction release (webapp API-NOTES #10); see
+        # conversation_chunks_strict.
+        await self.session.commit()
+        return known
 
     async def fts_candidates(self, query: str, k: int) -> list[dict[str, Any]]:
         """Lexical candidates via Postgres full-text search (WU-4).
@@ -167,7 +182,7 @@ class ChunkRepository:
             # lexical leg must not poison the shared session.
             await self.session.rollback()
             raise
-        return [
+        rows = [
             {
                 "content": row.content,
                 "metadata": dict(row.metadata or {}),
@@ -176,6 +191,10 @@ class ChunkRepository:
             }
             for row in result
         ]
+        # Read-transaction release (webapp API-NOTES #10); see
+        # conversation_chunks_strict.
+        await self.session.commit()
+        return rows
 
     async def vector_candidates(
         self,
@@ -213,7 +232,7 @@ class ChunkRepository:
             # statement on this session (InFailedSQLTransaction cascade).
             await self.session.rollback()
             raise
-        return [
+        rows = [
             {
                 "content": row.content,
                 "metadata": dict(row.metadata or {}),
@@ -222,3 +241,7 @@ class ChunkRepository:
             }
             for row in result
         ]
+        # Read-transaction release (webapp API-NOTES #10); see
+        # conversation_chunks_strict.
+        await self.session.commit()
+        return rows

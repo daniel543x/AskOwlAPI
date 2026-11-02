@@ -272,6 +272,14 @@ class PreStoredChunkRepo:
         self.stored_chunks.extend(chunks)
         return len(chunks)
 
+    async def fts_candidates(self, query: str, k: int):
+        return []
+
+    async def conversation_chunks_strict(
+        self, conversation_id, query_embedding, k: int
+    ):
+        raise AssertionError("attachment retrieval is not under test here")
+
     async def vector_candidates(self, query_embedding, k, conversation_id=None):
         return []
 
@@ -441,6 +449,12 @@ class RecordingVectorRepo:
     async def existing_hashes(self, hashes):
         return set()
 
+    async def fts_candidates(self, query, k):
+        return []
+
+    async def conversation_chunks_strict(self, conversation_id, query_embedding, k):
+        raise AssertionError("attachment retrieval is not under test here")
+
     async def vector_candidates(self, query_embedding, k, conversation_id=None):
         self.query_conversation_id = conversation_id
         return []
@@ -550,3 +564,66 @@ async def test_recency_bias_clamped_to_ceiling():
         FakeSearchProvider(), make_scraper(), FakeRanker(), recency_bias=99.0
     )
     assert toolbox.recency_bias == settings.RECENCY_BIAS_MAX
+
+
+async def test_get_context_always_includes_the_turns_own_chunks(monkeypatch):
+    """Retrieval refines, never replaces (webapp bug report 2026-11-01).
+
+    With a live embedder, a successful global-store lookup used to REPLACE
+    the pool with store candidates, so a store full of earlier searches'
+    chunks (stale or garbage rows) crowded out the current turn's freshly
+    fetched evidence — answers were built from other queries' content.
+    """
+    from src.core.tools.toolbox import AskToolbox
+    from tests.core_ask.fakes import FakeRanker
+
+    foreign = {
+        "content": "Ucz mnie course page about a Polish kids platform.",
+        "metadata": {"url": "https://uczmnie.pl/"},
+        "url": "https://uczmnie.pl/",
+    }
+    own = {
+        "content": "Elon Musk is the CEO of Tesla and SpaceX.",
+        "metadata": {"url": "https://en.wikipedia.org/wiki/Elon_Musk"},
+        "url": "https://en.wikipedia.org/wiki/Elon_Musk",
+    }
+
+    class StoreReturningForeignOnly:
+        async def store_chunks(self, chunks, embeddings, conversation_id=None):
+            return 0
+
+        async def fts_candidates(self, query, k):
+            return []
+
+        async def existing_hashes(self, hashes):
+            return set()
+
+        async def vector_candidates(
+            self, query_embedding, k, conversation_id=None
+        ):
+            return [foreign]
+
+        async def conversation_chunks_strict(
+            self, conversation_id, query_embedding, k
+        ):
+            return []
+
+    class Embedder:
+        @property
+        def dims(self):
+            return 2
+
+        async def embed_texts(self, texts):
+            return [[1.0, 0.0] for _ in texts]
+
+    toolbox = AskToolbox(
+        None, None, FakeRanker(), Embedder(), StoreReturningForeignOnly()
+    )
+    toolbox.chunks = [own]
+
+    context = await toolbox.get_context("Who is Elon Musk?")
+
+    # The reranker sees BOTH pools; the turn's own chunk cannot be crowded
+    # out by store rows.
+    assert "Elon Musk is the CEO" in context
+    assert "Ucz mnie course page" in context or "Ucz mnie" in context
