@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     # <----- Ranking ----->
     RANKER_MODEL_NAME: str = "ms-marco-MiniLM-L-12-v2"
     RANKER_CACHE_DIR: str = "/tmp/cache"
+    # FlashRank feeds every passage of a rerank() call to onnxruntime as ONE
+    # batch; attention memory grows O(batch x seq^2), so ~1200 passages in a
+    # single call balloon the process to ~22 GB (see ref/OOM_INVESTIGATION.md).
+    # Rerank in batches of this size instead; scores stay comparable across
+    # batches (same model, sigmoid outputs).
+    RANKER_BATCH_SIZE: int = 32
     TOP_N_URLS: int = 10
     # Hard ceiling for the per-request `max_urls` override (WU-6).
     TOP_N_URLS_MAX: int = 20
